@@ -176,13 +176,12 @@ def doctor(
         typer.secho("[fail] this Python's sqlite3 has no FTS5 - keyword search will not work.",
                     fg=typer.colors.RED)
     if hasattr(conn, "enable_load_extension"):
-        _echo("[ok]   sqlite extension loading available (sqlite-vec can be used)")
+        _echo("[ok]   sqlite can load extensions - vector search will use sqlite-vec")
     else:
-        typer.secho(
-            "[warn] this Python's sqlite3 cannot load extensions, so sqlite-vec is "
-            "unavailable. Vector search needs a Python built with "
-            "--enable-loadable-sqlite-extensions.",
-            fg=typer.colors.YELLOW,
+        _echo(
+            "[ok]   sqlite cannot load extensions here, so vector search uses the "
+            "exact numpy backend instead of sqlite-vec (same results; fine up to "
+            "tens of thousands of shots)"
         )
     conn.close()
 
