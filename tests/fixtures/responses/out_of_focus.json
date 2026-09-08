@@ -1,0 +1,20 @@
+{
+  "caption": "A heavily defocused test pattern - soft coloured blobs with no readable detail.",
+  "subjects": ["abstract shapes", "light"],
+  "action": "none",
+  "setting": "abstract",
+  "setting_detail": "blurred colour fields, no discernible subject",
+  "shot_type": "insert",
+  "camera_movement": "static",
+  "time_of_day": "unknown",
+  "mood": ["dreamy", "minimal"],
+  "colour_profile": "desaturated",
+  "people_count": "none",
+  "has_recognisable_faces": false,
+  "has_text_on_screen": false,
+  "pace": "still",
+  "tags": ["blur", "bokeh", "defocus", "abstract", "soft", "background", "texture"],
+  "usable_for": ["text background", "mood setter", "transition"],
+  "quality_flags": ["out_of_focus"],
+  "confidence": 0.72
+}

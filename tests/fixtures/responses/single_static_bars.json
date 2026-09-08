@@ -1,0 +1,20 @@
+{
+  "caption": "A full-frame SMPTE colour bar test pattern held perfectly still.",
+  "subjects": ["pattern", "abstract shapes", "screen"],
+  "action": "none",
+  "setting": "abstract",
+  "setting_detail": "broadcast colour bar test card, hard vertical bands",
+  "shot_type": "insert",
+  "camera_movement": "static",
+  "time_of_day": "unknown",
+  "mood": ["technical", "minimal", "clean"],
+  "colour_profile": "vibrant",
+  "people_count": "none",
+  "has_recognisable_faces": false,
+  "has_text_on_screen": false,
+  "pace": "still",
+  "tags": ["test pattern", "colour bars", "smpte", "calibration", "broadcast", "graphic", "reference", "stripes"],
+  "usable_for": ["transition", "text background", "loop"],
+  "quality_flags": [],
+  "confidence": 0.95
+}
