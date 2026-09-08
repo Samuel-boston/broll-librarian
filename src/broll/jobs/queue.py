@@ -39,7 +39,12 @@ class QueueStats:
         return self.queued + self.running + self.done + self.failed + self.cancelled
 
 
-def enqueue_files(store: Store, files: list[DiscoveredFile], force: bool = False) -> list[Job]:
+def enqueue_files(
+    store: Store,
+    files: list[DiscoveredFile],
+    force: bool = False,
+    overwrite_corrections: bool = False,
+) -> list[Job]:
     """Queue one job per discovered file, skipping files already queued."""
     pending = _pending_paths(store)
     jobs: list[Job] = []
@@ -49,6 +54,7 @@ def enqueue_files(store: Store, files: list[DiscoveredFile], force: bool = False
             continue
         payload = discovered.payload()
         payload["force"] = force
+        payload["overwrite_corrections"] = overwrite_corrections
         jobs.append(store.enqueue(KIND_INDEX_SOURCE, payload))
         pending.add(key)
     return jobs

@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% set active = 'review' %}
+{% block title %}Review{% endblock %}
+{% block content %}
+<div id="review-queue">
+  {% include "partials/review_queue.html" %}
+</div>
+{% endblock %}

@@ -32,6 +32,10 @@ from .shots import detect_shots, primary_index
 log = logging.getLogger(__name__)
 
 
+def _is_corrected(shot: Shot) -> bool:
+    return bool((shot.raw_analysis or {}).get("corrected_by_operator"))
+
+
 @dataclass
 class IngestResult:
     source_id: str | None = None
@@ -64,7 +68,12 @@ class IngestPipeline:
 
     # -- entry point --------------------------------------------------------
 
-    async def ingest(self, discovered: DiscoveredFile, force: bool = False) -> IngestResult:
+    async def ingest(
+        self,
+        discovered: DiscoveredFile,
+        force: bool = False,
+        overwrite_corrections: bool = False,
+    ) -> IngestResult:
         result = IngestResult(filename=discovered.filename)
 
         video = await self._fetch(discovered)
@@ -109,6 +118,14 @@ class IngestPipeline:
             existing_shot = self.store.get_shot(shot_id)
             if existing_shot and existing_shot.status == "indexed" and not force:
                 result.shots_skipped += 1
+                continue
+            if existing_shot and _is_corrected(existing_shot) and not overwrite_corrections:
+                # A human already fixed this shot. Re-analysis must not quietly
+                # throw that away; --overwrite-corrections is the explicit opt-in.
+                result.shots_skipped += 1
+                result.messages.append(
+                    f"kept operator correction for shot {span.index} of {discovered.filename}"
+                )
                 continue
 
             shot = existing_shot or Shot(

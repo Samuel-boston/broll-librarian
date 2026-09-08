@@ -99,11 +99,13 @@ def create_app(config: WorkspaceConfig, run_worker: bool = True) -> FastAPI:
         name="thumbnails",
     )
 
-    from .routes import ingest, search, transcript
+    from .routes import ingest, review, search, settings, transcript
 
     app.include_router(search.router)
     app.include_router(ingest.router)
     app.include_router(transcript.router)
+    app.include_router(review.router)
+    app.include_router(settings.router)
 
     @app.exception_handler(404)
     async def not_found(request: Request, exc):  # noqa: ANN001

@@ -21,16 +21,17 @@ from .analysis.analyzer import Analyzer
 from .analysis.prompt import PROMPT_VERSION
 from .analysis.embedder import get_embedder
 from .analysis.providers.registry import VISION_PROVIDERS, check_credentials
-from .analysis.schema import ShotContext, find_oov
+from .analysis.schema import VOCABULARIES, ShotContext, find_oov
 from .db.models import Shot, Source, Workspace
 from .db.store import Registry, Store, new_id
 from .ingest.frames import best_frame, save_thumbnail
 from .ingest.hashing import content_hash
 from .ingest.pipeline import IngestPipeline
 from .ingest.probe import NotAVideoError, probe
-from .ingest.scanner import scan_local
+from .ingest.scanner import DiscoveredFile, scan_local
 from .jobs.queue import enqueue_files, queue_stats
 from .jobs.worker import Worker
+from .review import CorrectionError, apply_correction, review_queue
 from .search.filters import SearchFilters
 from .analysis.providers.registry import get_text_provider
 from .drive.organizer import Organizer
@@ -865,6 +866,252 @@ def _write_exports(matches, timeline, out: Path, formats: str, stem: str) -> lis
     if "csv" in wanted:
         written.append(csv_export.write(matches, timeline, out / f"{stem}.csv"))
     return written
+
+
+@app.command()
+def review(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    limit: int = typer.Option(50, "--limit", "-n"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """List shots that need a human look."""
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        queue = review_queue(store, limit)
+    finally:
+        store.close()
+
+    if as_json:
+        _echo(json.dumps(
+            [
+                {
+                    "shot_id": entry["shot"].id,
+                    "filename": entry["filename"],
+                    "start_s": entry["shot"].start_s,
+                    "caption": entry["shot"].caption,
+                    "reasons": entry["reasons"],
+                }
+                for entry in queue
+            ],
+            indent=2,
+        ))
+        return
+
+    if not queue:
+        _echo("Nothing needs review.")
+        return
+    for entry in queue:
+        shot = entry["shot"]
+        _echo(f"{shot.id}  {entry['filename']} @{shot.start_s:.1f}s")
+        _echo(f"    {shot.caption or '(no caption)'}")
+        _echo(f"    why: {'; '.join(entry['reasons'])}")
+    _echo(f"\n{len(queue)} shot(s) awaiting review. "
+          "Correct one with: broll fix <shot_id> --set setting=beach")
+
+
+@app.command()
+def fix(
+    shot_id: str = typer.Argument(...),
+    set_: list[str] = typer.Option([], "--set", "-s",
+                                   help="field=value, repeatable. Lists take commas."),
+    status: str = typer.Option("indexed", "--status",
+                               help="Status to leave the shot in."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+) -> None:
+    """Correct a shot's facets by hand. Recomputes search text and embedding."""
+    workspace_config = resolve_workspace(workspace)
+    updates: dict[str, str] = {}
+    for item in set_:
+        if "=" not in item:
+            _fail(f"--set expects field=value, got {item!r}")
+        field, value = item.split("=", 1)
+        updates[field.strip()] = value
+    if not updates:
+        _fail("Nothing to change. Use --set field=value.")
+
+    store = Store.for_config(workspace_config)
+    try:
+        embedder = _load_embedder(workspace_config)
+        shot = apply_correction(workspace_config, store, shot_id, updates, embedder, status)
+    except CorrectionError as exc:
+        store.close()
+        _fail(str(exc))
+    else:
+        _echo(f"{shot.id}: {shot.caption}")
+        _echo(f"  status={shot.status} setting={shot.setting} action={shot.action} "
+              f"shot_type={shot.shot_type}")
+        _echo("  search text and embedding recomputed.")
+    finally:
+        store.close()
+
+
+@app.command()
+def vocab(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    min_count: int = typer.Option(2, "--min-count", help="Only show terms seen this often."),
+    promote: list[str] = typer.Option([], "--promote",
+                                      help="field=term, repeatable. Adds it to the vocabulary."),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Review and promote out-of-vocabulary terms the model keeps returning."""
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        for item in promote:
+            if "=" not in item:
+                _fail(f"--promote expects field=term, got {item!r}")
+            field, term = (part.strip() for part in item.split("=", 1))
+            if field not in VOCABULARIES:
+                _fail(f"Unknown vocabulary {field!r}. One of: {', '.join(VOCABULARIES)}")
+            existing = workspace_config.vocabulary_overrides.setdefault(field, [])
+            if term not in existing:
+                existing.append(term)
+            store.promote_vocabulary_candidate(field, term)
+            _echo(f"promoted {field}: {term}")
+        if promote:
+            workspace_config.save()
+            _echo(f"saved to {workspace_config.config_path}")
+
+        candidates = store.vocabulary_candidates(min_count=min_count)
+    finally:
+        store.close()
+
+    if as_json:
+        _echo(json.dumps(candidates, indent=2))
+        return
+    if not candidates:
+        _echo(f"No out-of-vocabulary terms seen {min_count}+ times.")
+        return
+    for candidate in candidates:
+        _echo(f"{candidate['count']:>4}x  {candidate['field']:<14} {candidate['term']}")
+    _echo("\nPromote one with: broll vocab --promote subjects=hydrofoil")
+
+
+@app.command()
+def costs(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    project: int = typer.Option(0, "--project", help="Project the cost of indexing N more clips."),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """What indexing has cost so far, from real usage - not a brochure figure."""
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        total = store.total_cost()
+        done = store.conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(cost_estimate_usd), 0) AS spent"
+            " FROM jobs WHERE workspace_id = ? AND status = 'done'",
+            (workspace_config.id,),
+        ).fetchone()
+        shots = store.count_shots()
+        by_day = store.conn.execute(
+            """SELECT date(finished_at) AS day, COUNT(*) AS files,
+                      SUM(cost_estimate_usd) AS spent
+               FROM jobs WHERE workspace_id = ? AND finished_at IS NOT NULL
+               GROUP BY day ORDER BY day DESC LIMIT 14""",
+            (workspace_config.id,),
+        ).fetchall()
+    finally:
+        store.close()
+
+    files = done["n"] or 0
+    per_file = (done["spent"] / files) if files else 0.0
+    per_shot = (total / shots) if shots else 0.0
+    payload = {
+        "workspace": workspace_config.id,
+        "provider": workspace_config.provider.vision,
+        "model": workspace_config.provider.resolved_vision_model(),
+        "files_indexed": files,
+        "shots_indexed": shots,
+        "total_usd": round(total, 4),
+        "per_file_usd": round(per_file, 5),
+        "per_shot_usd": round(per_shot, 5),
+        "by_day": [dict(r) for r in by_day],
+    }
+    if project:
+        payload["projection"] = {
+            "clips": project,
+            "usd": round(per_file * project, 2) if per_file else None,
+        }
+
+    if as_json:
+        _echo(json.dumps(payload, indent=2))
+        return
+
+    _echo(f"provider:  {payload['provider']} ({payload['model']})")
+    _echo(f"indexed:   {files} file(s), {shots} shot(s)")
+    _echo(f"spent:     ${total:.4f}")
+    _echo(f"per file:  ${per_file:.5f}")
+    _echo(f"per shot:  ${per_shot:.5f}")
+    if by_day:
+        _echo("recent:")
+        for row in by_day:
+            _echo(f"  {row['day']}  {row['files']:>4} file(s)  ${row['spent'] or 0:.4f}")
+    if project:
+        if per_file:
+            _echo(f"\nIndexing {project} more clips would cost about "
+                  f"${per_file * project:.2f} at this workspace's measured rate.")
+        else:
+            _echo("\nNo measured cost yet - index some clips first.")
+
+
+@app.command()
+def reanalyse(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    source_id: Optional[str] = typer.Option(None, "--source", help="Just this source."),
+    stale: bool = typer.Option(True, "--stale/--all",
+                               help="Only rows analysed with an older prompt version."),
+    wait: bool = typer.Option(True, "--wait/--no-wait"),
+    overwrite_corrections: bool = typer.Option(
+        False, "--overwrite-corrections",
+        help="Also re-analyse shots a human has corrected. Off by default.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Re-run analysis, e.g. after the prompt improved. Never automatic."""
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        sources = store.list_sources(limit=1_000_000)
+        if source_id:
+            sources = [s for s in sources if s.id == source_id]
+            if not sources:
+                _fail(f"No source {source_id!r}.")
+        elif stale:
+            sources = [s for s in sources if s.analysis_version != PROMPT_VERSION]
+
+        targets = [s for s in sources if s.origin_path and Path(s.origin_path).exists()]
+        missing = len(sources) - len(targets)
+
+        if not targets:
+            _echo(f"Nothing to re-analyse (prompt version {PROMPT_VERSION})."
+                  + (f" {missing} source(s) have no local file." if missing else ""))
+            return
+
+        _echo(f"{len(targets)} source(s) to re-analyse at prompt version {PROMPT_VERSION}."
+              + (f" Skipping {missing} with no local file." if missing else ""))
+        if dry_run:
+            for source in targets[:20]:
+                _echo(f"  {source.original_filename} (was {source.analysis_version})")
+            if len(targets) > 20:
+                _echo(f"  ... and {len(targets) - 20} more")
+            _echo("Nothing was written. Drop --dry-run to run it.")
+            return
+
+        files = [
+            DiscoveredFile(origin="local", path=Path(s.origin_path), filename=s.original_filename,
+                           origin_path=s.origin_path)
+            for s in targets
+        ]
+        jobs = enqueue_files(store, files, force=True,
+                             overwrite_corrections=overwrite_corrections)
+        _echo(f"Queued {len(jobs)} job(s)."
+              + ("" if overwrite_corrections else " Operator-corrected shots are kept."))
+        if wait:
+            _run_worker(workspace_config, store, None)
+    finally:
+        store.close()
 
 
 @app.callback()

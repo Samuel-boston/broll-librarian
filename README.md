@@ -26,7 +26,7 @@ a Google Drive file ID. Everything else follows from that constraint.
 | **M3** | Drive OAuth, upload, taxonomy, shortcut tree, `reorganise`, `--dry-run` | **built; verified against a mock Drive, not yet against live Drive** |
 | **M4** | Web UI: ingest, queue view, search | **done** |
 | **M5** | Transcript matching, FCP7 XML / EDL / CSV export | **done** (Premiere import is a manual gate, see below) |
-| M6 | Review queue, remaining providers, cost reporting, vocabulary management | not started |
+| **M6** | Review queue, settings, cost reporting, vocabulary management | **done** |
 
 ---
 
@@ -133,8 +133,10 @@ input tokens, mostly the controlled vocabularies) and ~350 output tokens:
 | claude-opus-5 | $0.0275 | $27.50 | $137.50 |
 
 These are estimates from published list prices, computed by
-`analysis/providers/*.PRICING`. Real costs are logged per job and shown by
-`broll status` — trust those over this table.
+`analysis/providers/*.PRICING`. Real costs are logged per job; `broll costs`
+reports what a workspace has actually spent, per file and per shot, and
+`--project N` extrapolates from that measured rate rather than from this table.
+Trust the measurement over the table.
 
 ## Web UI
 
@@ -155,7 +157,17 @@ dropping files in the browser is all it takes — no CLI step.
   actually contains, thumbnail grid with captions, timecodes, quality flags,
   a Drive link and a copy-link button.
 
-Transcript, Review and Settings screens arrive with M5 and M6.
+* **Transcript** — paste or upload, see suggestions per beat, swap any of them,
+  export FCP7 XML / EDL / CSV.
+* **Review** — the `needs_review` queue at *shot* level, so a multi-shot file
+  shows exactly which shot needs attention. Corrections are ground truth: saving
+  one recomputes the shot's search text and embedding immediately.
+* **Settings** — provider and model, API keys, Drive connection, taxonomy
+  thresholds, the Drive-for-Desktop mount path, and vocabulary promotion.
+
+API keys typed into Settings are written to `$BROLL_HOME/.env` with owner-only
+permissions and are never rendered back to the page, never stored in the
+database, and never written to `config.yaml`.
 
 ## How search works
 
@@ -190,6 +202,24 @@ automatically:
 `broll status` reports which one is in use. Both fix the dimension at creation,
 so changing the embedding model needs `broll reembed`, which drops and rebuilds
 the table.
+
+## Keeping the library honest
+
+```bash
+broll review                       # what needs a human look, and why
+broll fix <shot-id> --set setting=beach --set "tags=surf, ocean, dawn"
+broll vocab --min-count 3          # terms the model keeps inventing
+broll vocab --promote subjects=hydrofoil
+broll costs --project 5000         # measured cost, and what 5,000 more would cost
+broll reanalyse --dry-run          # re-run rows analysed with an older prompt
+```
+
+`broll reanalyse` is deliberately manual. A new provider model never triggers a
+re-analysis on its own — that would spend the client's money without asking.
+
+A shot a human has corrected is marked as such, and `reanalyse` skips it unless
+you pass `--overwrite-corrections`. Re-analysis must never quietly undo human
+judgement.
 
 ## The analysis contract
 
@@ -372,6 +402,40 @@ cross-rate sources are conformed). CSV is for anyone who just wants the list.
 mixed-frame-rate sequence and a clip too short for its beat. **Manual gate not
 yet run:** importing a real export into Premiere with media linked needs a
 Premiere licence and a synced Drive mount.
+
+## Command reference
+
+| Command | What it does |
+|---|---|
+| `broll init --name X --provider gemini` | Create a workspace |
+| `broll doctor` | Check ffmpeg, SQLite features, embeddings, credentials |
+| `broll analyse <clip>` | Analyse one clip, print JSON, write nothing |
+| `broll index <path> [--dry-run] [--organise]` | Queue footage and work the queue |
+| `broll index --drive-folder <id>` | Index footage already in Drive |
+| `broll work [--follow]` | Work the queue; safe to kill and restart |
+| `broll status` | Queue, counts, vector backend, cost |
+| `broll search "..." [--json]` | Hybrid search with filters |
+| `broll reembed` | Rebuild the vector index after changing the embedder |
+| `broll drive login / logout / status` | Drive connection for this workspace |
+| `broll organise [--dry-run]` | Upload and file footage into the Drive tree |
+| `broll reorganise [--dry-run]` | Rebuild the whole tree from the database |
+| `broll transcript <file> --out DIR` | Match a transcript and export a timeline |
+| `broll review` / `broll fix <shot>` | The review queue, and corrections |
+| `broll vocab [--promote field=term]` | Out-of-vocabulary terms, and promotion |
+| `broll costs [--project N]` | Measured spend, and a projection |
+| `broll reanalyse [--stale/--all]` | Re-run analysis after a prompt change |
+| `broll serve` | The web UI plus the ingest worker, one process |
+
+Every screen in the UI has a CLI equivalent, deliberately: the CLI is the real
+interface and the UI is a client of it.
+
+## Not in v1
+
+Said out loud so they do not creep in: audio analysis or transcription of the
+B-roll itself (B-roll is used muted), face recognition, splitting or re-encoding
+video, hover-preview proxies, native-video (rather than keyframe) analysis,
+multi-user permissions inside a workspace, a mobile app, and automatic
+re-analysis when a provider ships a new model.
 
 ## Development
 

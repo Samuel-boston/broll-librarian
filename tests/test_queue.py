@@ -130,7 +130,7 @@ def test_failed_jobs_retry_with_backoff_then_give_up(store, workspace, monkeypat
     files = _files()[:1]
     enqueue_files(store, files)
 
-    async def boom(self, discovered, force=False):
+    async def boom(self, discovered, force=False, overwrite_corrections=False):
         raise RuntimeError("provider exploded")
 
     monkeypatch.setattr(IngestPipeline, "ingest", boom)
@@ -207,3 +207,24 @@ def test_a_partially_analysed_source_only_finishes_the_missing_shots(store, work
 
     assert stats.shots == 1, "only the missing shot should be re-analysed"
     assert len(store.shots_for_source(source.id)) == 3
+
+
+def test_reanalysis_keeps_operator_corrections_unless_told_otherwise(store, workspace):
+    """A human correction is ground truth; re-analysis must not silently undo it."""
+    from broll.review import apply_correction
+
+    files = [f for f in _files() if f.filename == "single_static_bars.mp4"]
+    enqueue_files(store, files)
+    asyncio.run(_worker(workspace, store).run())
+
+    shot = store.list_shots()[0]
+    apply_correction(workspace, store, shot.id,
+                     {"caption": "SMPTE colour bars.", "setting": "studio"})
+
+    enqueue_files(store, files, force=True)
+    asyncio.run(_worker(workspace, store).run())
+    assert store.get_shot(shot.id).caption == "SMPTE colour bars."
+
+    enqueue_files(store, files, force=True, overwrite_corrections=True)
+    asyncio.run(_worker(workspace, store).run())
+    assert store.get_shot(shot.id).caption != "SMPTE colour bars."

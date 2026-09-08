@@ -128,7 +128,11 @@ class Worker:
             drive_file_id=payload.get("drive_file_id"),
             origin_path=payload.get("origin_path"),
         )
-        return await self.pipeline.ingest(discovered, force=bool(payload.get("force")))
+        return await self.pipeline.ingest(
+            discovered,
+            force=bool(payload.get("force")),
+            overwrite_corrections=bool(payload.get("overwrite_corrections")),
+        )
 
     def _handle_failure(self, job: Job, error: str) -> None:
         if job.attempts < MAX_ATTEMPTS:
