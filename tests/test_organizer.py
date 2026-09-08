@@ -88,7 +88,10 @@ def test_dry_run_touches_nothing(organised):
 def test_filename_change_is_a_rename_not_a_second_upload(organised):
     workspace, store, client = organised
     Organizer(workspace, store, client).reorganise()
-    source = store.list_sources(limit=100)[0]
+    source = next(
+        s for s in store.list_sources(limit=100)
+        if s.original_filename == "beach_meditation_sunrise.mp4"
+    )
     shot = store.shots_for_source(source.id)[0]
 
     store.set_shot_fields(shot.id, setting="office")
@@ -102,20 +105,25 @@ def test_filename_change_is_a_rename_not_a_second_upload(organised):
 
 def test_a_shortcut_that_is_no_longer_justified_is_removed(organised):
     workspace, store, client = organised
-    organizer = Organizer(workspace, store, client)
-    source = store.list_sources(limit=100)[0]
-    organizer.organise_source(source.id)
+    # Named explicitly: this clip is 'aerial', so re-facetting it to close_up
+    # is guaranteed to move it.
+    source = next(
+        s for s in store.list_sources(limit=100)
+        if s.original_filename == "mountain_drone_flyover.mp4"
+    )
+    Organizer(workspace, store, client).organise_source(source.id)
+    assert any("By Shot Type/Aerial" in p for p in client.tree())
 
     shot = store.shots_for_source(source.id)[0]
-    before = {s.name for s in client.shortcuts()}
     store.set_shot_fields(shot.id, shot_type="close_up")
 
     report = Organizer(workspace, store, client).organise_source(source.id)
     assert any(a.kind == "shortcut" for a in report.actions)
-    # the file now lives under Close Up, and the stale Wide shortcut is gone
+    assert any(a.kind == "delete_shortcut" for a in report.actions)
+
     paths = client.tree()
     assert any("By Shot Type/Close Up" in p for p in paths)
-    assert before  # sanity
+    assert not any(p.endswith("mp4") and "By Shot Type/Aerial" in p for p in paths)
 
 
 def test_the_organiser_never_deletes_a_non_shortcut(organised):
@@ -128,7 +136,7 @@ def test_the_organiser_never_deletes_a_non_shortcut(organised):
 
 def test_needs_review_shots_land_in_the_review_folder(organised):
     workspace, store, client = organised
-    source = store.list_sources(limit=100)[0]
+    source = store.list_sources(limit=100)[0]  # any source will do
     shot = store.shots_for_source(source.id)[0]
     store.set_shot_fields(shot.id, status="needs_review")
 

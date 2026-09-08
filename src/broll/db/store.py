@@ -202,7 +202,7 @@ class Store:
         if status:
             sql += " AND status = ?"
             params.append(status)
-        sql += " ORDER BY created_at DESC LIMIT ?"
+        sql += " ORDER BY created_at DESC, id LIMIT ?"
         params.append(limit)
         return [
             Source.model_validate(dict(r)) for r in self.conn.execute(sql, params).fetchall()
@@ -464,6 +464,44 @@ class Store:
 
     def all_facets(self) -> list[ShotFacets]:
         return [ShotFacets.from_shot(s) for s in self.list_shots()]
+
+    # -- drive shortcuts ----------------------------------------------------
+
+    def record_shortcut(self, source_id: str, shot_id: str, folder_path: str,
+                        folder_id: str | None, name: str, shortcut_id: str,
+                        target_id: str) -> None:
+        self.conn.execute(
+            """INSERT INTO drive_shortcuts (workspace_id, source_id, shot_id,
+                   folder_path, folder_id, name, shortcut_id, target_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (workspace_id, folder_path, name) DO UPDATE SET
+                   source_id = excluded.source_id, shot_id = excluded.shot_id,
+                   folder_id = excluded.folder_id,
+                   shortcut_id = excluded.shortcut_id,
+                   target_id = excluded.target_id""",
+            (self.workspace_id, source_id, shot_id, folder_path, folder_id, name,
+             shortcut_id, target_id),
+        )
+
+    def shortcuts_for_source(self, source_id: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM drive_shortcuts WHERE workspace_id = ? AND source_id = ?",
+            (self.workspace_id, source_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def forget_shortcut(self, folder_path: str, name: str) -> None:
+        self.conn.execute(
+            "DELETE FROM drive_shortcuts WHERE workspace_id = ? AND folder_path = ?"
+            " AND name = ?",
+            (self.workspace_id, folder_path, name),
+        )
+
+    def forget_shortcuts_for_source(self, source_id: str) -> None:
+        self.conn.execute(
+            "DELETE FROM drive_shortcuts WHERE workspace_id = ? AND source_id = ?",
+            (self.workspace_id, source_id),
+        )
 
     # -- jobs ---------------------------------------------------------------
 

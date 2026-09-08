@@ -160,7 +160,7 @@ class Organizer:
             self.config.taxonomy,
             self._pair_counts(),
         )
-        self._reconcile_shortcuts(file_id, desired, report)
+        self._reconcile_shortcuts(source.id, file_id, desired, report)
         report.sources += 1
         return report
 
@@ -219,9 +219,11 @@ class Organizer:
         return uploaded.id
 
     def _reconcile_shortcuts(
-        self, file_id: str, desired: list[ShortcutPlan], report: OrganiseReport
+        self, source_id: str, file_id: str, desired: list[ShortcutPlan],
+        report: OrganiseReport,
     ) -> None:
         wanted: dict[str, set[str]] = {}
+        desired_keys = {(str(plan.folder), plan.name) for plan in desired}
         for plan in desired:
             folder_id = self._folder_id(plan.folder.parts, report)
             wanted.setdefault(folder_id, set()).add(plan.name)
@@ -230,6 +232,11 @@ class Organizer:
             existing = children.get(plan.name)
             if existing is not None:
                 if existing.mime_type == SHORTCUT_MIME and existing.shortcut_target_id == file_id:
+                    if not self.dry_run:
+                        self.store.record_shortcut(
+                            source_id, plan.shot_id, str(plan.folder), folder_id,
+                            plan.name, existing.id, file_id,
+                        )
                     continue  # already correct - the idempotent path
                 if existing.mime_type != SHORTCUT_MIME:
                     report.errors.append(
@@ -242,14 +249,37 @@ class Organizer:
 
             report.record("shortcut", plan.path)
             if not self.dry_run:
-                self.client.create_shortcut(file_id, plan.name, folder_id)
+                created = self.client.create_shortcut(file_id, plan.name, folder_id)
+                self.store.record_shortcut(
+                    source_id, plan.shot_id, str(plan.folder), folder_id,
+                    plan.name, created.id, file_id,
+                )
 
-        self._remove_stale(file_id, wanted, report)
+        self._remove_stale(source_id, file_id, desired_keys, wanted, report)
 
     def _remove_stale(
-        self, file_id: str, wanted: dict[str, set[str]], report: OrganiseReport
+        self, source_id: str, file_id: str, desired_keys: set[tuple[str, str]],
+        wanted: dict[str, set[str]], report: OrganiseReport,
     ) -> None:
-        """Shortcuts to this file that the taxonomy no longer justifies."""
+        """Shortcuts to this file that the taxonomy no longer justifies.
+
+        Two passes: what we recorded when we created them (which catches
+        folders the source is no longer planned into at all), and a sweep of
+        the folders it still is planned into (which catches anything created
+        outside this tool).
+        """
+        for record in self.store.shortcuts_for_source(source_id):
+            key = (record["folder_path"], record["name"])
+            if key in desired_keys:
+                continue
+            report.record("delete_shortcut", f"{key[0]}/{key[1]}", "no longer justified")
+            if not self.dry_run:
+                try:
+                    self.client.delete_shortcut(record["shortcut_id"])
+                except DriveError as exc:
+                    report.errors.append(f"{key[0]}/{key[1]}: {exc}")
+                self.store.forget_shortcut(*key)
+
         for folder_id, names in wanted.items():
             if folder_id.startswith("dry-run"):
                 continue
@@ -257,7 +287,7 @@ class Organizer:
                 if entry.mime_type != SHORTCUT_MIME or entry.shortcut_target_id != file_id:
                     continue
                 if name not in names:
-                    report.record("delete_shortcut", name, "no longer justified")
+                    report.record("delete_shortcut", name, "untracked, no longer justified")
                     if not self.dry_run:
                         self.client.delete_shortcut(entry.id)
 
