@@ -24,7 +24,7 @@ a Google Drive file ID. Everything else follows from that constraint.
 | **M1** | Config, registry + workspace schema, provider abstraction, frame extraction, analysis, `broll analyse` | **done** |
 | **M2** | Shot detection, job queue, batch indexing, embeddings, FTS5 + vector search | **done** |
 | **M3** | Drive OAuth, upload, taxonomy, shortcut tree, `reorganise`, `--dry-run` | **built; verified against a mock Drive, not yet against live Drive** |
-| M4 | Web UI: ingest, queue view, search | not started |
+| **M4** | Web UI: ingest, queue view, search | **done** |
 | M5 | Transcript matching, FCP7 XML / EDL / CSV export | not started |
 | M6 | Review queue, remaining providers, cost reporting, vocabulary management | not started |
 
@@ -135,6 +135,27 @@ input tokens, mostly the controlled vocabularies) and ~350 output tokens:
 These are estimates from published list prices, computed by
 `analysis/providers/*.PRICING`. Real costs are logged per job and shown by
 `broll status` — trust those over this table.
+
+## Web UI
+
+```bash
+broll serve                    # http://127.0.0.1:8000
+broll serve --no-worker        # UI only; run `broll work --follow` separately
+```
+
+One process: FastAPI + Jinja2 + HTMX + Tailwind from a CDN. No SPA, no npm, no
+build step. The ingest worker runs inside the same process by default, so
+dropping files in the browser is all it takes — no CLI step.
+
+* **Ingest** — drag and drop, or point at a folder (files there are never moved,
+  copied or deleted). The queue panel polls every two seconds while work is
+  outstanding and shows queued/running/done/failed, shots indexed, cost so far
+  and estimated cost remaining.
+* **Search** — query box, filter sidebar built from the facets the library
+  actually contains, thumbnail grid with captions, timecodes, quality flags,
+  a Drive link and a copy-link button.
+
+Transcript, Review and Settings screens arrive with M5 and M6.
 
 ## How search works
 

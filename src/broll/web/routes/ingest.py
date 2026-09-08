@@ -1,0 +1,129 @@
+"""Ingest screen: drag-and-drop uploads, a Drive folder, and the live queue."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi.responses import HTMLResponse
+
+from ...ingest.scanner import VIDEO_SUFFIXES, DiscoveredFile, scan_local
+from ...jobs.queue import enqueue_files, queue_stats
+from ..app import templates
+
+router = APIRouter()
+
+
+@router.get("/ingest", response_class=HTMLResponse)
+async def ingest_page(request: Request):
+    state = request.app.state.broll
+    store = state.store()
+    try:
+        context = _queue_context(request, store, state)
+    finally:
+        store.close()
+    return templates.TemplateResponse(request=request, name="ingest.html", context=context)
+
+
+@router.get("/ingest/queue", response_class=HTMLResponse)
+async def queue_partial(request: Request):
+    """Polled by HTMX every couple of seconds while anything is outstanding."""
+    state = request.app.state.broll
+    store = state.store()
+    try:
+        context = _queue_context(request, store, state)
+    finally:
+        store.close()
+    return templates.TemplateResponse(request=request, name="partials/queue.html", context=context)
+
+
+@router.post("/ingest/upload", response_class=HTMLResponse)
+async def upload(request: Request, files: list[UploadFile] = File(default=[])):
+    state = request.app.state.broll
+    store = state.store()
+    accepted, rejected = [], []
+    try:
+        for upload_file in files:
+            name = Path(upload_file.filename or "clip").name
+            if Path(name).suffix.lower() not in VIDEO_SUFFIXES:
+                rejected.append(name)
+                continue
+            target = _unique_path(state.config.staging_dir, name)
+            with target.open("wb") as handle:
+                while chunk := await upload_file.read(1024 * 1024):
+                    handle.write(chunk)
+            accepted.append(
+                DiscoveredFile(origin="upload", path=target, filename=name,
+                               origin_path=str(target))
+            )
+        enqueue_files(store, accepted)
+        context = _queue_context(request, store, state)
+        context["message"] = f"Queued {len(accepted)} file(s)."
+        if rejected:
+            context["message"] += f" Skipped {len(rejected)} non-video file(s)."
+    finally:
+        store.close()
+    return templates.TemplateResponse(request=request, name="partials/queue.html", context=context)
+
+
+@router.post("/ingest/path", response_class=HTMLResponse)
+async def ingest_path(request: Request, path: str = Form(...)):
+    """Point the tool at a local folder. Files there are never moved or deleted."""
+    state = request.app.state.broll
+    store = state.store()
+    try:
+        target = Path(path).expanduser()
+        if not target.exists():
+            context = _queue_context(request, store, state)
+            context["error"] = f"{target} does not exist."
+            return templates.TemplateResponse(request=request, name="partials/queue.html", context=context)
+        found = scan_local(target)
+        enqueue_files(store, found)
+        context = _queue_context(request, store, state)
+        context["message"] = f"Queued {len(found)} file(s) from {target}."
+    finally:
+        store.close()
+    return templates.TemplateResponse(request=request, name="partials/queue.html", context=context)
+
+
+def _unique_path(directory: Path, name: str) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / name
+    counter = 1
+    while target.exists():
+        target = directory / f"{Path(name).stem}_{counter}{Path(name).suffix}"
+        counter += 1
+    return target
+
+
+def _queue_context(request: Request, store, state) -> dict:
+    stats = queue_stats(store)
+    recent = store.conn.execute(
+        """SELECT id, kind, status, attempts, last_error, cost_estimate_usd,
+                  json_extract(payload_json, '$.filename') AS filename,
+                  created_at, started_at, finished_at
+           FROM jobs WHERE workspace_id = ?
+           ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
+                    created_at DESC
+           LIMIT 40""",
+        (store.workspace_id,),
+    ).fetchall()
+    average = store.conn.execute(
+        "SELECT AVG(cost_estimate_usd) FROM jobs WHERE workspace_id = ?"
+        " AND status = 'done' AND cost_estimate_usd > 0",
+        (store.workspace_id,),
+    ).fetchone()[0]
+    per_file = float(average or 0.0)
+
+    return {
+        "request": request,
+        "workspace": state.config,
+        "stats": stats,
+        "jobs": [dict(r) for r in recent],
+        "cost_so_far": store.total_cost(),
+        "cost_remaining": per_file * stats.outstanding,
+        "shots": store.count_shots(),
+        "needs_review": store.count_shots("needs_review"),
+        "worker_running": state.worker is not None,
+        "poll": stats.outstanding > 0,
+    }

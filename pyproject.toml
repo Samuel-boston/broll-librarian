@@ -39,3 +39,4 @@ broll = ["db/*.sql", "web/templates/*", "web/static/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = ["slow: acceptance runs that generate and index many files"]

@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "broll-web",
+      "runtimeExecutable": "./.venv/bin/broll",
+      "runtimeArgs": ["serve", "--port", "8734"],
+      "port": 8734,
+      "env": { "BROLL_HOME": "/private/tmp/claude-501/-Users-nathan-polymarket-bot/2276ef67-5765-4cd1-8eba-e01504867ad5/scratchpad/demo-home" }
+    }
+  ]
+}

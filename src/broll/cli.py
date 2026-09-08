@@ -700,6 +700,31 @@ def _report_organise(report, dry_run: bool) -> None:
         _echo("Nothing was written. Drop --dry-run to apply it.")
 
 
+@app.command()
+def serve(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port"),
+    worker: bool = typer.Option(True, "--worker/--no-worker",
+                                help="Run the ingest worker inside the web process."),
+    reload: bool = typer.Option(False, "--reload"),
+) -> None:
+    """Serve the web UI (and, by default, the ingest worker) on one process."""
+    workspace_config = resolve_workspace(workspace)
+    try:
+        import uvicorn
+    except ImportError:
+        _fail("The web UI needs the extra: pip install 'broll-librarian[web]'")
+
+    from .web.app import create_app
+
+    _echo(f"Serving {workspace_config.name!r} on http://{host}:{port}")
+    if not worker:
+        _echo("Worker disabled - run `broll work --follow` separately.")
+    uvicorn.run(create_app(workspace_config, run_worker=worker),
+                host=host, port=port, reload=reload)
+
+
 @app.callback()
 def main(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
     logging.basicConfig(
