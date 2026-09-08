@@ -1,0 +1,693 @@
+[
+  {
+    "filename": "beach_meditation_sunrise.mp4",
+    "duration_s": 12.0,
+    "width": 1920,
+    "height": 1080,
+    "fps": 25.0,
+    "analysis": {
+      "caption": "A lone figure sits cross-legged on an empty beach as the sun lifts over the water.",
+      "subjects": [
+        "person",
+        "beach",
+        "ocean",
+        "sand"
+      ],
+      "action": "meditating",
+      "setting": "beach",
+      "setting_detail": "wide empty sand with low surf",
+      "shot_type": "wide",
+      "camera_movement": "static",
+      "time_of_day": "dawn",
+      "mood": [
+        "calm",
+        "peaceful",
+        "serene"
+      ],
+      "colour_profile": "warm",
+      "people_count": "one",
+      "has_recognisable_faces": false,
+      "has_text_on_screen": false,
+      "pace": "slow",
+      "tags": [
+        "meditation",
+        "mindfulness",
+        "wellness",
+        "calm",
+        "sunrise",
+        "beach",
+        "ocean",
+        "solitude",
+        "stillness",
+        "breathe"
+      ],
+      "usable_for": [
+        "establishing shot",
+        "mood setter"
+      ],
+      "quality_flags": [],
+      "confidence": 0.88
+    }
+  },
+  {
+    "filename": "office_meeting_brainstorm.mp4",
+    "duration_s": 9.0,
+    "width": 1920,
+    "height": 1080,
+    "fps": 25.0,
+    "analysis": {
+      "caption": "Four colleagues cluster around a whiteboard in an open-plan office, talking over each other.",
+      "subjects": [
+        "group of people",
+        "office worker",
+        "office"
+      ],
+      "action": "brainstorming",
+      "setting": "open-plan office",
+      "setting_detail": "exposed brick and glass partitions",
+      "shot_type": "medium",
+      "camera_movement": "handheld",
+      "time_of_day": "indoor_artificial",
+      "mood": [
+        "professional",
+        "busy",
+        "focused"
+      ],
+      "colour_profile": "neutral",
+      "people_count": "small_group",
+      "has_recognisable_faces": true,
+      "has_text_on_screen": false,
+      "pace": "moderate",
+      "tags": [
+        "meeting",
+        "teamwork",
+        "collaboration",
+        "startup",
+        "whiteboard",
+        "office",
+        "business",
+        "planning",
+        "colleagues"
+      ],
+      "usable_for": [
+        "b-roll under narration",
+        "talking-head cutaway"
+      ],
+      "quality_flags": [],
+      "confidence": 0.88
+    }
+  },
+  {
+    "filename": "forest_walk_autumn.mp4",
+    "duration_s": 11.0,
+    "width": 1920,
+    "height": 1080,
+    "fps": 25.0,
+    "analysis": {
+      "caption": "The camera follows a walker along a leaf-strewn path through low autumn light.",
+      "subjects": [
+        "person",
+        "forest",
+        "tree",
+        "leaves"
+      ],
+      "action": "hiking",
+      "setting": "forest",
+      "setting_detail": "beech woodland in late autumn",
+      "shot_type": "medium_wide",
+      "camera_movement": "tracking",
+      "time_of_day": "golden_hour",
+      "mood": [
+        "natural",
+        "contemplative",
+        "warm"
+      ],
+      "colour_profile": "warm",
+      "people_count": "one",
+      "has_recognisable_faces": false,
+      "has_text_on_screen": false,
+      "pace": "moderate",
+      "tags": [
+        "forest",
+        "woodland",
+        "autumn",
+        "walking",
+        "hiking",
+        "nature",
+        "trees",
+        "leaves",
+        "outdoors",
+        "escape"
+      ],
+      "usable_for": [
+        "b-roll under narration",
+        "mood setter"
+      ],
+      "quality_flags": [],
+      "confidence": 0.88
+    }
+  },
+  {
+    "filename": "city_timelapse_night.mp4",
+    "duration_s": 14.0,
+    "width": 1920,
+    "height": 1080,
+    "fps": 25.0,
+    "analysis": {
+      "caption": "Traffic streaks across a downtown junction while crowds pour over the crossing.",
+      "subjects": [
+        "city",
+        "crowd",
+        "street",
+        "car"
+      ],
+      "action": "travelling",
+      "setting": "city street",
+      "setting_detail": "neon-lit downtown junction",
+      "shot_type": "wide",
+      "camera_movement": "static",
+      "time_of_day": "night",
+      "mood": [
+        "energetic",
+        "busy",
+        "dynamic"
+      ],
+      "colour_profile": "cool",
+      "people_count": "crowd",
+      "has_recognisable_faces": false,
+      "has_text_on_screen": false,
+      "pace": "fast",
+      "tags": [
+        "city",
+        "night",
+        "timelapse",
+        "traffic",
+        "urban",
+        "crowd",
+        "commute",
+        "downtown",
+        "lights",
+        "rush hour"
+      ],
+      "usable_for": [
+        "establishing shot",
+        "opener",
+        "time-lapse insert"
+      ],
+      "quality_flags": [],
+      "confidence": 0.88
+    }
+  },
+  {
+    "filename": "coffee_pour_closeup.mp4",
+    "duration_s": 7.0,
+    "width": 1920,
+    "height": 1080,
+    "fps": 25.0,
+    "analysis": {
+      "caption": "Hands tip a gooseneck kettle over a filter, steam curling off the grounds.",
+      "subjects": [
+        "hands",
+        "coffee",
+        "kitchen"
+      ],
+      "action": "pouring",
+      "setting": "cafe",
+      "setting_detail": "matte black kettle on a wooden counter",
+      "shot_type": "extreme_close_up",
+      "camera_movement": "static",
+      "time_of_day": "indoor_artificial",
+      "mood": [
+        "cosy",
+        "warm",
+        "intimate"
+      ],
+      "colour_profile": "warm",
+      "people_count": "one",
+      "has_recognisable_faces": false,
+      "has_text_on_screen": false,
+      "pace": "slow",
+      "tags": [
+        "coffee",
+        "pour over",
+        "barista",
+        "brewing",
+        "kettle",
+        "cafe",
+        "hands",
+        "morning",
+        "ritual",
+        "steam"
+      ],
+      "usable_for": [
+        "detail insert",
+        "product hero"
+      ],
+      "quality_flags": [],
+      "confidence": 0.88
+    }
+  },
+  {
+    "filename": "gym_weights_lifting.mp4",
+    "duration_s": 6.0,
+    "width": 1920,
+    "height": 1080,
+    "fps": 25.0,
+    "analysis": {
+      "caption": "An athlete drives a loaded barbell up off the rack, breath held, chalk in the air.",
+      "subjects": [
+        "athlete",
+        "gym equipment",
+        "person"
+      ],
+      "action": "lifting weights",
+      "setting": "gym",
+      "setting_detail": "concrete-floored strength gym",
+      "shot_type": "medium",
+      "camera_movement": "handheld",
+      "time_of_day": "indoor_artificial",
+      "mood": [
+        "intense",
+        "determined",
+        "powerful"
+      ],
+      "colour_profile": "dark_moody",
+      "people_count": "one",
+      "has_recognisable_faces": true,
+      "has_text_on_screen": false,
+      "pace": "fast",
+      "tags": [
+        "gym",
+        "weights",
+        "strength",
+        "training",
+        "fitness",
+        "workout",
+        "barbell",
+        "effort",
+        "exercise",
+        "discipline"
+      ],
+      "usable_for": [
+        "b-roll under narration",
+        "ad hook"
+      ],
+      "quality_flags": [],
+      "confidence": 0.88
+    }
+  },
+  {
+    "filename": "laptop_typing_desk.mp4",
+    "duration_s": 8.0,
+    "width": 1920,
+    "height": 1080,
+    "fps": 25.0,
+    "analysis": {
+      "caption": "Fingers move quickly across a laptop keyboard beside a half-finished notebook.",
+      "subjects": [
+        "hands",
+        "laptop",
+        "desk",
+        "keyboard"
+      ],
+      "action": "typing",
+      "setting": "home office",
+      "setting_detail": "warm desk lamp on a pale oak desk",
+      "shot_type": "close_up",
+      "camera_movement": "static",
+      "time_of_day": "indoor_artificial",
+      "mood": [
+        "focused",
+        "professional",
+        "quiet"
+      ],
+      "colour_profile": "neutral",
+      "people_count": "one",
+      "has_recognisable_faces": false,
+      "has_text_on_screen": false,
+      "pace": "moderate",
+      "tags": [
+        "typing",
+        "laptop",
+        "keyboard",
+        "working",
+        "remote work",
+        "desk",
+        "writing",
+        "productivity",
+        "freelance",
+        "office"
+      ],
+      "usable_for": [
+        "b-roll under narration",
+        "talking-head cutaway"
+      ],
+      "quality_flags": [],
+      "confidence": 0.88
+    }
+  },
+  {
+    "filename": "mountain_drone_flyover.mp4",
+    "duration_s": 13.0,
+    "width": 1920,
+    "height": 1080,
+    "fps": 25.0,
+    "analysis": {
+      "caption": "A drone sweeps out over a ridge line, cloud shadow moving across the valley below.",
+      "subjects": [
+        "mountain",
+        "clouds",
+        "sky"
+      ],
+      "action": "flying",
+      "setting": "mountain",
+      "setting_detail": "granite ridge above a glacial valley",
+      "shot_type": "aerial",
+      "camera_movement": "drone_fly_over",
+      "time_of_day": "morning",
+      "mood": [
+        "epic",
+        "expansive",
+        "cinematic"
+      ],
+      "colour_profile": "cool",
+      "people_count": "none",
+      "has_recognisable_faces": false,
+      "has_text_on_screen": false,
+      "pace": "moderate",
+      "tags": [
+        "drone",
+        "aerial",
+        "mountains",
+        "landscape",
+        "flyover",
+        "ridge",
+        "wilderness",
+        "scale",
+        "epic",
+        "nature"
+      ],
+      "usable_for": [
+        "establishing shot",
+        "opener"
+      ],
+      "quality_flags": [],
+      "confidence": 0.88
+    }
+  },
+  {
+    "filename": "kitchen_chopping_vegetables.mp4",
+    "duration_s": 6.5,
+    "width": 1920,
+    "height": 1080,
+    "fps": 25.0,
+    "analysis": {
+      "caption": "A chef rocks a knife through herbs on a scarred wooden board.",
+      "subjects": [
+        "chef",
+        "hands",
+        "vegetable",
+        "kitchen"
+      ],
+      "action": "chopping",
+      "setting": "kitchen",
+      "setting_detail": "busy restaurant prep bench",
+      "shot_type": "close_up",
+      "camera_movement": "static",
+      "time_of_day": "indoor_artificial",
+      "mood": [
+        "focused",
+        "warm",
+        "natural"
+      ],
+      "colour_profile": "warm",
+      "people_count": "one",
+      "has_recognisable_faces": false,
+      "has_text_on_screen": false,
+      "pace": "moderate",
+      "tags": [
+        "cooking",
+        "chef",
+        "knife",
+        "vegetables",
+        "prep",
+        "kitchen",
+        "food",
+        "herbs",
+        "restaurant",
+        "hands"
+      ],
+      "usable_for": [
+        "detail insert",
+        "b-roll under narration"
+      ],
+      "quality_flags": [],
+      "confidence": 0.88
+    }
+  },
+  {
+    "filename": "rain_window_moody.mp4",
+    "duration_s": 10.0,
+    "width": 1920,
+    "height": 1080,
+    "fps": 25.0,
+    "analysis": {
+      "caption": "Rain runs down a dark window, the street beyond dissolved into soft light.",
+      "subjects": [
+        "rain",
+        "window",
+        "light"
+      ],
+      "action": "raining",
+      "setting": "indoors",
+      "setting_detail": "condensation on old single glazing",
+      "shot_type": "close_up",
+      "camera_movement": "static",
+      "time_of_day": "dusk",
+      "mood": [
+        "melancholy",
+        "quiet",
+        "moody"
+      ],
+      "colour_profile": "dark_moody",
+      "people_count": "none",
+      "has_recognisable_faces": false,
+      "has_text_on_screen": false,
+      "pace": "slow",
+      "tags": [
+        "rain",
+        "window",
+        "moody",
+        "weather",
+        "reflection",
+        "lonely",
+        "autumn",
+        "droplets",
+        "grey",
+        "calm"
+      ],
+      "usable_for": [
+        "mood setter",
+        "text background",
+        "transition"
+      ],
+      "quality_flags": [],
+      "confidence": 0.88
+    }
+  },
+  {
+    "filename": "surfer_wave_ocean.mp4",
+    "duration_s": 8.0,
+    "width": 1920,
+    "height": 1080,
+    "fps": 25.0,
+    "analysis": {
+      "caption": "A surfer carves down the face of a head-high wave, spray peeling off the lip.",
+      "subjects": [
+        "athlete",
+        "ocean",
+        "wave"
+      ],
+      "action": "surfing",
+      "setting": "coastline",
+      "setting_detail": "grey offshore swell",
+      "shot_type": "wide",
+      "camera_movement": "tracking",
+      "time_of_day": "afternoon",
+      "mood": [
+        "energetic",
+        "adventurous",
+        "dynamic"
+      ],
+      "colour_profile": "cool",
+      "people_count": "one",
+      "has_recognisable_faces": false,
+      "has_text_on_screen": false,
+      "pace": "fast",
+      "tags": [
+        "surfing",
+        "surfer",
+        "wave",
+        "ocean",
+        "sea",
+        "sport",
+        "adventure",
+        "water",
+        "swell",
+        "action"
+      ],
+      "usable_for": [
+        "ad hook",
+        "montage element"
+      ],
+      "quality_flags": [],
+      "confidence": 0.88
+    }
+  },
+  {
+    "filename": "child_playing_park.mp4",
+    "duration_s": 7.0,
+    "width": 1920,
+    "height": 1080,
+    "fps": 25.0,
+    "analysis": {
+      "caption": "A small child runs through long grass in a park, laughing back at the camera.",
+      "subjects": [
+        "child",
+        "park",
+        "grass"
+      ],
+      "action": "playing",
+      "setting": "park",
+      "setting_detail": "municipal park in early summer",
+      "shot_type": "medium",
+      "camera_movement": "handheld",
+      "time_of_day": "afternoon",
+      "mood": [
+        "joyful",
+        "playful",
+        "wholesome"
+      ],
+      "colour_profile": "vibrant",
+      "people_count": "one",
+      "has_recognisable_faces": true,
+      "has_text_on_screen": false,
+      "pace": "fast",
+      "tags": [
+        "child",
+        "kid",
+        "play",
+        "park",
+        "running",
+        "family",
+        "summer",
+        "laughing",
+        "outdoors",
+        "childhood"
+      ],
+      "usable_for": [
+        "b-roll under narration",
+        "mood setter"
+      ],
+      "quality_flags": [],
+      "confidence": 0.88
+    }
+  },
+  {
+    "filename": "factory_robot_arm.mp4",
+    "duration_s": 9.0,
+    "width": 1920,
+    "height": 1080,
+    "fps": 25.0,
+    "analysis": {
+      "caption": "A robotic arm pivots and places a component with a single unhurried movement.",
+      "subjects": [
+        "machinery",
+        "factory"
+      ],
+      "action": "assembling",
+      "setting": "factory floor",
+      "setting_detail": "automated production cell",
+      "shot_type": "medium",
+      "camera_movement": "static",
+      "time_of_day": "indoor_artificial",
+      "mood": [
+        "technical",
+        "industrial",
+        "modern"
+      ],
+      "colour_profile": "cool",
+      "people_count": "none",
+      "has_recognisable_faces": false,
+      "has_text_on_screen": false,
+      "pace": "moderate",
+      "tags": [
+        "robot",
+        "automation",
+        "factory",
+        "manufacturing",
+        "industry",
+        "machine",
+        "production",
+        "engineering",
+        "assembly",
+        "technology"
+      ],
+      "usable_for": [
+        "b-roll under narration",
+        "establishing shot"
+      ],
+      "quality_flags": [],
+      "confidence": 0.88
+    }
+  },
+  {
+    "filename": "yoga_studio_stretching.mp4",
+    "duration_s": 10.0,
+    "width": 1920,
+    "height": 1080,
+    "fps": 25.0,
+    "analysis": {
+      "caption": "A woman moves slowly through a stretch in a bright, near-empty studio.",
+      "subjects": [
+        "woman",
+        "yoga mat",
+        "studio"
+      ],
+      "action": "doing yoga",
+      "setting": "yoga studio",
+      "setting_detail": "whitewashed studio with tall windows",
+      "shot_type": "wide",
+      "camera_movement": "static",
+      "time_of_day": "morning",
+      "mood": [
+        "calm",
+        "focused",
+        "clean"
+      ],
+      "colour_profile": "bright_airy",
+      "people_count": "one",
+      "has_recognisable_faces": true,
+      "has_text_on_screen": false,
+      "pace": "slow",
+      "tags": [
+        "yoga",
+        "stretching",
+        "wellness",
+        "studio",
+        "mobility",
+        "calm",
+        "practice",
+        "health",
+        "morning",
+        "breathe"
+      ],
+      "usable_for": [
+        "b-roll under narration",
+        "mood setter"
+      ],
+      "quality_flags": [],
+      "confidence": 0.88
+    }
+  }
+]

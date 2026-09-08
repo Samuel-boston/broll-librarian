@@ -19,13 +19,20 @@ import typer
 from . import config as cfg
 from .analysis.analyzer import Analyzer
 from .analysis.prompt import PROMPT_VERSION
+from .analysis.embedder import get_embedder
 from .analysis.providers.registry import VISION_PROVIDERS, check_credentials
 from .analysis.schema import ShotContext, find_oov
 from .db.models import Shot, Source, Workspace
 from .db.store import Registry, Store, new_id
 from .ingest.frames import best_frame, save_thumbnail
 from .ingest.hashing import content_hash
+from .ingest.pipeline import IngestPipeline
 from .ingest.probe import NotAVideoError, probe
+from .ingest.scanner import scan_local
+from .jobs.queue import enqueue_files, queue_stats
+from .jobs.worker import Worker
+from .search.filters import SearchFilters
+from .search.query import SearchEngine
 
 app = typer.Typer(
     add_completion=False,
@@ -280,131 +287,6 @@ def analyse(
         _echo(f"frames kept in {work_dir}", err=True)
 
 
-@app.command()
-def index(
-    path: Path = typer.Argument(..., exists=True, readable=True),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
-    force: bool = typer.Option(False, "--force", help="Re-index even if the content hash is known."),
-) -> None:
-    """Index a local video into the workspace database.
-
-    M1 treats each file as a single shot; shot detection and the job queue land
-    in M2, at which point this command gains folder and Drive-folder sources.
-    """
-    workspace_config = resolve_workspace(workspace)
-    try:
-        check_credentials(workspace_config)
-    except Exception as exc:
-        _fail(str(exc))
-
-    files = _collect_videos(path)
-    if not files:
-        _fail(f"No video files found at {path}")
-    if len(files) > 1:
-        _echo(
-            f"{len(files)} videos found. M1 indexes them one at a time, serially; "
-            "the concurrent job queue arrives in M2."
-        )
-
-    workspace_config.ensure_dirs()
-    store = Store.for_config(workspace_config)
-    analyzer = Analyzer(workspace_config)
-    total_cost = 0.0
-
-    try:
-        for video in files:
-            total_cost += _index_one(store, workspace_config, analyzer, video, force)
-    finally:
-        store.close()
-
-    _echo(f"Estimated cost so far: ${total_cost:.4f}")
-
-
-def _collect_videos(path: Path) -> list[Path]:
-    if path.is_file():
-        return [path]
-    return sorted(
-        p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_SUFFIXES
-    )
-
-
-def _index_one(store, workspace_config, analyzer, video: Path, force: bool) -> float:
-    digest = content_hash(video)
-    existing = store.source_by_hash(digest)
-    if existing and not force:
-        _echo(f"skip  {video.name} - already indexed as {existing.id} ({existing.status})")
-        return 0.0
-
-    try:
-        meta = probe(video)
-    except NotAVideoError as exc:
-        _echo(f"skip  {video.name} - {exc}")
-        return 0.0
-
-    source = existing or store.insert_source(
-        Source(
-            id=new_id(),
-            workspace_id=workspace_config.id,
-            content_hash=digest,
-            original_filename=video.name,
-            origin="local",
-            origin_path=str(video.resolve()),
-            duration_s=meta.duration_s,
-            width=meta.width,
-            height=meta.height,
-            fps=meta.fps,
-            codec=meta.codec,
-            filesize_bytes=meta.filesize_bytes,
-            status="analysing",
-        )
-    )
-    store.update_source(source.id, status="analysing", analysis_version=PROMPT_VERSION)
-
-    context = _single_shot_context(video, meta)
-    work_dir = workspace_config.temp_dir / f"index-{source.id[:8]}"
-    outcome = asyncio.run(analyzer.analyse_shot(video, context, work_dir))
-
-    shot = store.get_shot(f"{source.id}-0") or Shot(
-        id=f"{source.id}-0",
-        workspace_id=workspace_config.id,
-        source_id=source.id,
-        shot_index=0,
-        is_primary=True,
-        start_s=0.0,
-        end_s=meta.duration_s,
-        duration_s=meta.duration_s,
-    )
-    is_new = store.get_shot(shot.id) is None
-
-    if outcome.result is not None:
-        shot.apply_analysis(outcome.result, PROMPT_VERSION)
-        shot.status = outcome.status
-        shot.error_message = None
-    else:
-        shot.status = "needs_review"
-        shot.error_message = outcome.error
-
-    keyframe = best_frame(outcome.frames)
-    if keyframe:
-        thumbnail = workspace_config.thumbnails_dir / f"{shot.id}.jpg"
-        save_thumbnail(keyframe, thumbnail, workspace_config.ingest.thumbnail_max_edge)
-        shot.thumbnail_path = str(thumbnail)
-
-    store.insert_shot(shot) if is_new else store.update_shot(shot)
-    if outcome.oov:
-        store.record_vocabulary_candidates(outcome.oov)
-    status = store.recompute_source_status(source.id)
-
-    for frame in outcome.frames:
-        frame.unlink(missing_ok=True)
-    if work_dir.exists() and not any(work_dir.iterdir()):
-        work_dir.rmdir()
-
-    caption = (outcome.result.caption if outcome.result else outcome.error) or ""
-    _echo(f"{status:<12} {video.name} - {caption}")
-    return outcome.cost_usd
-
-
 @app.command(name="show")
 def show_source(
     source_id: str = typer.Argument(...),
@@ -427,28 +309,267 @@ def show_source(
 
 
 @app.command()
-def status(
+def index(
+    path: Optional[Path] = typer.Argument(None, exists=True, readable=True,
+                                          help="A video file or a folder of them."),
+    drive_folder: Optional[str] = typer.Option(None, "--drive-folder",
+                                               help="Index footage already in a Drive folder (M3)."),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    force: bool = typer.Option(False, "--force", help="Re-analyse even if the content hash is known."),
+    wait: bool = typer.Option(True, "--wait/--no-wait", help="Work the queue now, or just enqueue."),
+    concurrency: Optional[int] = typer.Option(None, "--concurrency", "-c"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the plan and touch nothing."),
 ) -> None:
-    """Library and queue counts."""
+    """Queue footage for indexing and, unless --no-wait, work the queue."""
+    workspace_config = resolve_workspace(workspace)
+    if (path is None) == (drive_folder is None):
+        _fail("Give either a path or --drive-folder.")
+
+    if drive_folder:
+        from .ingest.scanner import scan_drive_folder
+
+        try:
+            files = scan_drive_folder(drive_folder)
+        except NotImplementedError as exc:
+            _fail(str(exc))
+    else:
+        files = scan_local(path)
+
+    if not files:
+        _fail(f"No video files found at {path}")
+
+    if dry_run:
+        _echo(f"Would queue {len(files)} file(s) into workspace {workspace_config.id!r}:")
+        for discovered in files:
+            _echo(f"  {discovered.origin:<7} {discovered.origin_path or discovered.filename}")
+        _echo("Nothing was written. Drop --dry-run to run it.")
+        return
+
+    try:
+        check_credentials(workspace_config)
+    except Exception as exc:
+        _fail(str(exc))
+
+    workspace_config.ensure_dirs()
+    store = Store.for_config(workspace_config)
+    try:
+        jobs = enqueue_files(store, files, force=force)
+        skipped = len(files) - len(jobs)
+        _echo(f"Queued {len(jobs)} file(s)" + (f", {skipped} already queued" if skipped else ""))
+        if not wait:
+            _echo("Run `broll work` to process the queue.")
+            return
+        _run_worker(workspace_config, store, concurrency)
+    finally:
+        store.close()
+
+
+@app.command()
+def work(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    concurrency: Optional[int] = typer.Option(None, "--concurrency", "-c"),
+    follow: bool = typer.Option(False, "--follow", "-f",
+                                help="Keep running and wait for new jobs."),
+) -> None:
+    """Work the job queue. Safe to kill and restart - it resumes cleanly."""
+    workspace_config = resolve_workspace(workspace)
+    try:
+        check_credentials(workspace_config)
+    except Exception as exc:
+        _fail(str(exc))
+    store = Store.for_config(workspace_config)
+    try:
+        _run_worker(workspace_config, store, concurrency, drain=not follow)
+    finally:
+        store.close()
+
+
+def _run_worker(workspace_config, store, concurrency: int | None, drain: bool = True) -> None:
+    embedder = _load_embedder(workspace_config)
+    if embedder is not None:
+        # Load the model once here rather than racing to load it in four
+        # worker threads at the same time.
+        embedder.warm_up()
+    pipeline = IngestPipeline(workspace_config, store, embedder=embedder)
+
+    def on_progress(event: str, job, result) -> None:
+        name = job.payload.get("filename", job.id[:8])
+        if event == "started":
+            _echo(f"  ... {name}")
+        elif event == "finished" and result is not None:
+            if result.deduped:
+                _echo(f"  dup {name} - already indexed as {result.source_id}")
+            else:
+                _echo(
+                    f"  {result.status:<12} {name} "
+                    f"({result.shots_analysed} shot(s), ${result.cost_usd:.4f})"
+                )
+        elif event == "retrying":
+            _echo(f"  retry {name}")
+        elif event == "failed":
+            typer.secho(f"  FAILED {name}", fg=typer.colors.RED)
+
+    worker = Worker(workspace_config, store, pipeline, concurrency, on_progress)
+    stats = asyncio.run(worker.run(drain=drain))
+    _echo(
+        f"Done: {stats.done} file(s), {stats.shots} shot(s), {stats.failed} failed, "
+        f"{stats.deduped} deduped, ${stats.cost_usd:.4f} estimated, "
+        f"{stats.elapsed_s:.1f}s elapsed"
+    )
+
+
+def _load_embedder(workspace_config, required: bool = False):
+    try:
+        return get_embedder(workspace_config)
+    except Exception as exc:
+        if required:
+            _fail(str(exc))
+        typer.secho(f"  note: embeddings unavailable ({exc}). "
+                    "Shots are indexed for keyword search only; run `broll reembed` "
+                    "once embeddings work.", fg=typer.colors.YELLOW, err=True)
+        return None
+
+
+@app.command()
+def search(
+    query: str = typer.Argument("", help="Natural language, e.g. 'calm beach wide shot golden hour'."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    limit: int = typer.Option(20, "--limit", "-n"),
+    as_json: bool = typer.Option(False, "--json"),
+    shot_type: list[str] = typer.Option([], "--shot-type"),
+    camera_movement: list[str] = typer.Option([], "--camera-movement"),
+    mood: list[str] = typer.Option([], "--mood"),
+    setting: list[str] = typer.Option([], "--setting"),
+    people: list[str] = typer.Option([], "--people", help="none|one|two|small_group|crowd"),
+    time_of_day: list[str] = typer.Option([], "--time-of-day"),
+    usable_for: list[str] = typer.Option([], "--usable-for"),
+    min_duration: Optional[float] = typer.Option(None, "--min-duration"),
+    max_duration: Optional[float] = typer.Option(None, "--max-duration"),
+    min_width: Optional[int] = typer.Option(None, "--min-width"),
+    faces: Optional[bool] = typer.Option(None, "--faces/--no-faces"),
+    clean: bool = typer.Option(False, "--clean", help="Exclude anything with a quality flag."),
+) -> None:
+    """Search the library. Hybrid keyword + vector, fused with RRF."""
     workspace_config = resolve_workspace(workspace)
     store = Store.for_config(workspace_config)
     try:
-        sources = store.conn.execute(
-            "SELECT status, COUNT(*) AS n FROM sources WHERE workspace_id = ? GROUP BY status",
+        embedder = _load_embedder(workspace_config)
+        engine = SearchEngine(store, embedder)
+        filters = SearchFilters(
+            shot_type=list(shot_type), camera_movement=list(camera_movement),
+            mood=list(mood), setting=list(setting), people_count=list(people),
+            time_of_day=list(time_of_day), usable_for=list(usable_for),
+            duration_min_s=min_duration, duration_max_s=max_duration,
+            min_width=min_width, has_faces=faces, exclude_flagged=clean,
+        )
+        results = engine.search(query, filters, limit)
+    finally:
+        store.close()
+
+    if as_json:
+        _echo(json.dumps([r.to_dict() for r in results], indent=2))
+        return
+    if not results:
+        _echo("No matches.")
+        return
+    for position, result in enumerate(results, start=1):
+        link = result.drive_link or result.shot.thumbnail_path or ""
+        _echo(
+            f"{position:>2}. [{result.score:.4f} {'+'.join(result.matched) or 'browse'}] "
+            f"{result.source.original_filename} @{result.timecode} "
+            f"({result.shot.duration_s:.1f}s, {result.shot.shot_type})"
+        )
+        _echo(f"    {result.shot.caption}")
+        if link:
+            _echo(f"    {link}")
+
+
+@app.command()
+def reembed(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation."),
+) -> None:
+    """Drop and rebuild the vector index. Needed after changing the embedder."""
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        embedder = _load_embedder(workspace_config, required=True)
+        shots = store.list_shots(limit=1_000_000)
+        indexable = [s for s in shots if s.search_text]
+        if not yes:
+            typer.confirm(
+                f"Rebuild embeddings for {len(indexable)} shot(s) using "
+                f"{embedder.signature}?",
+                abort=True,
+            )
+        store.vectors.rebuild(embedder.dimensions)
+        batch_size = 64
+        for start in range(0, len(indexable), batch_size):
+            batch = indexable[start:start + batch_size]
+            texts = [store.recompute_search_text(s.id) for s in batch]
+            vectors = embedder.embed(texts)
+            for shot, vector in zip(batch, vectors):
+                store.vectors.upsert(shot.id, vector)
+            _echo(f"  embedded {min(start + batch_size, len(indexable))}/{len(indexable)}")
+        _echo(f"Rebuilt {store.vectors.count()} vector(s) via the "
+              f"{store.vectors.backend} backend.")
+    finally:
+        store.close()
+
+
+@app.command()
+def status(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Queue state, library counts and cost."""
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        stats = queue_stats(store)
+        sources = {
+            r["status"]: r["n"]
+            for r in store.conn.execute(
+                "SELECT status, COUNT(*) AS n FROM sources WHERE workspace_id = ? GROUP BY status",
+                (workspace_config.id,),
+            ).fetchall()
+        }
+        spent = store.total_cost()
+        done_cost = store.conn.execute(
+            "SELECT AVG(cost_estimate_usd) FROM jobs"
+            " WHERE workspace_id = ? AND status = 'done' AND cost_estimate_usd > 0",
             (workspace_config.id,),
-        ).fetchall()
+        ).fetchone()[0]
+        per_file = float(done_cost) if done_cost else 0.0
+        remaining = per_file * stats.outstanding
+
+        payload = {
+            "workspace": workspace_config.id,
+            "jobs": stats.__dict__,
+            "sources": sources,
+            "shots": store.count_shots(),
+            "needs_review": store.count_shots("needs_review"),
+            "vectors": store.vectors.count(),
+            "vector_backend": store.vectors.backend,
+            "cost_usd_so_far": round(spent, 4),
+            "cost_usd_estimated_remaining": round(remaining, 4),
+        }
+        if as_json:
+            _echo(json.dumps(payload, indent=2))
+            return
+
         _echo(f"workspace: {workspace_config.id} ({workspace_config.name})")
-        _echo("sources:   " + (", ".join(f"{r['status']}={r['n']}" for r in sources) or "none"))
-        _echo(f"shots:     {store.count_shots()} total, "
-              f"{store.count_shots('needs_review')} need review")
-        jobs = store.job_counts()
-        _echo("jobs:      " + (", ".join(f"{k}={v}" for k, v in jobs.items()) or "none"))
-        _echo(f"cost:      ${store.total_cost():.4f} estimated so far")
+        _echo(f"jobs:      queued={stats.queued} running={stats.running} "
+              f"done={stats.done} failed={stats.failed}")
+        _echo("sources:   " + (", ".join(f"{k}={v}" for k, v in sources.items()) or "none"))
+        _echo(f"shots:     {payload['shots']} total, {payload['needs_review']} need review")
+        _echo(f"vectors:   {payload['vectors']} ({payload['vector_backend']} backend)")
+        _echo(f"cost:      ${spent:.4f} spent, ~${remaining:.4f} remaining "
+              f"({stats.outstanding} file(s) outstanding)")
         candidates = store.vocabulary_candidates(min_count=2)
         if candidates:
-            top = ", ".join(f"{c['term']}({c['count']})" for c in candidates[:8])
-            _echo(f"vocab candidates: {top}")
+            _echo("vocab candidates: " +
+                  ", ".join(f"{c['term']}({c['count']})" for c in candidates[:8]))
     finally:
         store.close()
 

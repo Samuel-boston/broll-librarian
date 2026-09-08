@@ -1,4 +1,6 @@
-"""All SQL lives here. Nothing else in the codebase touches SQLite.
+"""All SQL lives here. Nothing else in the codebase touches SQLite, with one
+exception: db/vectors.py owns the vector table, because its DDL depends on which
+backend the interpreter can support.
 
 Two databases: the registry (workspace list) and one library.db per workspace.
 Every workspace query filters on workspace_id even though each workspace has
@@ -19,6 +21,7 @@ from typing import Any
 from ..config import WorkspaceConfig, broll_home, registry_path, workspace_dir
 from .migrations import migrate, migrate_registry
 from .models import Job, Shot, ShotFacets, Source, Workspace
+from .vectors import VectorIndex, get_vector_index
 
 LIST_FACETS = ("subjects", "mood", "usable_for", "quality_flags")
 SCALAR_FACETS = (
@@ -117,15 +120,24 @@ class Registry:
 class Store:
     """Everything that reads or writes a workspace's library.db."""
 
-    def __init__(self, workspace_id: str, path: Path | None = None):
+    def __init__(self, workspace_id: str, path: Path | None = None, dimensions: int = 384):
         self.workspace_id = workspace_id
         self.path = path or (workspace_dir(workspace_id) / "library.db")
         self.conn = connect(self.path)
         migrate(self.conn)
+        self._dimensions = dimensions
+        self._vectors: VectorIndex | None = None
+
+    @property
+    def vectors(self) -> VectorIndex:
+        """Lazily opened so a workspace that never searches never builds one."""
+        if self._vectors is None:
+            self._vectors = get_vector_index(self.conn, self.workspace_id, self._dimensions)
+        return self._vectors
 
     @classmethod
     def for_config(cls, config: WorkspaceConfig) -> "Store":
-        return cls(config.id, config.db_path)
+        return cls(config.id, config.db_path, config.embedder.dimensions)
 
     def close(self) -> None:
         self.conn.close()

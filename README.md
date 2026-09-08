@@ -22,7 +22,7 @@ a Google Drive file ID. Everything else follows from that constraint.
 | Milestone | Scope | State |
 |---|---|---|
 | **M1** | Config, registry + workspace schema, provider abstraction, frame extraction, analysis, `broll analyse` | **done** |
-| M2 | Shot detection, job queue, batch indexing, embeddings, FTS5 + vector search | not started |
+| **M2** | Shot detection, job queue, batch indexing, embeddings, FTS5 + vector search | **done** |
 | M3 | Drive OAuth, upload, taxonomy, shortcut tree, `reorganise`, `--dry-run` | not started |
 | M4 | Web UI: ingest, queue view, search | not started |
 | M5 | Transcript matching, FCP7 XML / EDL / CSV export | not started |
@@ -65,10 +65,20 @@ provider's embedding API and says so at startup.
 cp .env.example .env        # then put your provider key in it
 broll init --name "My Library" --provider gemini
 broll doctor
-broll analyse path/to/clip.mp4      # prints the analysis as JSON, writes nothing
-broll index path/to/clip.mp4        # stores it in the workspace database
-broll status
+
+broll analyse path/to/clip.mp4         # print the analysis as JSON, write nothing
+broll index path/to/footage --dry-run  # show the plan, touch nothing
+broll index path/to/footage            # queue it and work the queue
+broll status                           # queue, counts, cost so far and remaining
+broll search "calm beach wide shot golden hour" --limit 20
+broll search "" --shot-type aerial --clean --json
 ```
+
+`broll index` queues one job per file and then works the queue with four
+concurrent workers. **Kill it at any point and run `broll index` or `broll work`
+again** — jobs are claimed atomically in SQLite, a job left mid-flight is
+requeued, and a source that was half-ingested resumes at the first shot that is
+not yet indexed. Nothing is analysed twice.
 
 Every UI action is also a CLI command. The CLI is the real interface; the web UI
 is a client of it.
@@ -125,6 +135,40 @@ input tokens, mostly the controlled vocabularies) and ~350 output tokens:
 These are estimates from published list prices, computed by
 `analysis/providers/*.PRICING`. Real costs are logged per job and shown by
 `broll status` — trust those over this table.
+
+## How search works
+
+Hybrid retrieval, because neither half is good enough alone:
+
+* **Keyword** — FTS5 over a single denormalised `shots.search_text` column
+  (caption + facets + tags), recomputed in exactly one place. Every user token is
+  quoted before it reaches FTS5, so `person's wide-shot`, `NEAR(a b)` and a stray
+  `"` are searches, not syntax errors.
+* **Vector** — KNN over shot embeddings. Because a vector index cannot pre-filter
+  against a join, the vector side over-fetches `limit x 10` and applies the
+  filters afterwards; the keyword side applies them as ordinary SQL.
+* **Fusion** — reciprocal rank fusion (k=60). Simpler than normalising raw
+  scores, and better.
+
+An empty query with filters is a browse, newest first.
+
+### Vector backends
+
+The spec calls for `sqlite-vec`, which is a loadable SQLite extension. Some
+Python builds — including the python.org macOS framework build this was
+developed against — compile `sqlite3` **without** extension loading, so
+`sqlite-vec` cannot be loaded at all, and a client machine is not where you want
+to discover that. So both backends ship and the right one is chosen
+automatically:
+
+| Backend | When | Notes |
+|---|---|---|
+| `sqlite-vec` | the interpreter can load extensions | a `vec0` virtual table, as specced |
+| `numpy` | it cannot | exact cosine KNN over blobs; ~milliseconds at tens of thousands of shots |
+
+`broll status` reports which one is in use. Both fix the dimension at creation,
+so changing the embedding model needs `broll reembed`, which drops and rebuilds
+the table.
 
 ## The analysis contract
 
@@ -237,11 +281,13 @@ Run the M1 acceptance gate against a real provider:
 BROLL_ACCEPTANCE_PROVIDER=gemini GEMINI_API_KEY=... pytest tests/test_m1_acceptance.py -s
 ```
 
-### Known environment issue: sqlite-vec
+Run the M2 gates:
 
-Vector search (M2) uses `sqlite-vec`, which is a loadable SQLite extension. Some
-Python builds — including the python.org macOS framework build — ship a `sqlite3`
-module compiled **without** extension loading, so the extension cannot be loaded
-at all. `broll doctor` reports this. Fixes: install Python from Homebrew
-(`brew install python@3.12`), or build with
-`--enable-loadable-sqlite-extensions`.
+```bash
+pytest tests/test_search.py::test_relevance_smoke_test -s   # 8 queries, top-3
+pytest tests/test_queue.py -q                                # resumability
+```
+
+The relevance gate runs against `tests/fixtures/library.json` — 14 recorded
+analyses of a plausible small library — so it is deterministic and offline. It
+was written before the search code, as the spec asks.

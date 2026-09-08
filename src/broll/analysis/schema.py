@@ -190,6 +190,7 @@ SUBJECTS: tuple[str, ...] = (
     "airplane", "drone", "machinery", "tools", "factory", "warehouse",
     "gym equipment", "yoga mat", "money", "documents", "packaging", "product",
     "sign", "window", "door", "stairs", "furniture", "chair", "table", "bed",
+    "park", "studio", "valley", "path", "field",
     "artwork", "texture", "pattern", "light", "shadow", "abstract shapes",
 )
 
