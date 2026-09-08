@@ -32,8 +32,13 @@ from .ingest.scanner import scan_local
 from .jobs.queue import enqueue_files, queue_stats
 from .jobs.worker import Worker
 from .search.filters import SearchFilters
+from .analysis.providers.registry import get_text_provider
 from .drive.organizer import Organizer
 from .search.query import SearchEngine
+from .transcript.exporters import csv_export, edl, fcp7xml
+from .transcript.exporters.base import build_timeline
+from .transcript.matcher import TranscriptMatcher
+from .transcript.parser import parse_and_segment
 
 app = typer.Typer(
     add_completion=False,
@@ -723,6 +728,143 @@ def serve(
         _echo("Worker disabled - run `broll work --follow` separately.")
     uvicorn.run(create_app(workspace_config, run_worker=worker),
                 host=host, port=port, reload=reload)
+
+
+@app.command()
+def transcript(
+    path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True,
+                                help="An .srt, .vtt or plain-text transcript."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    out: Optional[Path] = typer.Option(None, "--out", "-o",
+                                       help="Directory for the exports. Omit to only print."),
+    formats: str = typer.Option("fcp7,edl,csv", "--format", "-f",
+                                help="Comma-separated: fcp7, edl, csv."),
+    name: Optional[str] = typer.Option(None, "--name", help="Sequence name."),
+    no_rerank: bool = typer.Option(False, "--no-rerank",
+                                   help="Skip the model rerank and use search order."),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Match a transcript to B-roll and export a timeline."""
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        beats = parse_and_segment(
+            path.read_text(encoding="utf-8", errors="replace"),
+            path.name,
+            workspace_config.transcript.words_per_minute,
+            workspace_config.transcript.beat_min_s,
+            workspace_config.transcript.beat_max_s,
+        )
+        if not beats:
+            _fail(f"No narration found in {path.name}.")
+
+        embedder = _load_embedder(workspace_config)
+        engine = SearchEngine(store, embedder)
+        text_provider = None
+        if not no_rerank:
+            try:
+                text_provider = get_text_provider(workspace_config)
+            except Exception as exc:
+                typer.secho(f"  note: rerank unavailable ({exc}); using search order.",
+                            fg=typer.colors.YELLOW, err=True)
+
+        matcher = TranscriptMatcher(workspace_config, engine, text_provider)
+        matches = asyncio.run(matcher.match(beats))
+        timeline = build_timeline(matches, workspace_config,
+                                  name=name or path.stem.replace("_", " ").title())
+    finally:
+        store.close()
+
+    if as_json:
+        _echo(json.dumps(_transcript_payload(matches, timeline), indent=2))
+    else:
+        _print_transcript(matches, timeline)
+
+    if out:
+        written = _write_exports(matches, timeline, out, formats, path.stem)
+        for target in written:
+            _echo(f"wrote {target}")
+
+
+def _print_transcript(matches, timeline) -> None:
+    for match in matches:
+        beat = match.beat
+        header = f"[{beat.timecode}] {beat.text}"
+        _echo(header)
+        if match.no_good_match:
+            typer.secho(f"    no good match - {match.missing_footage or 'nothing suitable'}",
+                        fg=typer.colors.YELLOW)
+            continue
+        for rank, suggestion in enumerate(match.suggestions, start=1):
+            marker = "->" if rank == 1 else "  "
+            _echo(f"  {marker} {suggestion.source.original_filename} "
+                  f"@{suggestion.shot.start_s:.1f}s ({suggestion.shot.duration_s:.1f}s)"
+                  f"{' [reused]' if suggestion.reused else ''}")
+            if suggestion.reason:
+                _echo(f"       {suggestion.reason}")
+        _echo("")
+
+    _echo(f"sequence: {timeline.fps} fps, {len(timeline.items)} clip(s), "
+          f"{len(timeline.gaps)} gap(s)")
+    for warning in timeline.warnings:
+        typer.secho(f"  ! {warning}", fg=typer.colors.YELLOW)
+    if timeline.gaps:
+        _echo("\nFootage you should go and shoot:")
+        for gap in timeline.gaps:
+            _echo(f"  [{gap.beat.timecode}] {gap.missing_footage or gap.beat.text}")
+
+
+def _transcript_payload(matches, timeline) -> dict:
+    return {
+        "sequence": {
+            "fps": timeline.fps,
+            "clips": len(timeline.items),
+            "gaps": len(timeline.gaps),
+            "warnings": timeline.warnings,
+        },
+        "beats": [
+            {
+                "index": m.beat.index,
+                "start_s": m.beat.start_s,
+                "end_s": m.beat.end_s,
+                "text": m.beat.text,
+                "no_good_match": m.no_good_match,
+                "missing_footage": m.missing_footage,
+                "suggestions": [
+                    {
+                        "filename": s.source.original_filename,
+                        "shot_id": s.shot.id,
+                        "start_s": s.shot.start_s,
+                        "duration_s": s.shot.duration_s,
+                        "caption": s.shot.caption,
+                        "reason": s.reason,
+                        "confidence": s.confidence,
+                        "reused": s.reused,
+                        "drive_link": s.drive_link,
+                    }
+                    for s in m.suggestions
+                ],
+            }
+            for m in matches
+        ],
+    }
+
+
+def _write_exports(matches, timeline, out: Path, formats: str, stem: str) -> list[Path]:
+    out.mkdir(parents=True, exist_ok=True)
+    wanted = {f.strip().lower() for f in formats.split(",") if f.strip()}
+    unknown = wanted - {"fcp7", "fcp7xml", "xml", "edl", "csv"}
+    if unknown:
+        _fail(f"Unknown export format(s): {', '.join(sorted(unknown))}")
+
+    written: list[Path] = []
+    if wanted & {"fcp7", "fcp7xml", "xml"}:
+        written.append(fcp7xml.write(timeline, out / f"{stem}.xml"))
+    if "edl" in wanted:
+        written.append(edl.write(timeline, out / f"{stem}.edl"))
+    if "csv" in wanted:
+        written.append(csv_export.write(matches, timeline, out / f"{stem}.csv"))
+    return written
 
 
 @app.callback()

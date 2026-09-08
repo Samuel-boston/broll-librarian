@@ -1,0 +1,21 @@
+TITLE: Golden Timeline
+FCM: NON-DROP FRAME
+
+001  BEACHMED V     C        00:00:02:00 00:00:08:00 00:00:00:00 00:00:06:00
+* FROM CLIP NAME: beach_meditation.mp4
+* SOURCE FILE: /Users/editor/Google Drive/My Drive/_Library/2026-09/beach_meditating_dawn_wide_aaaaaaaa.mp4
+* BEAT: Most of us start the day already behind.
+* REASON: Calm and slow: it sets the tone before the problem lands.
+
+002  OFFICEME V     C        00:00:00:00 00:00:08:00 00:00:06:00 00:00:14:00
+* FROM CLIP NAME: office_meeting.mov
+* SOURCE FILE: /Users/editor/Google Drive/My Drive/_Library/2026-09/office_brainstorming_indoor_medium_bbbbbbbb.mov
+* BEAT: So we built something that keeps up with your team.
+* REASON: Shows the team working, without a literal product shot.
+
+003  COFFEEPO V     C        00:00:01:13 00:00:04:13 00:00:14:00 00:00:17:00
+* FROM CLIP NAME: coffee pour.mp4
+* SOURCE FILE: /Users/editor/Google Drive/My Drive/_Library/2026-09/cafe_pouring_indoor_close_up_cccccccc.mp4
+* BEAT: It starts before your first coffee and it never gets in the way.
+* REASON: A small human detail to land the line.
+* GAP AFTER: 125 frames (5.0s) - clip is shorter than the beat

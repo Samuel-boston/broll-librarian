@@ -214,3 +214,51 @@ def test_every_search_control_carries_its_own_verb(workspace):
     controls = re.findall(r"<input[^>]*hx-trigger[^>]*>", html)
     assert controls, "no htmx-driven controls found"
     assert all('hx-get="/search"' in control for control in controls)
+
+
+def test_transcript_screen_matches_swaps_and_exports(workspace, store):
+    from tests.test_search import seed_library
+
+    seed_library(store)
+    store.close()
+
+    srt = ("1\n00:00:00,000 --> 00:00:07,000\n"
+           "Most of us start the day already behind.\n\n"
+           "2\n00:00:07,000 --> 00:00:15,000\n"
+           "So we built something that keeps up with your team.\n")
+
+    with _client(workspace, run_worker=False) as client:
+        assert client.get("/transcript").status_code == 200
+
+        response = client.post("/transcript", data={"text": srt, "filename": "demo.srt",
+                                                    "rerank": "false"})
+        assert response.status_code == 200
+        assert "on timeline" in response.text
+        assert "FCP7 XML" in response.text
+
+        import re
+
+        run_id = re.search(r"/transcript/([0-9a-f]+)/export/xml", response.text).group(1)
+
+        swap = re.search(
+            r'name="beat" value="(\d+)">\s*<input type="hidden" name="shot_id" value="([^"]+)"',
+            response.text,
+        )
+        assert swap, "no alternative offered to swap to"
+        swapped = client.post(f"/transcript/{run_id}/swap",
+                              data={"beat": swap.group(1), "shot_id": swap.group(2)})
+        assert swapped.status_code == 200
+
+        xml = client.get(f"/transcript/{run_id}/export/xml")
+        assert xml.status_code == 200
+        assert xml.text.startswith("<?xml")
+        assert "attachment" in xml.headers["content-disposition"]
+
+        assert client.get(f"/transcript/{run_id}/export/edl").text.startswith("TITLE:")
+        assert "beat,beat_start" in client.get(f"/transcript/{run_id}/export/csv").text
+        assert client.get("/transcript/deadbeef/export/xml").status_code == 404
+
+
+def test_transcript_requires_some_text(workspace):
+    with _client(workspace, run_worker=False) as client:
+        assert client.post("/transcript", data={"text": "  "}).status_code == 400

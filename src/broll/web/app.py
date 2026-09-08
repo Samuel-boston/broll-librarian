@@ -41,6 +41,9 @@ class AppState:
         self.worker: Worker | None = None
         self.worker_task: asyncio.Task | None = None
         self.worker_store: Store | None = None
+        # Transcript runs live in memory: a run is cheap to redo, and
+        # persisting a whole timeline would be a schema for one screen.
+        self.runs: dict[str, object] = {}
 
     def store(self) -> Store:
         """A fresh connection per request. SQLite connections are cheap."""
@@ -96,10 +99,11 @@ def create_app(config: WorkspaceConfig, run_worker: bool = True) -> FastAPI:
         name="thumbnails",
     )
 
-    from .routes import ingest, search
+    from .routes import ingest, search, transcript
 
     app.include_router(search.router)
     app.include_router(ingest.router)
+    app.include_router(transcript.router)
 
     @app.exception_handler(404)
     async def not_found(request: Request, exc):  # noqa: ANN001

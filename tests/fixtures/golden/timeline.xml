@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="5">
+  <sequence id="broll-sequence-1">
+    <name>Golden Timeline</name>
+    <duration>425</duration>
+    <rate>
+      <timebase>25</timebase>
+      <ntsc>FALSE</ntsc>
+    </rate>
+    <timecode>
+      <rate>
+        <timebase>25</timebase>
+        <ntsc>FALSE</ntsc>
+      </rate>
+      <string>00:00:00:00</string>
+      <frame>0</frame>
+      <displayformat>NDF</displayformat>
+    </timecode>
+    <media>
+      <video>
+        <format>
+          <samplecharacteristics>
+            <rate>
+              <timebase>25</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <width>1920</width>
+            <height>1080</height>
+          </samplecharacteristics>
+        </format>
+        <track>
+          <clipitem id="clipitem-1">
+            <name>beach_meditation.mp4</name>
+            <enabled>TRUE</enabled>
+            <duration>150</duration>
+            <rate>
+              <timebase>25</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>0</start>
+            <end>150</end>
+            <in>50</in>
+            <out>200</out>
+            <file id="file-1">
+              <name>beach_meditation.mp4</name>
+              <pathurl>file://localhost/Users/editor/Google%20Drive/My%20Drive/_Library/2026-09/beach_meditating_dawn_wide_aaaaaaaa.mp4</pathurl>
+              <rate>
+                <timebase>25</timebase>
+                <ntsc>FALSE</ntsc>
+              </rate>
+              <media>
+                <video>
+                  <samplecharacteristics>
+                    <rate>
+                      <timebase>25</timebase>
+                      <ntsc>FALSE</ntsc>
+                    </rate>
+                    <width>1920</width>
+                    <height>1080</height>
+                  </samplecharacteristics>
+                </video>
+              </media>
+            </file>
+            <comments>
+              <mastercomment1>Most of us start the day already behind.</mastercomment1>
+              <mastercomment2>Calm and slow: it sets the tone before the problem lands.</mastercomment2>
+            </comments>
+          </clipitem>
+          <clipitem id="clipitem-2">
+            <name>office_meeting.mov</name>
+            <enabled>TRUE</enabled>
+            <duration>200</duration>
+            <rate>
+              <timebase>25</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>150</start>
+            <end>350</end>
+            <in>0</in>
+            <out>240</out>
+            <file id="file-2">
+              <name>office_meeting.mov</name>
+              <pathurl>file://localhost/Users/editor/Google%20Drive/My%20Drive/_Library/2026-09/office_brainstorming_indoor_medium_bbbbbbbb.mov</pathurl>
+              <rate>
+                <timebase>30</timebase>
+                <ntsc>TRUE</ntsc>
+              </rate>
+              <media>
+                <video>
+                  <samplecharacteristics>
+                    <rate>
+                      <timebase>30</timebase>
+                      <ntsc>TRUE</ntsc>
+                    </rate>
+                    <width>1920</width>
+                    <height>1080</height>
+                  </samplecharacteristics>
+                </video>
+              </media>
+            </file>
+            <comments>
+              <mastercomment1>So we built something that keeps up with your team.</mastercomment1>
+              <mastercomment2>Shows the team working, without a literal product shot.</mastercomment2>
+            </comments>
+          </clipitem>
+          <clipitem id="clipitem-3">
+            <name>coffee pour.mp4</name>
+            <enabled>TRUE</enabled>
+            <duration>75</duration>
+            <rate>
+              <timebase>25</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>350</start>
+            <end>425</end>
+            <in>38</in>
+            <out>113</out>
+            <file id="file-3">
+              <name>coffee pour.mp4</name>
+              <pathurl>file://localhost/Users/editor/Google%20Drive/My%20Drive/_Library/2026-09/cafe_pouring_indoor_close_up_cccccccc.mp4</pathurl>
+              <rate>
+                <timebase>25</timebase>
+                <ntsc>FALSE</ntsc>
+              </rate>
+              <media>
+                <video>
+                  <samplecharacteristics>
+                    <rate>
+                      <timebase>25</timebase>
+                      <ntsc>FALSE</ntsc>
+                    </rate>
+                    <width>1920</width>
+                    <height>1080</height>
+                  </samplecharacteristics>
+                </video>
+              </media>
+            </file>
+            <comments>
+              <mastercomment1>It starts before your first coffee and it never gets in the way.</mastercomment1>
+              <mastercomment2>A small human detail to land the line.</mastercomment2>
+            </comments>
+          </clipitem>
+        </track>
+      </video>
+    </media>
+  </sequence>
+</xmeml>

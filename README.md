@@ -25,7 +25,7 @@ a Google Drive file ID. Everything else follows from that constraint.
 | **M2** | Shot detection, job queue, batch indexing, embeddings, FTS5 + vector search | **done** |
 | **M3** | Drive OAuth, upload, taxonomy, shortcut tree, `reorganise`, `--dry-run` | **built; verified against a mock Drive, not yet against live Drive** |
 | **M4** | Web UI: ingest, queue view, search | **done** |
-| M5 | Transcript matching, FCP7 XML / EDL / CSV export | not started |
+| **M5** | Transcript matching, FCP7 XML / EDL / CSV export | **done** (Premiere import is a manual gate, see below) |
 | M6 | Review queue, remaining providers, cost reporting, vocabulary management | not started |
 
 ---
@@ -311,6 +311,34 @@ Tokens are stored per workspace at `~/.broll/workspaces/<id>/drive_token.json`.
 > "In production" removes the expiry but triggers Google's verification
 > requirement for the restricted scope.
 
+## Transcript matching
+
+```bash
+broll transcript script.srt --out ./exports              # all three formats
+broll transcript notes.txt --out ./exports --format fcp7 # plain text is timed by estimate
+broll transcript script.vtt --json                       # machine-readable, no files
+```
+
+Or use the Transcript screen: paste or upload, swap any suggestion for another
+candidate, then export.
+
+1. **Parse** — `.srt` and `.vtt` carry real timecodes; plain text is timed from
+   `transcript.words_per_minute` (default 150) and flagged as estimated.
+2. **Segment into beats** — 3-15 second spans, split on sentence boundaries then
+   merged and divided to land in that window.
+3. **Retrieve** — the same hybrid search, top 8 candidates per beat.
+4. **Rerank** — a text model picks the best 3 with a one-line reason each. It is
+   told that the literal match is usually the wrong answer (narration about
+   "slowing down" wants a calm, slow-paced visual, not necessarily a clock), and
+   that returning **"no good match"** is better than forcing one.
+5. **Enforce variety** — a shot already used in the timeline is penalised, so the
+   same clip does not carry five beats.
+6. **Output** — beat timecode, narration, ranked suggestions with Drive links and
+   reasons, plus a list of the footage you should go and shoot.
+
+If the reranker is unavailable — no key, an outage — the timeline is still
+produced in hybrid-search order rather than failing.
+
 ## Editing exports (M5)
 
 An NLE cannot link media from a Google Drive URL — it needs a local file path.
@@ -324,6 +352,26 @@ for Desktop** mount, using `drive_local_mount_path` in the workspace config, e.g
 If it is not set, the export is still produced but the media will import offline
 and need relinking. This is the single most common reason an editor thinks the
 product is broken.
+
+Timebase and trimming rules, stated once because they are not obvious:
+
+* The sequence timebase comes from config, defaulting to the modal fps across
+  the suggested clips; every source's timecodes are converted into it. Mixed
+  frame rates in one library are normal, so the conversion is explicit and
+  reported.
+* Each clip is placed at its beat's start, trimmed to the beat's duration,
+  starting from the shot's `start_s`.
+* If the shot is shorter than the beat, the remainder is left as a **gap** and
+  flagged in the report — never stretched or frozen.
+
+FCP7 XML (`.xml`) is the export to reach for: it imports into both Premiere Pro
+and DaVinci Resolve. CMX3600 EDL is the universal fallback (one timebase, so
+cross-rate sources are conformed). CSV is for anyone who just wants the list.
+
+**Automated coverage:** golden-file tests for all three formats, including a
+mixed-frame-rate sequence and a clip too short for its beat. **Manual gate not
+yet run:** importing a real export into Premiere with media linked needs a
+Premiere licence and a synced Drive mount.
 
 ## Development
 
