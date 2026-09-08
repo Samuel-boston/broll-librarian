@@ -72,9 +72,37 @@ def stage_upload(src: Path, staging_dir: Path) -> DiscoveredFile:
     )
 
 
-def scan_drive_folder(folder_id: str) -> list[DiscoveredFile]:
-    """Videos already in a Drive folder. Implemented in M3."""
-    raise NotImplementedError(
-        "Indexing an existing Drive folder arrives with M3 (Drive integration). "
-        "Until then, point `broll index` at a local path."
-    )
+def scan_drive_folder(client, folder_id: str, recursive: bool = True) -> list[DiscoveredFile]:
+    """Videos already in a Drive folder.
+
+    Nothing here is downloaded: the pipeline fetches bytes only when it reaches
+    a file it actually has to analyse.
+    """
+    found: list[DiscoveredFile] = []
+    stack = [folder_id]
+    seen: set[str] = set()
+
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        for entry in client.list_children(current).values():
+            if entry.is_folder:
+                if recursive:
+                    stack.append(entry.id)
+                continue
+            if entry.is_shortcut:
+                continue  # a shortcut is another view of a file we already saw
+            if Path(entry.name).suffix.lower() not in VIDEO_SUFFIXES:
+                continue
+            found.append(
+                DiscoveredFile(
+                    origin="drive",
+                    path=None,
+                    filename=entry.name,
+                    drive_file_id=entry.id,
+                    origin_path=f"drive:{entry.id}",
+                )
+            )
+    return sorted(found, key=lambda f: f.filename)

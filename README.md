@@ -23,7 +23,7 @@ a Google Drive file ID. Everything else follows from that constraint.
 |---|---|---|
 | **M1** | Config, registry + workspace schema, provider abstraction, frame extraction, analysis, `broll analyse` | **done** |
 | **M2** | Shot detection, job queue, batch indexing, embeddings, FTS5 + vector search | **done** |
-| M3 | Drive OAuth, upload, taxonomy, shortcut tree, `reorganise`, `--dry-run` | not started |
+| **M3** | Drive OAuth, upload, taxonomy, shortcut tree, `reorganise`, `--dry-run` | **built; verified against a mock Drive, not yet against live Drive** |
 | M4 | Web UI: ingest, queue view, search | not started |
 | M5 | Transcript matching, FCP7 XML / EDL / CSV export | not started |
 | M6 | Review queue, remaining providers, cost reporting, vocabulary management | not started |
@@ -191,6 +191,53 @@ everything downstream degrades.
 The prompt is one shared template in `src/broll/analysis/prompt.py`, versioned
 by `PROMPT_VERSION` and stored on each row as `analysis_version`, so stale rows
 can be found and re-analysed when the prompt improves.
+
+## How the Drive tree is organised
+
+One canonical copy of each file, plus a faceted tree of **shortcuts**. A shortcut
+is a native Drive object pointing at a file without duplicating its bytes, so one
+clip can appear in a dozen browsable places at zero storage cost.
+
+```
+B-Roll/
+├── _Library/2026-09/beach_meditating_golden_hour_wide_a1b2c3d4.mp4   ← the real files
+├── By Subject/Person/
+├── By Action/Meditating/Beach/          ← third level, once 5+ clips share it
+├── By Setting/Beach/Golden Hour/
+├── By Mood/Calm/
+├── By Shot Type/Wide/
+├── By Camera Movement/Static/
+├── By Time of Day/Golden Hour/
+├── By Colour/Warm/
+├── By Use/Establishing Shots/
+└── _Needs Review/                       ← low confidence or quality-flagged
+```
+
+* **Third-level folders are earned.** A combination gets its own subfolder only
+  once `taxonomy.min_clips_for_subfolder` (default 5) clips share it; below that,
+  clips sit at the second level and are promoted later as the library grows.
+  Without this you get thousands of one-item folders.
+* **Levels are capped** at `taxonomy.max_folders_per_level` (default 40); the long
+  tail is grouped under `Other/`.
+* **A multi-shot source** gets the union of its shots' facets, and a shortcut
+  whose name carries the timecode when it is not the primary shot —
+  `..._at_0m42s.mp4` — so a browsing editor knows where to look inside the file.
+* **v1 never splits or re-encodes footage.** Editors want the original file.
+* `broll organise` is idempotent: it reconciles desired against actual state, so
+  a second run performs zero writes. `broll reorganise` rebuilds the whole tree
+  from the database — the escape hatch when the taxonomy changes.
+* Every Drive-writing command takes `--dry-run`, which prints the full plan
+  (every file, every destination, every shortcut) and touches nothing.
+* The organiser **never deletes footage**. The only thing it deletes is a
+  shortcut it created that the taxonomy no longer justifies, and it refuses if
+  the object turns out not to be a shortcut.
+
+```bash
+broll drive login                 # once per workspace
+broll index ~/footage --organise  # index, then file into Drive
+broll organise --dry-run          # show what would change
+broll reorganise                  # rebuild the tree from the database
+```
 
 ## Google Drive setup (needed from M3)
 

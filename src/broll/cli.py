@@ -32,6 +32,7 @@ from .ingest.scanner import scan_local
 from .jobs.queue import enqueue_files, queue_stats
 from .jobs.worker import Worker
 from .search.filters import SearchFilters
+from .drive.organizer import Organizer
 from .search.query import SearchEngine
 
 app = typer.Typer(
@@ -319,6 +320,8 @@ def index(
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Work the queue now, or just enqueue."),
     concurrency: Optional[int] = typer.Option(None, "--concurrency", "-c"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the plan and touch nothing."),
+    organise_after: bool = typer.Option(False, "--organise",
+                                        help="File the results into Drive when indexing finishes."),
 ) -> None:
     """Queue footage for indexing and, unless --no-wait, work the queue."""
     workspace_config = resolve_workspace(workspace)
@@ -328,10 +331,7 @@ def index(
     if drive_folder:
         from .ingest.scanner import scan_drive_folder
 
-        try:
-            files = scan_drive_folder(drive_folder)
-        except NotImplementedError as exc:
-            _fail(str(exc))
+        files = scan_drive_folder(_drive_client(workspace_config), drive_folder)
     else:
         files = scan_local(path)
 
@@ -360,6 +360,9 @@ def index(
             _echo("Run `broll work` to process the queue.")
             return
         _run_worker(workspace_config, store, concurrency)
+        if organise_after:
+            client = _drive_client(workspace_config)
+            _report_organise(Organizer(workspace_config, store, client).reorganise(), False)
     finally:
         store.close()
 
@@ -572,6 +575,129 @@ def status(
                   ", ".join(f"{c['term']}({c['count']})" for c in candidates[:8]))
     finally:
         store.close()
+
+
+drive_app = typer.Typer(no_args_is_help=True, help="Google Drive connection.")
+app.add_typer(drive_app, name="drive")
+
+
+def _drive_client(workspace_config):
+    from .drive.auth import DriveAuthError, load_credentials
+    from .drive.client import DriveClient
+
+    try:
+        credentials = load_credentials(workspace_config)
+    except DriveAuthError as exc:
+        _fail(str(exc))
+    if credentials is None:
+        _fail(
+            f"Drive is not connected for workspace {workspace_config.id!r}. "
+            "Run `broll drive login` (see the README walkthrough for creating "
+            "the Google Cloud project first)."
+        )
+    return DriveClient(credentials)
+
+
+@drive_app.command("login")
+def drive_login(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    port: int = typer.Option(0, "--port", help="Local callback port. 0 picks one."),
+) -> None:
+    """Authorise this workspace against your Google account."""
+    workspace_config = resolve_workspace(workspace)
+    from .drive.auth import DriveAuthError, login
+
+    try:
+        login(workspace_config, port=port)
+    except DriveAuthError as exc:
+        _fail(str(exc))
+    _echo(f"Connected. Token stored at {workspace_config.drive_token_path}")
+    typer.secho(
+        "  note: Google expires refresh tokens for apps in testing mode after "
+        "7 days - re-run this when it stops working.",
+        fg=typer.colors.YELLOW,
+    )
+
+
+@drive_app.command("logout")
+def drive_logout(workspace: Optional[str] = typer.Option(None, "--workspace", "-w")) -> None:
+    """Forget this workspace's Drive token."""
+    workspace_config = resolve_workspace(workspace)
+    from .drive.auth import logout
+
+    _echo("Token removed." if logout(workspace_config) else "No token stored.")
+
+
+@drive_app.command("status")
+def drive_status(workspace: Optional[str] = typer.Option(None, "--workspace", "-w")) -> None:
+    """Show the Drive connection and root folder."""
+    workspace_config = resolve_workspace(workspace)
+    from .drive.auth import load_credentials
+
+    connected = workspace_config.drive_token_path.exists()
+    _echo(f"workspace:   {workspace_config.id}")
+    _echo(f"token:       {'present' if connected else 'missing'} "
+          f"({workspace_config.drive_token_path})")
+    _echo(f"root folder: {workspace_config.drive_root_folder_id or workspace_config.drive_root_folder_name + ' (by name)'}")
+    _echo(f"local mount: {workspace_config.drive_local_mount_path or 'not set - NLE exports will import offline'}")
+    if not connected:
+        return
+    try:
+        credentials = load_credentials(workspace_config)
+    except Exception as exc:
+        typer.secho(f"token invalid: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+    _echo("credentials: " + ("valid" if credentials and credentials.valid else "refreshable"))
+
+
+@app.command()
+def organise(
+    source_id: Optional[str] = typer.Argument(None, help="One source; omit for the whole library."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the plan and touch nothing."),
+) -> None:
+    """Upload, rename and file footage into the Drive tree. Idempotent."""
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        client = _drive_client(workspace_config)
+        organizer = Organizer(workspace_config, store, client, dry_run=dry_run)
+        report = (
+            organizer.organise_source(source_id) if source_id else organizer.reorganise()
+        )
+        _report_organise(report, dry_run)
+    finally:
+        store.close()
+
+
+@app.command()
+def reorganise(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Rebuild the whole shortcut tree from the database.
+
+    The escape hatch when the taxonomy changes: the database is the source of
+    truth and Drive is a rendering of it.
+    """
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        client = _drive_client(workspace_config)
+        report = Organizer(workspace_config, store, client, dry_run=dry_run).reorganise()
+        _report_organise(report, dry_run)
+    finally:
+        store.close()
+
+
+def _report_organise(report, dry_run: bool) -> None:
+    for action in report.actions:
+        _echo(f"  {action}")
+    for error in report.errors:
+        typer.secho(f"  ! {error}", fg=typer.colors.YELLOW)
+    _echo(("Would apply: " if dry_run else "Applied: ") + report.summary())
+    if dry_run and report.actions:
+        _echo("Nothing was written. Drop --dry-run to apply it.")
 
 
 @app.callback()
