@@ -305,34 +305,46 @@ testing mode against your own account.** No verification, no review.
 
 ### Step by step, for someone who has never opened a cloud console
 
-1. Go to <https://console.cloud.google.com/> and sign in with the Google account
-   that owns the Drive you want to organise.
-2. Top-left, click the project dropdown → **New Project**. Name it something like
-   `broll-librarian`. Click **Create**, then select it in the dropdown.
-3. In the search bar at the top, type **Google Drive API** and open it. Click
-   **Enable**. Wait for it to finish.
-4. In the left menu, open **APIs & Services → OAuth consent screen**.
-   - User type: **External**. Click **Create**.
-   - App name: `B-Roll Librarian`. User support email: your address.
-   - Developer contact: your address. **Save and Continue**.
-   - On the **Scopes** step, click **Add or Remove Scopes**, paste
-     `https://www.googleapis.com/auth/drive` into the filter box, tick it, then
-     **Update** and **Save and Continue**.
-   - On the **Test users** step, click **Add Users** and add your own Google
-     address. This is what lets you use a restricted scope without verification.
-     **Save and Continue**, then **Back to Dashboard**.
-   - Leave the app in **Testing**. Do not click "Publish app".
-5. Left menu → **APIs & Services → Credentials** → **Create Credentials** →
-   **OAuth client ID**.
-   - Application type: **Desktop app**. Name it anything. **Create**.
-   - Click **Download JSON** on the dialog. Keep this file safe — it identifies
-     your app, though it is not by itself enough to read your Drive.
-6. Put the client ID and secret from that file into your `.env` as
-   `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`.
-7. Run `broll drive login` (M3). A browser window opens; sign in with the same
-   account and accept the "unverified app" warning by clicking **Advanced →
-   Go to B-Roll Librarian (unsafe)**. That warning is expected for a testing-mode
-   app you built yourself.
+Google renamed this flow: there is no longer an "OAuth consent screen" wizard
+under APIs & Services. It is now **Google Auth Platform**, and the steps below
+match that. Swap `YOUR-PROJECT` in the links for your project id.
+
+1. **Create a project** at <https://console.cloud.google.com/projectcreate>, if
+   you do not already have one. Name it something you will recognise.
+2. **Enable the Drive API**:
+   `https://console.cloud.google.com/apis/library/drive.googleapis.com?project=YOUR-PROJECT`
+   → **Enable**. Wait for it to finish.
+3. **Configure Google Auth Platform**:
+   `https://console.cloud.google.com/auth/overview?project=YOUR-PROJECT`
+   → **Get started**, then fill in the short form:
+   - *App name* — anything, e.g. `B-Roll Librarian`. *User support email* — yours.
+   - *Audience* — **External**. (Internal only exists for Workspace orgs.)
+   - *Contact information* — your email. Then agree and **Create**.
+4. **Add yourself as a test user**:
+   `https://console.cloud.google.com/auth/audience?project=YOUR-PROJECT`
+   → under **Test users**, **Add users**, enter your own Google address, save.
+   Leave the publishing status as **Testing**. This is what lets you use a
+   restricted scope without Google's verification review. Do not click
+   "Publish app".
+5. **Add the Drive scope**:
+   `https://console.cloud.google.com/auth/scopes?project=YOUR-PROJECT`
+   → **Add or remove scopes**, paste `https://www.googleapis.com/auth/drive`
+   into the filter, tick it, **Update**, then **Save**.
+6. **Create the OAuth client**:
+   `https://console.cloud.google.com/auth/clients?project=YOUR-PROJECT`
+   → **Create client** → *Application type*: **Desktop app** → **Create**.
+   Copy the **Client ID** and **Client secret** from the dialog.
+7. **Put them in your `.env`**:
+
+   ```
+   GOOGLE_OAUTH_CLIENT_ID=...apps.googleusercontent.com
+   GOOGLE_OAUTH_CLIENT_SECRET=...
+   ```
+
+8. **Connect the workspace**: `broll drive login`. A browser window opens; sign
+   in with the same account. You will see an "unverified app" warning — that is
+   expected for a testing-mode app you built yourself. Click **Advanced → Go to
+   B-Roll Librarian (unsafe)** and allow access.
 
 Tokens are stored per workspace at `~/.broll/workspaces/<id>/drive_token.json`.
 
