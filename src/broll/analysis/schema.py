@@ -269,6 +269,14 @@ QUALITY_FLAGS: tuple[str, ...] = (
     "compression_artifacts", "obstructed", "colour_cast", "empty_frame",
 )
 
+# Flags that mean the footage is technically defective, as opposed to merely
+# worth knowing about (a logo or on-screen text matters for licensing, not for
+# whether the shot is usable).
+DEFECT_FLAGS: frozenset[str] = frozenset({
+    "out_of_focus", "shaky", "overexposed", "underexposed", "motion_blur",
+    "noisy", "compression_artifacts", "empty_frame", "low_resolution",
+})
+
 VOCABULARIES: dict[str, tuple[str, ...]] = {
     "subjects": SUBJECTS,
     "action": ACTIONS,

@@ -16,9 +16,9 @@ from pydantic import ValidationError
 from ..config import WorkspaceConfig
 from ..ingest.frames import extract_frames
 from .prompt import PROMPT_VERSION
-from .providers.base import ProviderError, VisionProvider
+from .providers.base import ProviderError, TransientProviderError, VisionProvider
 from .providers.registry import get_vision_provider
-from .schema import AnalysisResult, ShotContext, find_oov
+from .schema import DEFECT_FLAGS, AnalysisResult, ShotContext, find_oov
 
 log = logging.getLogger(__name__)
 
@@ -76,12 +76,17 @@ class Analyzer:
                 result = await self.provider.analyse(frames, context, retry_error)
             except ValidationError as exc:
                 retry_error = _validation_summary(exc)
+            except TransientProviderError:
+                # Not our problem to solve inside one job: let the queue retry
+                # this source with backoff rather than flagging it for a human.
+                raise
             except ProviderError as exc:
                 retry_error = str(exc)
             else:
                 outcome.result = result
                 outcome.oov = find_oov(result, self.config.vocabulary_overrides)
-                if result.confidence < 0.35 or result.quality_flags:
+                defects = DEFECT_FLAGS.intersection(result.quality_flags)
+                if result.confidence < 0.35 or defects:
                     outcome.status = "needs_review"
                 return outcome
 

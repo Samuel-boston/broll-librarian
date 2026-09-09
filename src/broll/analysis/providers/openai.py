@@ -18,6 +18,7 @@ from .base import (
     MissingDependencyError,
     Pricing,
     ProviderError,
+    classify_error,
     TextProvider,
     VisionProvider,
     encode_image,
@@ -76,7 +77,7 @@ class OpenAIVisionProvider(VisionProvider):
                 text_format=AnalysisResult,
             )
         except Exception as exc:
-            raise ProviderError(f"openai request failed: {exc}") from exc
+            raise classify_error(str(exc))(f"openai request failed: {exc}") from exc
 
         parsed = response.output_parsed
         if parsed is None:
@@ -104,7 +105,7 @@ class OpenAITextProvider(TextProvider):
                 text_format=schema,
             )
         except Exception as exc:
-            raise ProviderError(f"openai request failed: {exc}") from exc
+            raise classify_error(str(exc))(f"openai request failed: {exc}") from exc
         if response.output_parsed is None:
             raise ProviderError("openai returned no structured output")
         return response.output_parsed

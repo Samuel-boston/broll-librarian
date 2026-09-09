@@ -22,6 +22,30 @@ class ProviderError(RuntimeError):
     """Anything the provider could not do: auth, transport, or bad output."""
 
 
+class TransientProviderError(ProviderError):
+    """The provider was momentarily unavailable - worth retrying later.
+
+    A 503 while Google is overloaded is not a reason to mark a shot as needing
+    human review; it is a reason to try again in a minute.
+    """
+
+
+TRANSIENT_MARKERS = (
+    "503", "502", "504", "500", "429", "unavailable", "resource_exhausted",
+    "overloaded", "high demand", "timeout", "timed out", "deadline",
+    "connection", "temporarily",
+)
+
+
+def classify_error(message: str) -> type[ProviderError]:
+    lowered = (message or "").lower()
+    return (
+        TransientProviderError
+        if any(marker in lowered for marker in TRANSIENT_MARKERS)
+        else ProviderError
+    )
+
+
 class MissingDependencyError(ProviderError):
     pass
 

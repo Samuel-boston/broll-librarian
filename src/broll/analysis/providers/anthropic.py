@@ -24,6 +24,7 @@ from .base import (
     MissingDependencyError,
     Pricing,
     ProviderError,
+    classify_error,
     TextProvider,
     VisionProvider,
     encode_image,
@@ -89,7 +90,7 @@ class AnthropicVisionProvider(VisionProvider):
                 output_format=AnalysisResult,
             )
         except Exception as exc:  # SDK raises typed errors; the caller retries
-            raise ProviderError(f"anthropic request failed: {exc}") from exc
+            raise classify_error(str(exc))(f"anthropic request failed: {exc}") from exc
 
         if response.stop_reason == "refusal":
             raise ProviderError("anthropic declined to analyse this shot")
@@ -120,7 +121,7 @@ class AnthropicTextProvider(TextProvider):
                 output_format=schema,
             )
         except Exception as exc:
-            raise ProviderError(f"anthropic request failed: {exc}") from exc
+            raise classify_error(str(exc))(f"anthropic request failed: {exc}") from exc
         if response.parsed_output is None:
             raise ProviderError("anthropic returned no structured output")
         return response.parsed_output

@@ -20,18 +20,26 @@ from .base import (
     MissingDependencyError,
     Pricing,
     ProviderError,
+    classify_error,
     TextProvider,
     VisionProvider,
     estimate_prompt_tokens,
 )
 
 # USD per 1M tokens. Gemini bills an image at 258 tokens per 768x768 tile.
+# The 3.x Flash prices are the promotional rate that runs to 31 Dec 2026; they
+# double on 1 Jan 2027, so re-check this table then.
 PRICING: dict[str, Pricing] = {
+    "gemini-3.8-flash": Pricing(input_per_m=0.75, output_per_m=3.75, tokens_per_image=300),
+    "gemini-3.7-flash": Pricing(input_per_m=0.75, output_per_m=3.75, tokens_per_image=300),
+    "gemini-3.6-flash": Pricing(input_per_m=0.75, output_per_m=3.75, tokens_per_image=300),
+    "gemini-3.5-flash": Pricing(input_per_m=1.50, output_per_m=9.00, tokens_per_image=300),
+    # Still priced here for existing users; new API projects get a 404.
     "gemini-2.5-flash": Pricing(input_per_m=0.30, output_per_m=2.50, tokens_per_image=300),
     "gemini-2.5-flash-lite": Pricing(input_per_m=0.10, output_per_m=0.40, tokens_per_image=300),
     "gemini-2.5-pro": Pricing(input_per_m=1.25, output_per_m=10.00, tokens_per_image=300),
 }
-DEFAULT_PRICING = Pricing(input_per_m=0.30, output_per_m=2.50, tokens_per_image=300)
+DEFAULT_PRICING = Pricing(input_per_m=0.75, output_per_m=3.75, tokens_per_image=300)
 
 
 def _sdk():
@@ -87,7 +95,7 @@ class GeminiVisionProvider(VisionProvider):
                 ),
             )
         except Exception as exc:
-            raise ProviderError(f"gemini request failed: {exc}") from exc
+            raise classify_error(str(exc))(f"gemini request failed: {exc}") from exc
 
         parsed = getattr(response, "parsed", None)
         if isinstance(parsed, AnalysisResult):
@@ -124,7 +132,7 @@ class GeminiTextProvider(TextProvider):
                 ),
             )
         except Exception as exc:
-            raise ProviderError(f"gemini request failed: {exc}") from exc
+            raise classify_error(str(exc))(f"gemini request failed: {exc}") from exc
         parsed = getattr(response, "parsed", None)
         if parsed is not None:
             return parsed if isinstance(parsed, schema) else schema.model_validate(parsed)

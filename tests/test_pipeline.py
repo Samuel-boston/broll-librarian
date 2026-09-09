@@ -169,3 +169,59 @@ async def test_recorded_responses_are_replayed(workspace, clips, tmp_path):
     assert "defocused" in outcome.result.caption
     # quality_flags present -> the shot is routed to the review queue
     assert outcome.status == "needs_review"
+
+
+async def test_a_transient_provider_error_is_raised_for_the_queue_to_retry(workspace, tmp_path):
+    """A 503 while Google is overloaded must not park a shot in the review queue."""
+    import pytest
+
+    from broll.analysis.providers.base import TransientProviderError, classify_error
+
+    assert classify_error("503 UNAVAILABLE high demand") is TransientProviderError
+    assert classify_error("400 invalid schema") is not TransientProviderError
+
+    class Flaky:
+        name = "flaky"
+
+        async def analyse(self, frames, context, retry_error=None):
+            raise TransientProviderError("gemini request failed: 503 UNAVAILABLE")
+
+        def estimate_cost(self, frames):
+            return 0.0
+
+    analyzer = Analyzer(workspace, provider=Flaky())
+    context = ShotContext(source_filename="a.mp4", duration_s=3.0, width=640, height=360)
+    with pytest.raises(TransientProviderError):
+        await analyzer.analyse_frames([tmp_path / "frame.jpg"], context)
+
+
+async def test_only_real_defects_route_a_shot_to_review(workspace, tmp_path):
+    """A logo is worth recording; it is not a reason to make a human look."""
+    from broll.analysis.schema import AnalysisResult
+
+    base = {
+        "caption": "A fire truck raises its ladder.", "setting": "industrial area",
+        "shot_type": "medium_wide", "camera_movement": "tilt_up", "time_of_day": "afternoon",
+        "colour_profile": "vibrant", "people_count": "one", "pace": "slow", "confidence": 0.95,
+    }
+
+    class Fixed:
+        name = "fixed"
+
+        def __init__(self, flags):
+            self.flags = flags
+
+        async def analyse(self, frames, context, retry_error=None):
+            return AnalysisResult.model_validate({**base, "quality_flags": self.flags})
+
+        def estimate_cost(self, frames):
+            return 0.0
+
+    context = ShotContext(source_filename="a.mp4", duration_s=3.0, width=640, height=360)
+    frames = [tmp_path / "frame.jpg"]
+
+    logo = await Analyzer(workspace, provider=Fixed(["contains_logo"])).analyse_frames(frames, context)
+    assert logo.status == "indexed"
+
+    blurry = await Analyzer(workspace, provider=Fixed(["out_of_focus"])).analyse_frames(frames, context)
+    assert blurry.status == "needs_review"

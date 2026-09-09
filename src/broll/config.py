@@ -30,8 +30,9 @@ PROVIDER_KEY_ENV = {
 }
 
 DEFAULT_MODELS = {
-    # Cheapest per image of the three, which is what dominates a bulk index.
-    "gemini": "gemini-2.5-flash",
+    # 2.5-flash is closed to new API users (404 pointing at 3.6), so this is
+    # the current floor for bulk indexing.
+    "gemini": "gemini-3.6-flash",
     # Richest structured descriptions; see README for the cost trade-off.
     "anthropic": "claude-opus-5",
     "openai": "gpt-4.1-mini",
