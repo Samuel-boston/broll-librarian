@@ -53,7 +53,7 @@ def _featured_name(config) -> str | None:
 
 @router.get("/", response_class=HTMLResponse)
 async def home() -> RedirectResponse:
-    return RedirectResponse("/search")
+    return RedirectResponse("/library")
 
 
 @router.get("/search", response_class=HTMLResponse)
@@ -75,6 +75,7 @@ async def search_page(
     featured: bool = False,
     top_picks: bool = False,
     loose: bool = False,
+    exact: bool = False,
     limit: int = 48,
 ):
     state = request.app.state.broll
@@ -92,7 +93,7 @@ async def search_page(
             featured_person=True if featured else None,
             top_pick=True if top_picks else None,
         )
-        results = engine.search(q, filters, limit, strict=not loose)
+        results = engine.search(q, filters, limit, strict=not loose, correct=not exact)
         counts = store.facet_counts()
         context = {
             "request": request,
@@ -124,6 +125,8 @@ async def search_page(
             "total_shots": store.count_shots(),
             "hidden_count": engine.hidden_count,
             "loose": loose,
+            "corrections": engine.corrections,
+            "corrected_query": engine.corrected_query,
         }
     finally:
         store.close()

@@ -1,7 +1,11 @@
 {% extends "base.html" %}
 {% set active = 'ingest' %}
-{% block title %}Ingest{% endblock %}
+{% block title %}Upload{% endblock %}
 {% block content %}
+<div class="mb-5">
+  <h1 class="text-lg font-semibold">Upload footage</h1>
+  <p class="text-sm text-slate-500">Each clip is watched, described, tagged and filed into the Drive folders automatically. Duplicates are skipped.</p>
+</div>
 <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
   <section class="space-y-4">
     <form id="upload-form" hx-post="/ingest/upload" hx-target="#queue" hx-encoding="multipart/form-data"

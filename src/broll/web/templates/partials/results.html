@@ -1,9 +1,20 @@
+{% if corrections %}
+  <p class="mb-3 text-sm text-slate-600">
+    Showing results for <span class="font-medium">{{ corrected_query }}</span>.
+    <a href="{{ request.url.include_query_params(exact='true') }}"
+       hx-get="{{ request.url.include_query_params(exact='true') }}" hx-include="this"
+       class="text-indigo-600 underline">Search instead for “{{ query }}”</a>
+  </p>
+{% endif %}
 {% if not results %}
   <p class="rounded-md border border-dashed border-slate-300 bg-white px-6 py-12 text-center text-sm text-slate-500">
-    No matches.{% if query %} Try fewer words, or clear the filters.{% else %} Index some footage on the Ingest screen.{% endif %}
+    {% if empty_message %}{{ empty_message }}
+    {% else %}No matches.{% if query %} Try fewer words, or clear the filters.{% else %} Add some footage on the Upload screen.{% endif %}{% endif %}
   </p>
 {% else %}
+  {% if not hide_count %}
   <p class="mb-3 text-xs text-slate-400">{{ results|length }} result{{ '' if results|length == 1 else 's' }}</p>
+  {% endif %}
   <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
     {% for result in results %}
     {% set shot = result.shot %}

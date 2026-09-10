@@ -18,6 +18,10 @@ QUALITY_FLAG_SQL = (
 )
 
 
+def _like_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class SearchFilters(BaseModel):
     duration_min_s: float | None = None
     duration_max_s: float | None = None
@@ -38,6 +42,7 @@ class SearchFilters(BaseModel):
     has_text_on_screen: bool | None = None
     featured_person: bool | None = None
     top_pick: bool | None = None
+    uncategorised: bool = False   # clips not yet filed in any folder
     min_width: int | None = None
     min_height: int | None = None
     quality_flags: list[str] = Field(default_factory=list)      # must have all of these
@@ -90,12 +95,21 @@ class SearchFilters(BaseModel):
         json_any("subjects_json", self.subjects)
         json_any("emotions_json", self.emotions)
         if self.category:
-            # Picking "01_Nervous System Practices" should find everything under it.
-            clauses.append(
-                "(" + " OR ".join("(s.category = ? OR s.category LIKE ?)" for _ in self.category) + ")"
+            # A folder finds everything under it, and every clip that is a
+            # secondary match for it - the same clips Drive shows there, where
+            # secondary folders hold a shortcut. "_" and "%" are LIKE
+            # wildcards, and folder names such as "01_Travel" contain them.
+            one = (
+                "(s.category = ? OR s.category LIKE ? ESCAPE '\\'"
+                " OR EXISTS (SELECT 1 FROM json_each(s.secondary_categories_json) sc"
+                " WHERE sc.value = ? OR sc.value LIKE ? ESCAPE '\\'))"
             )
+            clauses.append("(" + " OR ".join(one for _ in self.category) + ")")
             for value in self.category:
-                params.extend([value, value + "/%"])
+                prefix = _like_escape(value) + "/%"
+                params.extend([value, prefix, value, prefix])
+        if self.uncategorised:
+            clauses.append("s.category IS NULL")
 
         if self.has_faces is not None:
             clauses.append("s.has_recognisable_faces = ?")

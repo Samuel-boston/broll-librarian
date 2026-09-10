@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% set active = 'library' %}
+{% block title %}Library{% endblock %}
+{% block content %}
+<form action="/search" method="get" class="mb-6 flex gap-2">
+  <input name="q" autocomplete="off" autofocus
+         placeholder="Describe the shot you need - e.g. Adam meditating at sunrise"
+         class="flex-1 rounded-lg border border-slate-300 bg-white px-4 py-3 text-base shadow-sm focus:border-indigo-500 focus:outline-none">
+  <button class="rounded-lg bg-indigo-600 px-5 text-sm font-medium text-white hover:bg-indigo-700">Search</button>
+</form>
+
+{% macro folder_card(folder) %}
+<a href="/library?path={{ folder.path|urlencode }}"
+   class="group block overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition hover:border-indigo-300 hover:shadow {% if not folder.count %}opacity-60{% endif %}">
+  <div class="aspect-video bg-slate-100">
+    {% if folder.thumbnails|length >= 4 %}
+      <div class="grid h-full grid-cols-2 grid-rows-2 gap-px">
+        {% for id in folder.thumbnails[:4] %}<img src="/thumbnails/{{ id }}.jpg" alt="" class="h-full w-full object-cover">{% endfor %}
+      </div>
+    {% elif folder.thumbnails %}
+      <img src="/thumbnails/{{ folder.thumbnails[0] }}.jpg" alt="" class="h-full w-full object-cover">
+    {% else %}
+      <div class="grid h-full place-items-center text-3xl text-slate-300">▢</div>
+    {% endif %}
+  </div>
+  <div class="flex items-baseline gap-2 px-3 py-2.5">
+    {% if folder.number %}<span class="font-mono text-[11px] text-slate-400">{{ folder.number }}</span>{% endif %}
+    <span class="truncate text-sm font-medium">{{ folder.label }}</span>
+    <span class="ml-auto shrink-0 text-xs text-slate-400">{{ folder.count }}{% if folder.has_children %} ›{% endif %}</span>
+  </div>
+</a>
+{% endmacro %}
+
+{% if path or emotion or view %}
+  {# ---- inside a folder, a feeling or a quick view ---- #}
+  <nav class="mb-4 flex flex-wrap items-center gap-1 text-sm text-slate-500">
+    <a href="/library" class="hover:text-indigo-600">Library</a>
+    {% for crumb_path, label in crumbs %}
+      <span class="text-slate-300">/</span>
+      {% if loop.last %}<span class="font-medium text-slate-800">{{ label }}</span>
+      {% else %}<a href="/library?path={{ crumb_path|urlencode }}" class="hover:text-indigo-600">{{ label }}</a>{% endif %}
+    {% endfor %}
+    {% if heading %}<span class="text-slate-300">/</span><span class="font-medium text-slate-800">{{ heading }}</span>{% endif %}
+  </nav>
+
+  {% if folders %}
+  <div class="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+    {% for folder in folders %}{{ folder_card(folder) }}{% endfor %}
+  </div>
+  {% endif %}
+
+  <p class="mb-3 text-xs text-slate-400">
+    {% if current %}{{ current.count }} clip{{ '' if current.count == 1 else 's' }} in {{ current.label }}{% if folders %} and its folders{% endif %}
+    {% else %}{{ clips|length }}{% if more %}+{% endif %} clip{{ '' if clips|length == 1 else 's' }}{% endif %}
+  </p>
+  <section id="results">
+    {% with results=clips, query="", hidden_count=0, loose=False, hide_count=True,
+            empty_message="Nothing in here yet." %}
+      {% include "partials/results.html" %}
+    {% endwith %}
+  </section>
+  {% if more %}
+  <p class="mt-6 text-center">
+    <a href="{{ request.url.include_query_params(offset=offset + page) }}"
+       class="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm hover:bg-slate-50">Show more</a>
+  </p>
+  {% endif %}
+
+{% else %}
+  {# ---- the home page ---- #}
+  <div class="mb-8 flex flex-wrap gap-2 text-sm">
+    <span class="rounded-full bg-slate-100 px-3 py-1.5 text-slate-600">{{ quick.total }} clips</span>
+    <a href="/library?view=top-picks" class="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-amber-700 hover:bg-amber-100">★ Top Picks · {{ quick.top_picks }}</a>
+    {% if featured_name %}
+    <a href="/library?view=featured" class="rounded-full border border-slate-200 bg-white px-3 py-1.5 hover:border-indigo-300">{{ featured_name }} in shot · {{ quick.featured }}</a>
+    {% endif %}
+    {% if quick.unsorted %}
+    <a href="/library?view=unsorted" class="rounded-full border border-slate-200 bg-white px-3 py-1.5 hover:border-indigo-300">Unsorted · {{ quick.unsorted }}</a>
+    {% endif %}
+    {% if quick.review %}
+    <a href="/review" class="rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-rose-700 hover:bg-rose-100">Needs review · {{ quick.review }}</a>
+    {% endif %}
+  </div>
+
+  {% if tree %}
+  <h2 class="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">Folders</h2>
+  <div class="mb-10 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+    {% for folder in folders %}{{ folder_card(folder) }}{% endfor %}
+  </div>
+  {% elif settings %}
+  <h2 class="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">By setting</h2>
+  <div class="mb-10 flex flex-wrap gap-2">
+    {% for value, count in settings %}
+    <a href="/search?setting={{ value|urlencode }}" class="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm hover:border-indigo-300">{{ value }} · {{ count }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if emotions %}
+  <h2 class="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">Browse by feeling</h2>
+  <div class="mb-10 flex flex-wrap gap-2">
+    {% for value, count in emotions %}
+    <a href="/library?emotion={{ value|urlencode }}"
+       class="rounded-full bg-rose-50 px-3 py-1.5 text-sm text-rose-700 hover:bg-rose-100">{{ value }} <span class="text-rose-400">· {{ count }}</span></a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <h2 class="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">Recently added</h2>
+  <section id="results">
+    {% with results=clips, query="", hidden_count=0, loose=False, hide_count=True,
+            empty_message="No footage yet - add some on the Upload screen." %}
+      {% include "partials/results.html" %}
+    {% endwith %}
+  </section>
+{% endif %}
+{% endblock %}

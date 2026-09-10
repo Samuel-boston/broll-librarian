@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import sqlite3
 import uuid
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -438,6 +440,39 @@ class Store:
             (text, self.workspace_id, shot_id),
         )
         return text
+
+    # -- browsing -----------------------------------------------------------
+
+    def vocabulary(self) -> Counter:
+        """Every word in the library's search text, with how many shots use it."""
+        counts: Counter = Counter()
+        for (text,) in self.conn.execute(
+            "SELECT search_text FROM shots WHERE workspace_id = ?", (self.workspace_id,)
+        ):
+            counts.update(set(re.findall(r"[\w']+", (text or "").lower())))
+        return counts
+
+    def browse_rows(self) -> list[dict[str, Any]]:
+        """Every organised shot, newest first - the raw material for browsing."""
+        rows = self.conn.execute(
+            """SELECT s.id, s.category, s.secondary_categories_json, s.thumbnail_path,
+                      s.top_pick, s.featured_person
+               FROM shots s JOIN sources src ON src.id = s.source_id
+               WHERE s.workspace_id = ? AND s.status IN ('indexed', 'needs_review')
+               ORDER BY src.created_at DESC, s.shot_index""",
+            (self.workspace_id,),
+        ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "category": r["category"],
+                "secondary": json.loads(r["secondary_categories_json"] or "[]"),
+                "has_thumbnail": bool(r["thumbnail_path"]),
+                "top_pick": bool(r["top_pick"]),
+                "featured": bool(r["featured_person"]),
+            }
+            for r in rows
+        ]
 
     # -- vocabulary candidates ---------------------------------------------
 

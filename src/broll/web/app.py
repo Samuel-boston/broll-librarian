@@ -104,8 +104,9 @@ def create_app(config: WorkspaceConfig, run_worker: bool = True) -> FastAPI:
         name="thumbnails",
     )
 
-    from .routes import ingest, review, search, settings, transcript
+    from .routes import ingest, library, review, search, settings, transcript
 
+    app.include_router(library.router)
     app.include_router(search.router)
     app.include_router(ingest.router)
     app.include_router(transcript.router)

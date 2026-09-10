@@ -468,6 +468,7 @@ def search(
     featured: bool = typer.Option(False, "--featured", help="Only shots of the client's featured person."),
     top_picks: bool = typer.Option(False, "--top-picks", help="Only starred shots."),
     loose: bool = typer.Option(False, "--loose", help="Also show near matches."),
+    exact: bool = typer.Option(False, "--exact", help="Don't correct spelling."),
 ) -> None:
     """Search the library. Hybrid keyword + vector, fused with RRF."""
     workspace_config = resolve_workspace(workspace)
@@ -485,7 +486,7 @@ def search(
             featured_person=True if featured else None,
             top_pick=True if top_picks else None,
         )
-        results = engine.search(query, filters, limit, strict=not loose)
+        results = engine.search(query, filters, limit, strict=not loose, correct=not exact)
     finally:
         store.close()
 
@@ -493,6 +494,9 @@ def search(
         _echo(json.dumps([r.to_dict() for r in results], indent=2))
         return
     hidden = engine.hidden_count
+    if engine.corrections:
+        fixes = ", ".join(f"{typed} -> {fixed}" for typed, fixed in engine.corrections)
+        _echo(f"Showing results for: {engine.corrected_query}   ({fixes}; --exact to search as typed)")
     if not results:
         _echo("No matches." + (f" {hidden} near match(es) hidden - add --loose." if hidden else ""))
         return

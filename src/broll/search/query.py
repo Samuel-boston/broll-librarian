@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -35,6 +36,7 @@ from ..analysis.embedder import Embedder
 from ..db.models import Shot, Source
 from ..db.store import Store
 from .filters import SearchFilters
+from .spelling import suggest
 
 log = logging.getLogger(__name__)
 
@@ -177,6 +179,60 @@ class SearchEngine:
             re.compile(r"\b(?:" + "|".join(re.escape(t) for t in terms) + r")(?:'s)?\b", re.I)
             if parts else None
         )
+        self._name_terms = [t.lower() for t in terms] if parts else []
+        self._vocab: Counter | None = None
+        # What the last search did to the query, for "showing results for...".
+        self.corrections: list[tuple[str, str]] = []
+        self.corrected_query = ""
+
+    # -- typos ----------------------------------------------------------------
+
+    def _vocabulary(self) -> Counter:
+        """Words the library knows, with how many clips use each."""
+        if self._vocab is None:
+            words = self.store.vocabulary()
+            for term in self._name_terms:  # so "Adma" can still become "Adam"
+                for word in term.split():
+                    words[word] += 1
+            self._vocab = Counter({
+                w: n for w, n in words.items()
+                if len(w) >= 3 and w not in STOPWORDS and not w.isdigit()
+            })
+        return self._vocab
+
+    def _document_frequency(self, token: str) -> int:
+        """Clips containing this word in any stemmed form."""
+        return int(self.store.conn.execute(
+            """SELECT COUNT(*) FROM shots_fts JOIN shots s ON s.rowid = shots_fts.rowid
+               WHERE shots_fts MATCH ? AND s.workspace_id = ?""",
+            (_quote(token), self.store.workspace_id),
+        ).fetchone()[0])
+
+    def correct_query(self, text: str) -> tuple[str, list[tuple[str, str]]]:
+        """Fix words the library has never seen that are a keystroke or two
+        from one it has. Returns (corrected text, [(typed, corrected), ...])."""
+        vocabulary = self._vocabulary()
+        if not vocabulary:
+            return text, []
+        corrections: list[tuple[str, str]] = []
+
+        def fix(match: re.Match) -> str:
+            typed = match.group(0)
+            word = typed.lower()
+            suffix = ""
+            if word.endswith("'s"):
+                word, suffix = word[:-2], "'s"
+            if not word or word in STOPWORDS or word in vocabulary:
+                return typed
+            if self._document_frequency(word):
+                return typed  # a stemmed form is in the library ("meditate")
+            fixed = suggest(word, vocabulary)
+            if not fixed:
+                return typed
+            corrections.append((word, fixed))
+            return fixed + suffix
+
+        return _TOKEN.sub(fix, text), corrections
 
     def split_person(self, query: str) -> tuple[str, bool]:
         """Take the featured person's name out of a query: (what is left, mentioned)."""
@@ -271,11 +327,7 @@ class SearchEngine:
         weights: dict[str, float] = {}
         matched: dict[str, set[str]] = {sid: set() for sid in shot_ids}
         for token in tokens:
-            frequency = self.store.conn.execute(
-                """SELECT COUNT(*) FROM shots_fts JOIN shots s ON s.rowid = shots_fts.rowid
-                   WHERE shots_fts MATCH ? AND s.workspace_id = ?""",
-                (_quote(token), self.store.workspace_id),
-            ).fetchone()[0]
+            frequency = self._document_frequency(token)
             weights[token] = math.log(1 + total / max(frequency, 1))
             if not frequency:
                 continue
@@ -351,6 +403,7 @@ class SearchEngine:
         strict: bool = True,
         person_filter: bool = True,
         rank_only: bool = False,
+        correct: bool = True,
     ) -> list[SearchResult]:
         """Search.
 
@@ -361,13 +414,19 @@ class SearchEngine:
         needs candidates even for narration as abstract as "most of us start
         the day already behind". ``person_filter=False`` still takes the
         client's name out of the query but does not require them in shot -
-        narration says "Adam" over footage with no Adam in it."""
+        narration says "Adam" over footage with no Adam in it. ``correct=False``
+        searches for exactly what was typed ("search instead for...")."""
         filters = filters or SearchFilters()
         self.hidden_count = 0
+        self.corrections = []
+        self.corrected_query = query or ""
 
         if not (query or "").strip():
             return self._browse(filters, limit)
 
+        if correct:
+            query, self.corrections = self.correct_query(query)
+            self.corrected_query = query
         text, mentioned = self.split_person(query)
         if mentioned and person_filter:
             filters = filters.model_copy(update={"featured_person": True})
@@ -423,15 +482,19 @@ class SearchEngine:
             )
         return results
 
-    def _browse(self, filters: SearchFilters, limit: int) -> list[SearchResult]:
+    def browse(self, filters: SearchFilters, limit: int, offset: int = 0) -> list[SearchResult]:
+        """Clips matching the filters, newest first - no query involved."""
+        return self._browse(filters, limit, offset)
+
+    def _browse(self, filters: SearchFilters, limit: int, offset: int = 0) -> list[SearchResult]:
         """An empty query with filters is a browse, ordered newest first."""
         clauses, params = filters.predicates()
         where = "".join(f" AND {clause}" for clause in clauses)
         rows = self.store.conn.execute(
             f"""SELECT s.id FROM shots s JOIN sources src ON src.id = s.source_id
                 WHERE s.workspace_id = ?{where}
-                ORDER BY src.created_at DESC, s.shot_index LIMIT ?""",
-            (self.store.workspace_id, *params, limit),
+                ORDER BY src.created_at DESC, s.shot_index LIMIT ? OFFSET ?""",
+            (self.store.workspace_id, *params, limit, max(0, offset)),
         ).fetchall()
         results = []
         for row in rows:
