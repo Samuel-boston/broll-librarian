@@ -21,9 +21,9 @@ a Google Drive file ID. Everything else follows from that constraint.
 
 | Milestone | Scope | State |
 |---|---|---|
-| **M1** | Config, registry + workspace schema, provider abstraction, frame extraction, analysis, `broll analyse` | **done** |
+| **M1** | Config, registry + workspace schema, provider abstraction, frame extraction, analysis, `broll analyse` | **done** — verified on real footage with Gemini 3.6 Flash |
 | **M2** | Shot detection, job queue, batch indexing, embeddings, FTS5 + vector search | **done** |
-| **M3** | Drive OAuth, upload, taxonomy, shortcut tree, `reorganise`, `--dry-run` | **built; verified against a mock Drive, not yet against live Drive** |
+| **M3** | Drive OAuth, upload, taxonomy, shortcut tree, `reorganise`, `--dry-run` | **done** — verified against live Drive; second pass performs zero writes |
 | **M4** | Web UI: ingest, queue view, search | **done** |
 | **M5** | Transcript matching, FCP7 XML / EDL / CSV export | **done** (Premiere import is a manual gate, see below) |
 | **M6** | Review queue, settings, cost reporting, vocabulary management | **done** |
@@ -107,7 +107,7 @@ logged. They come from the environment or a `.env` file.
 
 | Provider | Default model | Notes |
 |---|---|---|
-| `gemini` | `gemini-2.5-flash` | **The default.** Lowest cost per image, which is what dominates the bill when you are analysing thousands of shots at 3 frames each. |
+| `gemini` | `gemini-3.6-flash` | **The default.** Cheap per image, which is what dominates the bill at 3 frames per shot. (`gemini-2.5-flash` is closed to new API projects — Google returns a 404 pointing at 3.6.) |
 | `anthropic` | `claude-opus-5` | Tends to return the richest structured descriptions, at the highest cost. Set `provider.vision_model: claude-haiku-4-5` for a cheaper Claude. |
 | `openai` | `gpt-4.1-mini` | Middle of the road. |
 | `mock` | — | Deterministic offline output. For tests and pipeline smoke runs with no key. |
@@ -127,12 +127,12 @@ input tokens, mostly the controlled vocabularies) and ~350 output tokens:
 
 | Provider / model | ≈ per shot | ≈ 1,000 shots | ≈ 5,000 shots |
 |---|---|---|---|
-| gemini-2.5-flash | $0.0019 | $1.86 | $9.32 |
+| gemini-3.6-flash | $0.0038 | $3.79 | $18.95 |
 | gpt-4.1-mini | $0.0025 | $2.48 | $12.40 |
 | claude-haiku-4-5 | $0.0055 | $5.50 | $27.50 |
 | claude-opus-5 | $0.0275 | $27.50 | $137.50 |
 
-These are estimates from published list prices, computed by
+Gemini 3.x Flash prices are a promotional rate to 31 Dec 2026 and double on 1 Jan 2027. These are estimates from published list prices, computed by
 `analysis/providers/*.PRICING`. Real costs are logged per job; `broll costs`
 reports what a workspace has actually spent, per file and per shot, and
 `--project N` extrapolates from that measured rate rather than from this table.
