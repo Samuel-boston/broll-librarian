@@ -163,7 +163,7 @@ class TranscriptMatcher:
                 missing_footage="Nothing in the library matched this beat at all.",
             )
 
-        reranked = await self._rerank(beat, candidates)
+        reranked, missing = await self._rerank(beat, candidates)
         ordered = self._enforce_variety(reranked, usage)
         wanted = self.config.transcript.suggestions_per_beat
         chosen = ordered[:wanted]
@@ -176,10 +176,13 @@ class TranscriptMatcher:
             suggestions=chosen,
             alternatives=ordered,
             no_good_match=not chosen,
-            missing_footage=None if chosen else "No candidate suited this beat.",
+            missing_footage=None if chosen else (missing or "No candidate suited this beat."),
         )
 
-    async def _rerank(self, beat: Beat, candidates: list[SearchResult]) -> list[Suggestion]:
+    async def _rerank(
+        self, beat: Beat, candidates: list[SearchResult]
+    ) -> tuple[list[Suggestion], str | None]:
+        """Suggestions in order, plus the reranker's "go and shoot this" line."""
         fallback = [
             Suggestion(
                 shot=result.shot,
@@ -191,7 +194,7 @@ class TranscriptMatcher:
             for index, result in enumerate(candidates)
         ]
         if self.text_provider is None:
-            return fallback
+            return fallback, None
 
         prompt = _rerank_prompt(beat, candidates, self.config.transcript.suggestions_per_beat)
         result = None
@@ -203,14 +206,14 @@ class TranscriptMatcher:
                 if attempt == RATE_LIMIT_ATTEMPTS:
                     log.warning("rerank still rate limited for beat %d, using search order: %s",
                                 beat.index, exc)
-                    return fallback
+                    return fallback, None
                 await asyncio.sleep(RATE_LIMIT_WAIT_S * attempt)
             except Exception as exc:  # a reranker outage must not lose the timeline
                 log.warning("rerank failed for beat %d, using search order: %s", beat.index, exc)
-                return fallback
+                return fallback, None
 
         if result.no_good_match and not result.choices:
-            return []
+            return [], (result.missing_footage or "").strip() or None
 
         suggestions: list[Suggestion] = []
         for position, choice in enumerate(result.choices):
@@ -227,7 +230,7 @@ class TranscriptMatcher:
                     score=1.0 / (position + 1),
                 )
             )
-        return suggestions or fallback
+        return (suggestions or fallback), None
 
     def _enforce_variety(
         self, suggestions: list[Suggestion], usage: dict[str, int]

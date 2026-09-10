@@ -24,6 +24,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from ...config import WorkspaceConfig
+from ...ingest.probe import snap_fps
 from ..matcher import BeatMatch, Suggestion
 
 DEFAULT_FPS = 25.0
@@ -39,6 +40,8 @@ class TimelineItem:
     end_frame: int
     source_in_frame: int      # in the source's own timebase
     source_out_frame: int
+    sequence_in_frame: int    # the same in/out counted in sequence frames,
+    sequence_out_frame: int   # which is what FCP7 XML and EDL expect
     gap_frames: int           # unfilled remainder of the beat
     media_path: str | None
     offline: bool
@@ -125,7 +128,7 @@ def choose_fps(matches: list[BeatMatch], config: WorkspaceConfig) -> tuple[float
         return float(config.transcript.sequence_fps), warnings
 
     rates = [
-        round(float(m.chosen.source.fps), 3)
+        round(float(snap_fps(m.chosen.source.fps)), 3)
         for m in matches
         if m.chosen and m.chosen.source.fps
     ]
@@ -168,7 +171,7 @@ def build_timeline(
         beat = match.beat
         start_frame = seconds_to_frames(beat.start_s, fps)
         wanted_frames = max(1, seconds_to_frames(beat.duration_s, fps))
-        source_fps = float(suggestion.source.fps or fps)
+        source_fps = float(snap_fps(suggestion.source.fps) or fps)
 
         available_frames = max(1, seconds_to_frames(suggestion.shot.duration_s, fps))
         used_frames = min(wanted_frames, available_frames)
@@ -183,6 +186,7 @@ def build_timeline(
 
         source_in = seconds_to_frames(suggestion.shot.start_s, source_fps)
         source_out = source_in + max(1, seconds_to_frames(used_frames / fps, source_fps))
+        sequence_in = seconds_to_frames(suggestion.shot.start_s, fps)
         media_path, offline = resolve_media_path(suggestion, config)
         if offline:
             timeline.warnings.append(
@@ -199,6 +203,8 @@ def build_timeline(
                 end_frame=start_frame + used_frames,
                 source_in_frame=source_in,
                 source_out_frame=source_out,
+                sequence_in_frame=sequence_in,
+                sequence_out_frame=sequence_in + used_frames,
                 gap_frames=gap_frames,
                 media_path=media_path,
                 offline=offline,

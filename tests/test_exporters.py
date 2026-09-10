@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from broll.ingest.probe import nominal_fps
 from broll.transcript.exporters import csv_export, edl, fcp7xml
 from broll.transcript.exporters.base import (
     build_timeline,
@@ -100,6 +101,25 @@ def test_source_timecodes_use_the_source_timebase(timeline):
     assert ntsc_item.source_fps == 29.97
     # 8 seconds of sequence time is 240 frames at 29.97, not 200.
     assert ntsc_item.source_out_frame - ntsc_item.source_in_frame == 240
+
+
+def test_xml_in_and_out_span_exactly_the_slot(timeline):
+    for item in timeline.items:
+        assert item.sequence_out_frame - item.sequence_in_frame == item.end_frame - item.start_frame
+
+
+@pytest.mark.parametrize(
+    "r_frame_rate,avg_frame_rate,expected",
+    [
+        ("30/1", "264900/8819", 30.0),          # iPhone VFR: average 30.04
+        ("30000/1001", "14275/477", 29.97),     # average 29.93
+        ("25/1", "25/1", 25.0),
+        ("90000/1", "169400/5727", 29.97),      # nonsense declared rate: snap the average
+        ("90000/1", "1000/37", 1000 / 37),      # 27.03 is nowhere near a standard rate
+    ],
+)
+def test_nominal_fps_prefers_standard_rates(r_frame_rate, avg_frame_rate, expected):
+    assert nominal_fps(r_frame_rate, avg_frame_rate) == pytest.approx(expected, abs=0.001)
 
 
 def test_beats_with_no_good_match_become_gaps_not_clips(timeline):

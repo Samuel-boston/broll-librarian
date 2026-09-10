@@ -62,8 +62,11 @@ def build(timeline: Timeline) -> str:
         _rate(clip, timeline.fps)
         _text(clip, "start", item.start_frame)
         _text(clip, "end", item.end_frame)
-        _text(clip, "in", item.source_in_frame)
-        _text(clip, "out", item.source_out_frame)
+        # In/out are counted in the clipitem's own rate (the sequence's), so
+        # out - in always equals end - start. Source-rate counts here made
+        # Premiere trim clips a few frames short of their slot.
+        _text(clip, "in", item.sequence_in_frame)
+        _text(clip, "out", item.sequence_out_frame)
 
         source_key = item.suggestion.source.id
         if source_key in seen_files:

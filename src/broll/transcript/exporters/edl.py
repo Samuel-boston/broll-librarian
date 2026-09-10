@@ -18,7 +18,7 @@ def build(timeline: Timeline) -> str:
 
     for position, item in enumerate(timeline.items, start=1):
         # Source timecodes are conformed to the sequence rate.
-        source_in = int(round(item.source_in_frame / item.source_fps * timeline.fps))
+        source_in = item.sequence_in_frame
         source_out = source_in + item.duration_frames
         reel = _reel(item.name)
         lines.append(

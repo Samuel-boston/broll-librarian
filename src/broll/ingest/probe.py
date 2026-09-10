@@ -42,6 +42,30 @@ def _parse_fps(rate: str | None) -> float | None:
         return None
 
 
+# Rates an NLE sequence can actually be set to.
+STANDARD_RATES = (23.976, 24.0, 25.0, 29.97, 30.0, 48.0, 50.0, 59.94, 60.0, 100.0, 119.88, 120.0)
+
+
+def snap_fps(fps: float | None, tolerance: float = 0.015) -> float | None:
+    """The standard rate a measured rate is really meant to be.
+
+    Phone footage is variable frame rate, so its *average* comes out as 29.58
+    or 30.04 fps. Handed to an NLE as-is, that makes a sequence nobody can set.
+    """
+    if not fps:
+        return fps
+    nearest = min(STANDARD_RATES, key=lambda rate: abs(rate - fps))
+    return nearest if abs(nearest - fps) / nearest <= tolerance else fps
+
+
+def nominal_fps(r_frame_rate: str | None, avg_frame_rate: str | None) -> float | None:
+    """Prefer the stream's declared rate; fall back to the snapped average."""
+    declared = _parse_fps(r_frame_rate)
+    if declared and any(abs(declared - rate) < 0.01 for rate in STANDARD_RATES):
+        return declared
+    return snap_fps(_parse_fps(avg_frame_rate) or declared)
+
+
 def probe(path: Path) -> ProbeResult:
     _, ffprobe = check_ffmpeg()
     if not path.exists():
@@ -64,7 +88,7 @@ def probe(path: Path) -> ProbeResult:
 
     fmt = data.get("format", {})
     duration = video.get("duration") or fmt.get("duration")
-    fps = _parse_fps(video.get("avg_frame_rate")) or _parse_fps(video.get("r_frame_rate"))
+    fps = nominal_fps(video.get("r_frame_rate"), video.get("avg_frame_rate"))
 
     return ProbeResult(
         duration_s=float(duration) if duration else 0.0,

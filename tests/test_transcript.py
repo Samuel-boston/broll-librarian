@@ -170,12 +170,15 @@ async def test_no_good_match_is_reported_as_a_gap(matcher_setup):
         RerankResult(choices=[], no_good_match=True,
                      missing_footage="A close-up of a hand signing a contract.")
     ])
-    beats = parse_and_segment("The contract is finally signed.", "a.txt")
+    # A line the library has candidates for, so the reranker is really asked.
+    beats = parse_and_segment("Someone pours a coffee slowly.", "a.txt")
     matches = await TranscriptMatcher(workspace, engine, provider).match(beats)
 
     assert matches[0].no_good_match
     assert not matches[0].suggestions
     assert gaps(matches) == matches
+    # The reranker's suggestion of what to shoot reaches the editor.
+    assert matches[0].missing_footage == "A close-up of a hand signing a contract."
 
 
 async def test_a_reranker_outage_does_not_lose_the_timeline(matcher_setup):
