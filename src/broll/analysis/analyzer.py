@@ -84,6 +84,13 @@ class Analyzer:
 
         self.new_folders: list[str] = []
         self._load_tree()
+        # The featured person's name, in every form a tag might take. It is
+        # recorded as featured_person_in_shot; as a tag it is on nearly every
+        # clip in their library, so it only adds noise - on the card, and in
+        # search, where it matched half of "clip of Adam meditating".
+        parts = (config.client.featured_person or "").lower().split()
+        self.name_terms = ({" ".join(parts), *[p for p in parts if len(p) >= 3]}
+                           if parts else set())
         self.emotion_vocab = list(config.client.emotions) or list(EMOTIONS)
         self.client_context = render_client_context(config.client)
 
@@ -171,6 +178,8 @@ class Analyzer:
             result.secondary_categories = []
         if not self.config.client.featured_person:
             result.featured_person_in_shot = False
+        if self.name_terms:
+            result.tags = [t for t in result.tags if t not in self.name_terms]
         return unmatched
 
     async def analyse_frames(

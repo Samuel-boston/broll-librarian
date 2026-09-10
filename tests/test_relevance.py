@@ -77,7 +77,6 @@ def test_nothing_relevant_means_nothing_shown(store):
     seed_library(store, embedder())
     engine = SearchEngine(store, embedder())
     assert engine.search("a mariachi band playing trumpets at a wedding") == []
-    assert engine.hidden_count > 0
 
 
 @needs_embeddings
@@ -118,5 +117,5 @@ def test_the_search_page_hides_loose_matches_behind_a_link(workspace, store):
         loose = client.get("/search", params={"q": "I need a shot of him meditating",
                                               "loose": "true"}).text
     assert strict.count("<article") == 1
-    assert "loosely related clip" in strict and "Show them" in strict
+    assert "near match" in strict and "Show them" in strict
     assert loose.count("<article") > 1

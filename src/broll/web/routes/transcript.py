@@ -70,7 +70,7 @@ async def match_transcript(
 
     store = state.store()
     try:
-        engine = SearchEngine(store, state.embedder)
+        engine = SearchEngine(store, state.embedder, featured_person=config.client.featured_person)
         text_provider = None
         if rerank:
             try:

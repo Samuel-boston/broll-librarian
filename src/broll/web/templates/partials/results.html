@@ -75,11 +75,11 @@
 {% endif %}
 {% if hidden_count %}
   <p class="mt-4 text-center text-xs text-slate-400">
-    {{ hidden_count }} loosely related clip{{ '' if hidden_count == 1 else 's' }} hidden.
+    {{ hidden_count }} near match{{ '' if hidden_count == 1 else 'es' }} hidden.
     <a href="{{ request.url.include_query_params(loose='true') }}"
        hx-get="{{ request.url.include_query_params(loose='true') }}" hx-include="this"
        class="text-indigo-600 underline">Show them</a>
   </p>
 {% elif loose and query %}
-  <p class="mt-4 text-center text-xs text-slate-400">Showing loosely related clips too.</p>
+  <p class="mt-4 text-center text-xs text-slate-400">Showing near matches too.</p>
 {% endif %}

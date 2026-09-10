@@ -47,8 +47,10 @@ VECTOR_OVERFETCH = 10
 # more. Re-calibrate if the embedder changes - other models score differently.
 VECTOR_FLOOR = 0.25       # below this a clip is not about the query at all
 VECTOR_GAP = 0.12         # ...and it must sit close to the best match
-KEYWORD_COVERAGE = 0.5    # half the meaningful words literally present: keep
-KEYWORD_SIM_FLOOR = 0.20  # fewer present: keep only if also in the right area
+KEYWORD_COVERAGE = 0.5    # half the (weighted) meaningful words present: keep
+KEYWORD_PARTIAL = 0.25    # a quarter present: keep only if also on topic
+NEAR_MISS_GAP = 0.18      # a hidden clip is a "near match" only if this close
+NEAR_MISS_FLOOR = 0.20    # ...and related in its own right, not just "least bad"
 
 _TOKEN = re.compile(r"[\w']+", re.UNICODE)
 
@@ -156,11 +158,32 @@ class SearchResult:
 
 
 class SearchEngine:
-    def __init__(self, store: Store, embedder: Embedder | None = None):
+    def __init__(
+        self,
+        store: Store,
+        embedder: Embedder | None = None,
+        featured_person: str | None = None,
+    ):
         self.store = store
         self.embedder = embedder
-        # How many candidates the last strict search judged not relevant.
+        # How many near matches the last strict search held back.
         self.hidden_count = 0
+        # In a client's library their name is on nearly every clip, so as a
+        # search word it matches everything: "clip of Adam meditating" pulled
+        # in "Adam yawns in bed". It is a filter, not a search term.
+        parts = (featured_person or "").split()
+        terms = sorted({" ".join(parts), *[p for p in parts if len(p) >= 3]}, key=len, reverse=True)
+        self._name_pattern = (
+            re.compile(r"\b(?:" + "|".join(re.escape(t) for t in terms) + r")(?:'s)?\b", re.I)
+            if parts else None
+        )
+
+    def split_person(self, query: str) -> tuple[str, bool]:
+        """Take the featured person's name out of a query: (what is left, mentioned)."""
+        if self._name_pattern is None:
+            return query, False
+        rest, count = self._name_pattern.subn(" ", query)
+        return re.sub(r"\s+", " ", rest).strip(), count > 0
 
     # -- the two sides ------------------------------------------------------
 
@@ -230,20 +253,43 @@ class SearchEngine:
     # -- relevance ----------------------------------------------------------
 
     def _coverage(self, tokens: list[str], shot_ids: list[str]) -> dict[str, float]:
-        """Fraction of the query's meaningful words each shot literally contains."""
+        """How much of the query each shot literally contains, weighted by rarity.
+
+        A word on most of the library says little about any one clip; a word
+        on 2% of it says a lot. So each word counts by its inverse document
+        frequency. A word *nothing* contains is left out entirely: it cannot
+        tell clips apart - but it is still something the clip was asked to be
+        and is not, so it weighs as much as the rarest possible word. That way
+        "nervous system regulation" still finds a clip tagged "nervous system"
+        (2 of 3 specific words), while "a mariachi band playing trumpets at a
+        wedding" does not return a child playing in a park (1 of 5).
+        """
         if not tokens or not shot_ids:
             return {}
-        hits = dict.fromkeys(shot_ids, 0)
+        total = max(1, self.store.count_shots())
         placeholders = ", ".join("?" for _ in shot_ids)
+        weights: dict[str, float] = {}
+        matched: dict[str, set[str]] = {sid: set() for sid in shot_ids}
         for token in tokens:
+            frequency = self.store.conn.execute(
+                """SELECT COUNT(*) FROM shots_fts JOIN shots s ON s.rowid = shots_fts.rowid
+                   WHERE shots_fts MATCH ? AND s.workspace_id = ?""",
+                (_quote(token), self.store.workspace_id),
+            ).fetchone()[0]
+            weights[token] = math.log(1 + total / max(frequency, 1))
+            if not frequency:
+                continue
             rows = self.store.conn.execute(
                 f"""SELECT s.id FROM shots_fts JOIN shots s ON s.rowid = shots_fts.rowid
                     WHERE shots_fts MATCH ? AND s.workspace_id = ? AND s.id IN ({placeholders})""",
                 (_quote(token), self.store.workspace_id, *shot_ids),
             ).fetchall()
             for row in rows:
-                hits[row["id"]] += 1
-        return {sid: count / len(tokens) for sid, count in hits.items()}
+                matched[row["id"]].add(token)
+        weight = sum(weights.values())
+        if not weight:
+            return {}
+        return {sid: sum(weights[t] for t in words) / weight for sid, words in matched.items()}
 
     def _similarities(self, query_vector: list[float], shot_ids: list[str]) -> dict[str, float]:
         query = _unit(query_vector)
@@ -258,35 +304,42 @@ class SearchEngine:
         tokens: list[str],
         keyword_hits: set[str],
         query_vector: list[float] | None,
-    ) -> tuple[set[str], dict[str, float]]:
-        """Which candidates are genuinely about the query.
+    ) -> tuple[set[str], set[str], dict[str, float]]:
+        """Which candidates are genuinely about the query - and which nearly were.
 
-        A clip is kept if most of what was asked for is literally in it; or
-        some of it is, and it means roughly the same thing; or it means the same
-        thing and sits close to the best match. The literal route matters:
-        "nervous system regulation" scores only 0.11 semantically against a
-        meditation clip *tagged* "nervous system", and must still find it.
+        Kept: most of what was asked for is literally in it; or a good part is
+        and it is on topic; or it means the same thing and sits close to the
+        best match. The literal route matters: "nervous system regulation"
+        scores only 0.11 semantically against a clip *tagged* "nervous system".
+        A near match failed all three but was close; only those are offered
+        behind "show them" - never the whole library.
         """
         coverage = self._coverage(tokens, [c for c in candidates if c in keyword_hits])
         sims = self._similarities(query_vector, candidates) if query_vector else {}
         best = max(sims.values(), default=None)
 
         keep: set[str] = set()
+        near: set[str] = set()
         for sid in candidates:
             cov = coverage.get(sid, 0.0)
             sim = sims.get(sid)
             if sim is None:
                 # Nothing to judge meaning by (no embedder, or not embedded
-                # yet): a literal hit on a meaningful word is enough.
-                if cov > 0:
-                    keep.add(sid)
+                # yet): the weighted literal match has to carry it alone.
+                (keep if cov >= KEYWORD_PARTIAL else near if cov > 0 else set()).add(sid)
             elif cov >= KEYWORD_COVERAGE:
                 keep.add(sid)
-            elif cov > 0 and sim >= KEYWORD_SIM_FLOOR:
+            elif cov >= KEYWORD_PARTIAL and sim >= VECTOR_FLOOR:
                 keep.add(sid)
             elif best is not None and sim >= VECTOR_FLOOR and sim >= best - VECTOR_GAP:
                 keep.add(sid)
-        return keep, sims
+            elif cov >= KEYWORD_PARTIAL or (
+                best is not None and sim >= NEAR_MISS_FLOOR and sim >= best - NEAR_MISS_GAP
+            ):
+                # Close, but not close enough. When even the best match is
+                # irrelevant, "near the best" means nothing - hence the floor.
+                near.add(sid)
+        return keep, near, sims
 
     # -- fusion -------------------------------------------------------------
 
@@ -296,16 +349,36 @@ class SearchEngine:
         filters: SearchFilters | None = None,
         limit: int = 20,
         strict: bool = True,
+        person_filter: bool = True,
+        rank_only: bool = False,
     ) -> list[SearchResult]:
+        """Search.
+
+        ``strict`` (the default) returns only relevant clips; ``strict=False``
+        adds the near matches behind the "show them" link. ``rank_only`` skips
+        the relevance gate and returns the top of the ranking whatever it is -
+        for the transcript matcher, whose reranker judges relevance itself and
+        needs candidates even for narration as abstract as "most of us start
+        the day already behind". ``person_filter=False`` still takes the
+        client's name out of the query but does not require them in shot -
+        narration says "Adam" over footage with no Adam in it."""
         filters = filters or SearchFilters()
         self.hidden_count = 0
 
         if not (query or "").strip():
             return self._browse(filters, limit)
 
-        tokens = meaningful_tokens(query)
+        text, mentioned = self.split_person(query)
+        if mentioned and person_filter:
+            filters = filters.model_copy(update={"featured_person": True})
+        tokens = meaningful_tokens(text)
+        if mentioned and person_filter and not tokens:
+            return self._browse(filters, limit)  # "Adam" alone: all of Adam's clips
+
         keyword = self._keyword_candidates(tokens, filters, limit * 2)
-        query_vector = self._embed(query)
+        # The meaning side gets the natural phrasing, minus only the name:
+        # measured, stripping the rest of the filler blurs single-word queries.
+        query_vector = self._embed(text) if text else None
         vector = self._vector_candidates(query_vector, filters, limit * 2) if query_vector else []
 
         scores: dict[str, float] = {}
@@ -319,10 +392,11 @@ class SearchEngine:
             vector_rank[shot_id] = rank
 
         sims: dict[str, float] = {}
-        if strict and scores:
-            keep, sims = self._relevant(list(scores), tokens, set(keyword_rank), query_vector)
-            self.hidden_count = len(scores) - len(keep)
-            scores = {sid: value for sid, value in scores.items() if sid in keep}
+        if scores and not rank_only:
+            keep, near, sims = self._relevant(list(scores), tokens, set(keyword_rank), query_vector)
+            shown = keep if strict else keep | near
+            self.hidden_count = len(near) if strict else 0
+            scores = {sid: value for sid, value in scores.items() if sid in shown}
 
         ordered = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]
         results: list[SearchResult] = []

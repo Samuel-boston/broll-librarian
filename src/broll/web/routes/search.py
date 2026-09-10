@@ -81,7 +81,7 @@ async def search_page(
     config = state.config
     store = state.store()
     try:
-        engine = SearchEngine(store, state.embedder)
+        engine = SearchEngine(store, state.embedder, featured_person=config.client.featured_person)
         filters = SearchFilters(
             shot_type=shot_type, camera_movement=camera_movement, mood=mood,
             emotions=emotion, category=category, setting=setting,

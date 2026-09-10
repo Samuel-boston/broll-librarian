@@ -141,11 +141,12 @@ class TranscriptMatcher:
         return matches
 
     async def _match_beat(self, beat: Beat, usage: dict[str, int]) -> BeatMatch:
-        # Loose on purpose: the reranker judges relevance itself and is told to
-        # return "no good match" - strict search would starve it on abstract
-        # narration, which rarely shares words with a caption.
+        # Rank only, on purpose: the reranker judges relevance itself and is
+        # told to answer "no good match". Any relevance gate would starve it on
+        # abstract narration, which rarely resembles a caption closely.
         candidates = self.engine.search(
-            beat.text, self.filters, self.config.transcript.candidates_per_beat, strict=False
+            beat.text, self.filters, self.config.transcript.candidates_per_beat,
+            rank_only=True, person_filter=False,
         )
         if not candidates:
             return BeatMatch(

@@ -467,14 +467,14 @@ def search(
     category: list[str] = typer.Option([], "--folder", help="A folder, or a parent folder, in tree mode."),
     featured: bool = typer.Option(False, "--featured", help="Only shots of the client's featured person."),
     top_picks: bool = typer.Option(False, "--top-picks", help="Only starred shots."),
-    loose: bool = typer.Option(False, "--loose", help="Also show loosely related clips."),
+    loose: bool = typer.Option(False, "--loose", help="Also show near matches."),
 ) -> None:
     """Search the library. Hybrid keyword + vector, fused with RRF."""
     workspace_config = resolve_workspace(workspace)
     store = Store.for_config(workspace_config)
     try:
         embedder = _load_embedder(workspace_config)
-        engine = SearchEngine(store, embedder)
+        engine = SearchEngine(store, embedder, featured_person=workspace_config.client.featured_person)
         filters = SearchFilters(
             shot_type=list(shot_type), camera_movement=list(camera_movement),
             mood=list(mood), setting=list(setting), people_count=list(people),
@@ -494,7 +494,7 @@ def search(
         return
     hidden = engine.hidden_count
     if not results:
-        _echo("No matches." + (f" {hidden} loosely related clip(s) hidden - add --loose." if hidden else ""))
+        _echo("No matches." + (f" {hidden} near match(es) hidden - add --loose." if hidden else ""))
         return
     for position, result in enumerate(results, start=1):
         link = result.drive_link or result.shot.thumbnail_path or ""
@@ -515,7 +515,7 @@ def search(
         if link:
             _echo(f"    {link}")
     if hidden:
-        _echo(f"\n({hidden} loosely related clip(s) hidden - add --loose to see them.)")
+        _echo(f"\n({hidden} near match(es) hidden - add --loose to see them.)")
 
 
 @app.command()
@@ -785,7 +785,7 @@ def transcript(
             _fail(f"No narration found in {path.name}.")
 
         embedder = _load_embedder(workspace_config)
-        engine = SearchEngine(store, embedder)
+        engine = SearchEngine(store, embedder, featured_person=workspace_config.client.featured_person)
         text_provider = None
         if not no_rerank:
             try:
