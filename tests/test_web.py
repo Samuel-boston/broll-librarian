@@ -217,9 +217,17 @@ def test_every_search_control_carries_its_own_verb(workspace):
 
 
 def test_transcript_screen_matches_swaps_and_exports(workspace, store):
+    """Runs with embeddings, as the real app does. Narration rarely shares a
+    meaningful word with a caption, so keyword-only matching finds nothing for
+    it - it used to "match" on filler words like "the", which was worse."""
+    from broll.analysis.embedder import LocalEmbedder, local_embeddings_available
+    from broll.config import EmbedderConfig
     from tests.test_search import seed_library
 
-    seed_library(store)
+    if not local_embeddings_available():
+        pytest.skip("sentence-transformers not installed")
+    embedder = LocalEmbedder(EmbedderConfig())
+    seed_library(store, embedder)
     store.close()
 
     srt = ("1\n00:00:00,000 --> 00:00:07,000\n"
@@ -227,7 +235,9 @@ def test_transcript_screen_matches_swaps_and_exports(workspace, store):
            "2\n00:00:07,000 --> 00:00:15,000\n"
            "So we built something that keeps up with your team.\n")
 
-    with _client(workspace, run_worker=False) as client:
+    app = create_app(workspace, run_worker=False)
+    app.state.broll.embedder = embedder
+    with TestClient(app) as client:
         assert client.get("/transcript").status_code == 200
 
         response = client.post("/transcript", data={"text": srt, "filename": "demo.srt",

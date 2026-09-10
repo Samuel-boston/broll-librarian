@@ -11,7 +11,7 @@ from pathlib import Path
 
 SQL_DIR = Path(__file__).parent
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def _apply_sql_file(conn: sqlite3.Connection, name: str) -> None:
@@ -76,11 +76,32 @@ def _v4_job_owner(conn: sqlite3.Connection) -> None:
             raise
 
 
+def _v5_stemmed_keyword_index(conn: sqlite3.Connection) -> None:
+    """Stem the keyword index, so "meditate" finds "meditating" and "meditation".
+
+    The triggers on `shots` refer to shots_fts by name, so they keep working
+    once it is recreated; 'rebuild' repopulates it from shots.search_text.
+    """
+    conn.executescript(
+        """
+        DROP TABLE IF EXISTS shots_fts;
+        CREATE VIRTUAL TABLE shots_fts USING fts5(
+            search_text,
+            content='shots',
+            content_rowid='rowid',
+            tokenize='porter unicode61 remove_diacritics 2'
+        );
+        INSERT INTO shots_fts(shots_fts) VALUES ('rebuild');
+        """
+    )
+
+
 MIGRATIONS = {
     1: _v1_base_schema,
     2: _v2_drive_shortcuts,
     3: _v3_client_aware_fields,
     4: _v4_job_owner,
+    5: _v5_stemmed_keyword_index,
 }
 
 

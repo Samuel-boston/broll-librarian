@@ -74,6 +74,7 @@ async def search_page(
     clean: bool = False,
     featured: bool = False,
     top_picks: bool = False,
+    loose: bool = False,
     limit: int = 48,
 ):
     state = request.app.state.broll
@@ -91,7 +92,7 @@ async def search_page(
             featured_person=True if featured else None,
             top_pick=True if top_picks else None,
         )
-        results = engine.search(q, filters, limit)
+        results = engine.search(q, filters, limit, strict=not loose)
         counts = store.facet_counts()
         context = {
             "request": request,
@@ -121,6 +122,8 @@ async def search_page(
                 "usable_for": _available(list(USABLE_FOR), counts, "usable_for"),
             },
             "total_shots": store.count_shots(),
+            "hidden_count": engine.hidden_count,
+            "loose": loose,
         }
     finally:
         store.close()

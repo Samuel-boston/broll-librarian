@@ -141,8 +141,11 @@ class TranscriptMatcher:
         return matches
 
     async def _match_beat(self, beat: Beat, usage: dict[str, int]) -> BeatMatch:
+        # Loose on purpose: the reranker judges relevance itself and is told to
+        # return "no good match" - strict search would starve it on abstract
+        # narration, which rarely shares words with a caption.
         candidates = self.engine.search(
-            beat.text, self.filters, self.config.transcript.candidates_per_beat
+            beat.text, self.filters, self.config.transcript.candidates_per_beat, strict=False
         )
         if not candidates:
             return BeatMatch(

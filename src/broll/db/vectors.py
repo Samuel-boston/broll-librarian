@@ -77,6 +77,11 @@ class VectorIndex(ABC):
     def count(self) -> int: ...
 
     @abstractmethod
+    def get_many(self, shot_ids: list[str]) -> dict[str, list[float]]:
+        """Stored vectors for these shots - used to judge how relevant a
+        candidate really is, whichever side of the search found it."""
+
+    @abstractmethod
     def drop(self) -> None: ...
 
     def rebuild(self, dimensions: int | None = None) -> None:
@@ -117,6 +122,16 @@ class SqliteVecIndex(VectorIndex):
 
     def count(self) -> int:
         return int(self.conn.execute("SELECT COUNT(*) FROM shot_vectors").fetchone()[0])
+
+    def get_many(self, shot_ids: list[str]) -> dict[str, list[float]]:
+        if not shot_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in shot_ids)
+        rows = self.conn.execute(
+            f"SELECT shot_id, embedding FROM shot_vectors WHERE shot_id IN ({placeholders})",
+            tuple(shot_ids),
+        ).fetchall()
+        return {r["shot_id"]: _unpack(bytes(r["embedding"])) for r in rows}
 
     def drop(self) -> None:
         self.conn.execute("DROP TABLE IF EXISTS shot_vectors")
@@ -207,6 +222,14 @@ class NumpyVectorIndex(VectorIndex):
                 (self.workspace_id,),
             ).fetchone()[0]
         )
+
+    def get_many(self, shot_ids: list[str]) -> dict[str, list[float]]:
+        ids, matrix = self._load()
+        position = {sid: i for i, sid in enumerate(ids)}
+        return {
+            sid: [float(x) for x in matrix[position[sid]]]
+            for sid in shot_ids if sid in position
+        }
 
     def drop(self) -> None:
         self.conn.execute("DROP TABLE IF EXISTS shot_vectors")

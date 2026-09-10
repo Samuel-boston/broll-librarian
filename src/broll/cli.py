@@ -467,6 +467,7 @@ def search(
     category: list[str] = typer.Option([], "--folder", help="A folder, or a parent folder, in tree mode."),
     featured: bool = typer.Option(False, "--featured", help="Only shots of the client's featured person."),
     top_picks: bool = typer.Option(False, "--top-picks", help="Only starred shots."),
+    loose: bool = typer.Option(False, "--loose", help="Also show loosely related clips."),
 ) -> None:
     """Search the library. Hybrid keyword + vector, fused with RRF."""
     workspace_config = resolve_workspace(workspace)
@@ -484,15 +485,16 @@ def search(
             featured_person=True if featured else None,
             top_pick=True if top_picks else None,
         )
-        results = engine.search(query, filters, limit)
+        results = engine.search(query, filters, limit, strict=not loose)
     finally:
         store.close()
 
     if as_json:
         _echo(json.dumps([r.to_dict() for r in results], indent=2))
         return
+    hidden = engine.hidden_count
     if not results:
-        _echo("No matches.")
+        _echo("No matches." + (f" {hidden} loosely related clip(s) hidden - add --loose." if hidden else ""))
         return
     for position, result in enumerate(results, start=1):
         link = result.drive_link or result.shot.thumbnail_path or ""
@@ -512,6 +514,8 @@ def search(
             _echo(f"    tags:     {', '.join(result.shot.tags)}")
         if link:
             _echo(f"    {link}")
+    if hidden:
+        _echo(f"\n({hidden} loosely related clip(s) hidden - add --loose to see them.)")
 
 
 @app.command()
