@@ -250,3 +250,13 @@ def test_primary_shot_selection():
     assert primary_shot([a, b]).shot_id == "s1"
     assert primary_shot([a]).shot_id == "s0"
     assert primary_shot([]) is None
+
+
+def test_list_facets_file_only_the_top_values():
+    """Subjects come back most-important-first; only the top few earn folders."""
+    shot = facets(subjects=["man", "beach", "sand", "sky", "ocean"],
+                  mood=["calm", "peaceful", "serene"])
+    result = paths(plan_paths([shot], counts(), TaxonomyConfig(max_list_values_per_shot=2)))
+    assert {"By Subject/Man", "By Subject/Beach"} <= result
+    assert "By Subject/Sky" not in result and "By Subject/Sand" not in result
+    assert "By Mood/Serene" not in result

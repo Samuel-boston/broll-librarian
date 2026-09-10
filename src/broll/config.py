@@ -68,6 +68,10 @@ class TaxonomyConfig(BaseModel):
 
     min_clips_for_subfolder: int = 5
     max_folders_per_level: int = 40
+    # Subjects, moods and uses are ranked most-important-first by the model.
+    # Filing a clip under all of them makes a thicket of near-empty folders;
+    # search still sees every value regardless.
+    max_list_values_per_shot: int = 2
     other_folder_name: str = "Other"
     library_folder_name: str = "_Library"
     review_folder_name: str = "_Needs Review"

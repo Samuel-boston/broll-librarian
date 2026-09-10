@@ -208,7 +208,10 @@ def plan_paths(
     for facet, top_folder in FACET_FOLDERS.items():
         allowed = _top_values(facet, facet_counts, config)
         for shot in shots:
-            for value in _facet_values(shot, facet):
+            values = _facet_values(shot, facet)
+            if facet in LIST_FACETS:
+                values = values[: config.max_list_values_per_shot]
+            for value in values:
                 if allowed is None or value in allowed:
                     second = folder_label(value)
                 else:
