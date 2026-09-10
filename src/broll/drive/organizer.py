@@ -16,7 +16,13 @@ from pathlib import Path
 from ..config import WorkspaceConfig
 from ..db.models import ShotFacets, Source
 from ..db.store import Store
-from .client import FOLDER_MIME, SHORTCUT_MIME, DriveClient, DriveError
+from .client import (
+    FOLDER_MIME,
+    SHORTCUT_MIME,
+    DriveClient,
+    DriveError,
+    DriveStorageFullError,
+)
 from .taxonomy import (
     ShortcutPlan,
     library_folder,
@@ -46,6 +52,7 @@ class OrganiseReport:
     sources: int = 0
     skipped: int = 0
     errors: list[str] = field(default_factory=list)
+    aborted: bool = False
 
     @property
     def writes(self) -> int:
@@ -309,8 +316,12 @@ class Organizer:
         for source_id in ids:
             try:
                 self.organise_source(source_id, report)
-            except DriveError as exc:
-                report.errors.append(f"{source_id}: {exc}")
+            except DriveStorageFullError as exc:
+                report.errors.append(str(exc))
+                report.aborted = True
+                break  # every remaining upload would fail the same way
+            except Exception as exc:  # HttpError and friends: report, keep going
+                report.errors.append(f"{source_id}: {type(exc).__name__}: {exc}")
         return report
 
     def _pair_counts(self) -> dict[tuple[str, str, str], int]:

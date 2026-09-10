@@ -156,3 +156,36 @@ def test_dry_run_on_an_empty_drive_never_queries_placeholder_ids(organised):
     assert any(a.kind == "create_folder" and a.path == "B-Roll" for a in report.actions)
     assert any(a.kind == "upload" for a in report.actions)
     assert client.writes == 0
+
+
+def test_a_full_drive_stops_cleanly_with_a_useful_message(organised):
+    """Found on the first real run: a full Drive crashed with a traceback after
+    retrying a non-retryable 403 for 40 seconds."""
+    from broll.drive.client import DriveStorageFullError
+
+    workspace, store, client = organised
+
+    def full(path, name, parent_id):
+        raise DriveStorageFullError("This Google Drive is full")
+
+    client.upload = full
+    report = Organizer(workspace, store, client).reorganise()
+
+    assert report.aborted
+    assert len(report.errors) == 1, "it should stop at the first full-Drive error"
+    assert "full" in report.errors[0]
+
+
+def test_storage_quota_403_is_not_retried_but_rate_limit_403_is():
+    from broll.drive.client import _is_retryable
+
+    class Resp:
+        status = 403
+
+    class Err(Exception):
+        def __init__(self, reason):
+            self.resp = Resp()
+            self.error_details = [{"reason": reason}]
+
+    assert _is_retryable(Err("userRateLimitExceeded"))
+    assert not _is_retryable(Err("storageQuotaExceeded"))

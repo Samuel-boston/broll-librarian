@@ -51,8 +51,26 @@ class DriveError(RuntimeError):
     pass
 
 
+# Drive reports rate limiting as 403 as well as 429, so 403 alone is not
+# enough to decide: only these reasons are worth retrying.
+RETRYABLE_403_REASONS = {"rateLimitExceeded", "userRateLimitExceeded", "backendError"}
+
+
+class DriveStorageFullError(RuntimeError):
+    """The Drive account has no room left. Retrying cannot help."""
+
+
+def _reason(exc: Exception) -> str:
+    for detail in getattr(exc, "error_details", None) or []:
+        if isinstance(detail, dict) and detail.get("reason"):
+            return detail["reason"]
+    return "storageQuotaExceeded" if "storage quota" in str(exc).lower() else ""
+
+
 def _is_retryable(exc: Exception) -> bool:
     status = getattr(getattr(exc, "resp", None), "status", None)
+    if status == 403:
+        return _reason(exc) in RETRYABLE_403_REASONS
     return status in RETRY_STATUSES
 
 
@@ -64,6 +82,12 @@ def with_backoff(operation, *, description: str = "drive call"):
         try:
             return operation()
         except Exception as exc:  # googleapiclient raises HttpError
+            if _reason(exc) == "storageQuotaExceeded":
+                raise DriveStorageFullError(
+                    "This Google Drive is full, so nothing can be uploaded. Free up "
+                    "space (emptying Drive's trash often does it) or connect a Drive "
+                    "with room to spare."
+                ) from exc
             if not _is_retryable(exc) or attempt == MAX_RETRIES:
                 raise
             last = exc
