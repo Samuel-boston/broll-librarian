@@ -225,3 +225,60 @@ async def test_only_real_defects_route_a_shot_to_review(workspace, tmp_path):
 
     blurry = await Analyzer(workspace, provider=Fixed(["out_of_focus"])).analyse_frames(frames, context)
     assert blurry.status == "needs_review"
+
+
+async def test_an_uploaded_clip_is_kept_until_it_reaches_drive(workspace, clips):
+    """Regression: browser uploads were deleted after indexing, so a later
+    `organise` had nothing to upload and they could never reach Drive."""
+    import shutil
+
+    from broll.ingest.pipeline import IngestPipeline
+    from broll.ingest.scanner import DiscoveredFile
+
+    workspace.ensure_dirs()
+    staged = workspace.staging_dir / "uploaded.mp4"
+    shutil.copy(clips["single_static_bars"], staged)
+
+    store = Store.for_config(workspace)
+    try:
+        pipeline = IngestPipeline(workspace, store)  # no Drive connected
+        await pipeline.ingest(DiscoveredFile(origin="upload", path=staged,
+                                             filename="uploaded.mp4",
+                                             origin_path=str(staged)))
+        assert staged.exists(), "the only copy was deleted before reaching Drive"
+    finally:
+        store.close()
+
+
+async def test_an_uploaded_clip_is_filed_into_drive_then_cleaned_up(workspace, clips):
+    import shutil
+
+    from broll.drive.organizer import Organizer
+    from broll.ingest.pipeline import IngestPipeline
+    from broll.ingest.scanner import DiscoveredFile
+    from tests.fakes import FakeDriveClient
+
+    workspace.ensure_dirs()
+    staged = workspace.staging_dir / "uploaded.mp4"
+    shutil.copy(clips["single_static_bars"], staged)
+    drive = FakeDriveClient()
+
+    def organise(source_id):
+        # Mirrors drive_organise_callable: its own connection, in its thread.
+        own = Store.for_config(workspace)
+        try:
+            return Organizer(workspace, own, drive).organise_source(source_id)
+        finally:
+            own.close()
+
+    store = Store.for_config(workspace)
+    try:
+        result = await IngestPipeline(workspace, store, organise=organise).ingest(
+            DiscoveredFile(origin="upload", path=staged, filename="uploaded.mp4",
+                           origin_path=str(staged)))
+        assert result.organised
+        assert store.get_source(result.source_id).drive_file_id
+        assert any(p.endswith(".mp4") for p in drive.tree())
+        assert not staged.exists(), "once safely in Drive, the staged copy can go"
+    finally:
+        store.close()

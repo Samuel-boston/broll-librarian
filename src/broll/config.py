@@ -112,6 +112,10 @@ class IngestConfig(BaseModel):
     min_average_shot_length_s: float = 2.0
     concurrency: int = 4
     drive_concurrency: int = 2
+    # File each source into Drive as soon as it is indexed, when Drive is
+    # connected. This has to happen inside the pipeline: an uploaded file's
+    # only copy is in staging, and cleanup would otherwise delete it first.
+    auto_organise: bool = True
 
 
 class TranscriptConfig(BaseModel):

@@ -15,6 +15,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from ..analysis.analyzer import Analyzer
 from ..analysis.embedder import Embedder
@@ -45,6 +46,7 @@ class IngestResult:
     shots_skipped: int = 0
     cost_usd: float = 0.0
     deduped: bool = False
+    organised: bool = False
     error: str | None = None
     messages: list[str] = field(default_factory=list)
 
@@ -56,11 +58,15 @@ class IngestPipeline:
         store: Store,
         analyzer: Analyzer | None = None,
         embedder: Embedder | None = None,
+        organise: Callable[[str], object] | None = None,
     ):
         self.config = config
         self.store = store
         self.analyzer = analyzer or Analyzer(config)
         self._embedder = embedder
+        # Runs in a worker thread, so it must open its own database connection
+        # and Drive client - see drive_organise_callable().
+        self._organise = organise
 
     @property
     def embedder(self) -> Embedder | None:
@@ -185,8 +191,20 @@ class IngestPipeline:
             for frame in frames:
                 frame.unlink(missing_ok=True)
 
-        self._cleanup(work_dir, video, discovered)
         result.status = self.store.recompute_source_status(source.id)
+
+        # Step 10: organise into Drive, *before* cleanup. For an upload the
+        # staged file is the only copy, so it has to reach Drive first.
+        if self._organise is not None and result.status in ("indexed", "needs_review"):
+            try:
+                await asyncio.to_thread(self._organise, source.id)
+            except Exception as exc:  # a Drive hiccup must not lose the analysis
+                log.warning("filing %s into Drive failed: %s", discovered.filename, exc)
+                result.messages.append(f"Drive filing failed: {exc}")
+            refreshed = self.store.get_source(source.id)
+            result.organised = bool(refreshed and refreshed.drive_file_id)
+
+        self._cleanup(work_dir, video, discovered, source.id)
         return result
 
     def _is_complete(self, source) -> bool:
@@ -243,15 +261,57 @@ class IngestPipeline:
         vector = await asyncio.to_thread(self._embedder.embed_one, text)
         self.store.vectors.upsert(shot_id, vector)
 
-    def _cleanup(self, work_dir: Path, video: Path, discovered: DiscoveredFile) -> None:
-        """Only ever delete inside the workspace temp and staging directories."""
+    def _cleanup(self, work_dir: Path, video: Path, discovered: DiscoveredFile,
+                 source_id: str) -> None:
+        """Only ever delete inside the workspace temp and staging directories,
+        and never delete the only copy of an uploaded file.
+
+        A Drive-origin temp copy can always go (the original is in Drive). An
+        upload's staged copy only goes once it has reached Drive; until then it
+        is the footage, and a later `broll organise` needs it.
+        """
         if work_dir.exists():
             for leftover in work_dir.glob("*"):
                 leftover.unlink(missing_ok=True)
             work_dir.rmdir()
-        if discovered.origin in ("upload", "drive"):
-            staging = self.config.staging_dir.resolve()
-            tmp = self.config.temp_dir.resolve()
-            resolved = video.resolve()
-            if any(resolved.is_relative_to(root) for root in (staging, tmp)):
-                resolved.unlink(missing_ok=True)
+        if discovered.origin not in ("upload", "drive"):
+            return
+        if discovered.origin == "upload":
+            source = self.store.get_source(source_id)
+            if not (source and source.drive_file_id):
+                return  # not in Drive yet - keep it
+        staging = self.config.staging_dir.resolve()
+        tmp = self.config.temp_dir.resolve()
+        resolved = video.resolve()
+        if any(resolved.is_relative_to(root) for root in (staging, tmp)):
+            resolved.unlink(missing_ok=True)
+
+
+def drive_organise_callable(config: WorkspaceConfig) -> Callable[[str], object] | None:
+    """A thread-safe "file this source into Drive" function, or None.
+
+    None when Drive is not connected or auto_organise is off. Each call opens
+    its own Store and Drive client, because it runs in a worker thread and
+    neither a sqlite3 connection nor an httplib2 client may cross threads.
+    """
+    if not config.ingest.auto_organise or not config.drive_token_path.exists():
+        return None
+
+    def organise(source_id: str):
+        from ..drive.auth import load_credentials
+        from ..drive.client import DriveClient
+        from ..drive.organizer import Organizer
+
+        credentials = load_credentials(config)
+        if credentials is None:
+            return None
+        store = Store.for_config(config)
+        try:
+            report = Organizer(config, store, DriveClient(credentials)).organise_source(source_id)
+            if report.errors:
+                raise RuntimeError("; ".join(report.errors))
+            return report
+        finally:
+            store.close()
+
+    return organise

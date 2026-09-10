@@ -26,7 +26,7 @@ from .db.models import Shot, Source, Workspace
 from .db.store import Registry, Store, new_id
 from .ingest.frames import best_frame, save_thumbnail
 from .ingest.hashing import content_hash
-from .ingest.pipeline import IngestPipeline
+from .ingest.pipeline import IngestPipeline, drive_organise_callable
 from .ingest.probe import NotAVideoError, probe
 from .ingest.scanner import DiscoveredFile, scan_local
 from .jobs.queue import enqueue_files, queue_stats
@@ -398,7 +398,10 @@ def _run_worker(workspace_config, store, concurrency: int | None, drain: bool = 
         # Load the model once here rather than racing to load it in four
         # worker threads at the same time.
         embedder.warm_up()
-    pipeline = IngestPipeline(workspace_config, store, embedder=embedder)
+    organise = drive_organise_callable(workspace_config)
+    pipeline = IngestPipeline(workspace_config, store, embedder=embedder, organise=organise)
+    if organise:
+        _echo("  Drive connected - each clip is filed into Drive as soon as it is indexed.")
 
     def on_progress(event: str, job, result) -> None:
         name = job.payload.get("filename", job.id[:8])
@@ -411,7 +414,11 @@ def _run_worker(workspace_config, store, concurrency: int | None, drain: bool = 
                 _echo(
                     f"  {result.status:<12} {name} "
                     f"({result.shots_analysed} shot(s), ${result.cost_usd:.4f})"
+                    + (" -> Drive" if result.organised else "")
                 )
+                for message in result.messages:
+                    if "Drive" in message:
+                        typer.secho(f"      {message}", fg=typer.colors.YELLOW)
         elif event == "retrying":
             _echo(f"  retry {name}")
         elif event == "failed":

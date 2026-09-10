@@ -20,7 +20,7 @@ from fastapi.templating import Jinja2Templates
 from ..analysis.embedder import get_embedder
 from ..config import WorkspaceConfig
 from ..db.store import Store
-from ..ingest.pipeline import IngestPipeline
+from ..ingest.pipeline import IngestPipeline, drive_organise_callable
 from ..jobs.worker import Worker
 
 log = logging.getLogger(__name__)
@@ -60,7 +60,10 @@ class AppState:
             self.embedder = None
 
         self.worker_store = self.store()
-        pipeline = IngestPipeline(self.config, self.worker_store, embedder=self.embedder)
+        pipeline = IngestPipeline(
+            self.config, self.worker_store, embedder=self.embedder,
+            organise=drive_organise_callable(self.config),
+        )
         self.worker = Worker(self.config, self.worker_store, pipeline)
         self.worker_task = asyncio.create_task(self.worker.run(drain=False))
 
