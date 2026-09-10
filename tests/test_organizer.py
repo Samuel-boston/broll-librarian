@@ -142,3 +142,17 @@ def test_needs_review_shots_land_in_the_review_folder(organised):
 
     Organizer(workspace, store, client).organise_source(source.id)
     assert any("_Needs Review" in p for p in client.tree())
+
+
+def test_dry_run_on_an_empty_drive_never_queries_placeholder_ids(organised):
+    """Regression: the first real dry run 404'd asking Drive to list the
+    children of a folder that only existed in the plan."""
+    workspace, store, client = organised
+    assert client.tree() == set(), "precondition: nothing in Drive yet"
+
+    report = Organizer(workspace, store, client, dry_run=True).reorganise()
+
+    assert report.errors == []
+    assert any(a.kind == "create_folder" and a.path == "B-Roll" for a in report.actions)
+    assert any(a.kind == "upload" for a in report.actions)
+    assert client.writes == 0

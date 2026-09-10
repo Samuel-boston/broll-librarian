@@ -54,6 +54,9 @@ class FakeDriveClient:
         return self._files.get(file_id)
 
     def list_children(self, parent_id: str, refresh: bool = False) -> dict[str, DriveFile]:
+        if parent_id not in self._files:
+            # Match the real API: listing an unknown id is a 404, not an empty list.
+            raise DriveError(f"File not found: {parent_id}")
         return {
             f.name: f for f in self._files.values() if parent_id in f.parents
         }

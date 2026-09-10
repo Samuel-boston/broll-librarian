@@ -114,7 +114,12 @@ class Organizer:
             if sub_key in self._folder_ids:
                 current = self._folder_ids[sub_key]
                 continue
-            existing = self.client.list_children(current).get(part)
+            # A placeholder parent only exists in this dry run's imagination,
+            # so there is nothing to look up: everything beneath it is new.
+            existing = (
+                None if current.startswith("dry-run")
+                else self.client.list_children(current).get(part)
+            )
             if existing and existing.mime_type == FOLDER_MIME:
                 current = existing.id
             else:
