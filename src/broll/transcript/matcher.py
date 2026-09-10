@@ -12,11 +12,13 @@ surfaced to the user as a list of footage they should go shoot.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
 
+from ..analysis.providers.base import TransientProviderError
 from ..config import WorkspaceConfig
 from ..db.models import Shot, Source
 from ..search.filters import SearchFilters
@@ -27,6 +29,12 @@ log = logging.getLogger(__name__)
 
 # How much a shot's score is cut for each time it has already been used.
 REPEAT_PENALTY = 0.45
+
+# A free Gemini key allows 5 requests a minute, and a script is one request
+# per line. Past the limit, lines used to fall back to plain search order
+# without a word - which looked like the reranker failing. Wait it out.
+RATE_LIMIT_WAIT_S = 13.0
+RATE_LIMIT_ATTEMPTS = 3
 
 
 class RerankChoice(BaseModel):
@@ -186,11 +194,20 @@ class TranscriptMatcher:
             return fallback
 
         prompt = _rerank_prompt(beat, candidates, self.config.transcript.suggestions_per_beat)
-        try:
-            result = await self.text_provider.complete(prompt, RerankResult)
-        except Exception as exc:  # a reranker outage must not lose the timeline
-            log.warning("rerank failed for beat %d, using search order: %s", beat.index, exc)
-            return fallback
+        result = None
+        for attempt in range(1, RATE_LIMIT_ATTEMPTS + 1):
+            try:
+                result = await self.text_provider.complete(prompt, RerankResult)
+                break
+            except TransientProviderError as exc:
+                if attempt == RATE_LIMIT_ATTEMPTS:
+                    log.warning("rerank still rate limited for beat %d, using search order: %s",
+                                beat.index, exc)
+                    return fallback
+                await asyncio.sleep(RATE_LIMIT_WAIT_S * attempt)
+            except Exception as exc:  # a reranker outage must not lose the timeline
+                log.warning("rerank failed for beat %d, using search order: %s", beat.index, exc)
+                return fallback
 
         if result.no_good_match and not result.choices:
             return []

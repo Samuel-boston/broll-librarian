@@ -220,3 +220,34 @@ async def test_alternatives_are_kept_so_a_suggestion_can_be_swapped(matcher_setu
     assert match.choose(other.shot.id) is True
     assert match.chosen.shot.id == other.shot.id
     assert match.choose("not-a-shot") is False
+
+
+async def test_a_rate_limited_rerank_waits_instead_of_downgrading(matcher_setup, monkeypatch):
+    """A free Gemini key allows 5 requests a minute; line 6 of a script must
+    not quietly fall back to search order because lines 1-5 used the quota."""
+    from broll.analysis.providers.base import TransientProviderError
+    from broll.transcript import matcher as matcher_module
+
+    monkeypatch.setattr(matcher_module, "RATE_LIMIT_WAIT_S", 0.0)
+    workspace, engine = matcher_setup
+
+    class RateLimitedOnce:
+        name = "limited"
+
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, prompt, schema):
+            self.calls += 1
+            if self.calls == 1:
+                raise TransientProviderError("429 RESOURCE_EXHAUSTED")
+            return RerankResult(choices=[RerankChoice(candidate=1, reason="Waited, then judged.")])
+
+        def estimate_cost(self, prompt):
+            return 0.0
+
+    provider = RateLimitedOnce()
+    beats = parse_and_segment("Someone pours a coffee slowly.", "a.txt")
+    matches = await TranscriptMatcher(workspace, engine, provider).match(beats)
+    assert provider.calls == 2
+    assert matches[0].suggestions[0].reason == "Waited, then judged."
