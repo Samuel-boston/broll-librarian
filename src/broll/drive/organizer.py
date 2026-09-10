@@ -81,14 +81,19 @@ class Organizer:
         store: Store,
         client: DriveClient,
         dry_run: bool = False,
+        session=None,
     ):
         self.config = config
         self.store = store
         self.client = client
         self.dry_run = dry_run
-        self._root_id: str | None = None
-        self._folder_ids: dict[str, str] = {}
-        self._tree_ready = False
+        # A DriveSession, when filing clip after clip: its folder-id map is
+        # shared, so the second clip does not re-walk the client's tree. Never
+        # shared in a dry run, whose placeholder ids must not leak.
+        self.session = session if not dry_run else None
+        self._root_id: str | None = self.session.root_id if self.session else None
+        self._folder_ids: dict[str, str] = self.session.folder_ids if self.session else {}
+        self._tree_ready = self.session.tree_ready if self.session else False
 
     # -- root ---------------------------------------------------------------
 
@@ -120,6 +125,8 @@ class Organizer:
             return self._folder_ids[key]
 
         current = self.root_id(report)
+        if self.session:
+            self.session.root_id = current
         walked: list[str] = []
         for part in parts:
             walked.append(part)
@@ -263,6 +270,8 @@ class Organizer:
             guide_id = self._folder_id((taxonomy.guide_folder,), report)
             self._ensure_guide(guide_id, report)
         self._tree_ready = True
+        if self.session:
+            self.session.tree_ready = True
 
     def _ensure_guide(self, folder_id: str, report: OrganiseReport) -> None:
         path = f"{self.config.taxonomy.guide_folder}/{GUIDE_NAME}"

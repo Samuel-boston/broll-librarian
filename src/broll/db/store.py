@@ -10,6 +10,8 @@ its own file today - see the note at the top of schema.sql.
 from __future__ import annotations
 
 import json
+import os
+import socket
 import sqlite3
 import uuid
 from collections.abc import Iterable, Mapping
@@ -39,6 +41,25 @@ SCALAR_FACETS = (
 
 def new_id() -> str:
     return uuid.uuid4().hex
+
+
+def worker_identity() -> str:
+    """host:pid - enough to tell whether a job's owner is still alive."""
+    return f"{socket.gethostname()}:{os.getpid()}"
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # it exists; it just isn't ours
+    return True
+
+
+def _version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) if part.isdigit() else 0 for part in version.split("."))
 
 
 def _now() -> str:
@@ -231,6 +252,18 @@ class Store:
         fields: dict[str, Any] = {"status": status}
         if status == "indexed":
             fields["indexed_at"] = _now()
+        # A source is only as current as its oldest shot. Deriving this, rather
+        # than stamping it when a run starts, means a run that dies halfway can
+        # never mark stale shots as current (and hide them from `reanalyse`).
+        versions = [
+            r[0] for r in self.conn.execute(
+                "SELECT analysis_version FROM shots WHERE workspace_id = ? AND source_id = ?"
+                " AND analysis_version IS NOT NULL",
+                (self.workspace_id, source_id),
+            ).fetchall()
+        ]
+        if versions:
+            fields["analysis_version"] = min(versions, key=_version_key)
         self.update_source(source_id, **fields)
         return status
 
@@ -528,8 +561,8 @@ class Store:
         ).fetchone()
         return Job.from_row(row) if row else None
 
-    def claim_job(self) -> Job | None:
-        """Atomically take the next runnable job. Safe across processes."""
+    def claim_job(self, worker_id: str | None = None) -> Job | None:
+        """Atomically take the next runnable job, recording who holds it."""
         with self.transaction() as conn:
             row = conn.execute(
                 """SELECT * FROM jobs
@@ -542,8 +575,8 @@ class Store:
                 return None
             conn.execute(
                 "UPDATE jobs SET status = 'running', attempts = attempts + 1,"
-                " started_at = datetime('now') WHERE id = ?",
-                (row["id"],),
+                " started_at = datetime('now'), claimed_by = ? WHERE id = ?",
+                (worker_id or worker_identity(), row["id"]),
             )
         return self.get_job(row["id"])
 
@@ -565,12 +598,45 @@ class Store:
         )
 
     def reset_stale_jobs(self) -> int:
-        """Requeue jobs left 'running' by a killed worker. Called at startup."""
-        cur = self.conn.execute(
-            "UPDATE jobs SET status = 'queued' WHERE workspace_id = ? AND status = 'running'",
+        """Requeue jobs left 'running' by a worker that is no longer alive.
+
+        Called when a worker starts. A running job is only orphaned if its
+        owner is gone: another live worker - the web app while a CLI command
+        runs, say - may be halfway through it, and requeuing that job runs it
+        twice. On this machine the owner's pid is checked directly; for another
+        machine, whose processes we cannot see, a two-hour lease applies.
+        """
+        host = socket.gethostname()
+        rows = self.conn.execute(
+            "SELECT id, claimed_by, started_at FROM jobs"
+            " WHERE workspace_id = ? AND status = 'running'",
             (self.workspace_id,),
+        ).fetchall()
+        orphaned: list[str] = []
+        for row in rows:
+            owner_host, _, pid = (row["claimed_by"] or "").rpartition(":")
+            if not owner_host or not pid.isdigit():
+                orphaned.append(row["id"])  # unowned: a pre-v4 row or a hard kill
+            elif owner_host == host:
+                if not _pid_alive(int(pid)):
+                    orphaned.append(row["id"])
+            elif self.conn.execute(
+                "SELECT ? < datetime('now', '-2 hours')", (row["started_at"],)
+            ).fetchone()[0]:
+                orphaned.append(row["id"])
+        for job_id in orphaned:
+            self.conn.execute(
+                "UPDATE jobs SET status = 'queued', claimed_by = NULL WHERE id = ?", (job_id,)
+            )
+        return len(orphaned)
+
+    def release_job(self, job_id: str, reason: str) -> None:
+        """Hand a job back to the queue untouched - its worker is stopping."""
+        self.conn.execute(
+            "UPDATE jobs SET status = 'queued', claimed_by = NULL, last_error = ?,"
+            " attempts = MAX(attempts - 1, 0) WHERE workspace_id = ? AND id = ?",
+            (reason, self.workspace_id, job_id),
         )
-        return cur.rowcount
 
     def job_counts(self) -> dict[str, int]:
         rows = self.conn.execute(

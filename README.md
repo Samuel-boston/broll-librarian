@@ -243,6 +243,60 @@ The prompt is one shared template in `src/broll/analysis/prompt.py`, versioned
 by `PROMPT_VERSION` and stored on each row as `analysis_version`, so stale rows
 can be found and re-analysed when the prompt improves.
 
+## Client profiles and a client's own folder structure
+
+Each workspace can describe who the library belongs to and how they organise
+footage. `examples/adam-kunder.yaml` is a complete, real example - merge it into
+`~/.broll/workspaces/<id>/config.yaml` and edit freely; the brief, themes and
+folder notes all go straight into the analysis prompt.
+
+**Client profile** (`client:`)
+
+* `brief` and `themes` - what the client does, so tags and emotions reflect
+  their world ("nervous system", "breathwork", "9-to-5" for a past career).
+* `featured_person` - the recurring person to name in captions ("Adam meditates
+  on the beach at sunrise"). **This is an instruction to the model, not face
+  recognition** (identifying people stays a v1 non-goal): it names whoever is
+  clearly the lone featured subject, so a shot of someone else alone can be
+  misnamed. The Review screen fixes it in one click. `featured_person_description`
+  ("a man") helps it tell them from others.
+* `emotions` - the client's emotion vocabulary. **Emotions are separate from
+  mood**: mood is how a shot *looks* (cinematic, moody, clean); emotions are what
+  the person feels and what a viewer feels. Editors cut to feeling, so emotions
+  are shown on every card and are a search filter.
+
+**Their own folder tree** (`taxonomy.mode: tree`)
+
+* Each file lives in **one** best-fit folder, renamed to
+  `taxonomy.filename_template` (e.g. `{leaf}_{action}_{emotion}` →
+  `meditation_stillness_meditating_calm_f54362f4.mov`). Other folders it also
+  fits get a shortcut. `★ Top Picks` holds shortcuts to starred clips.
+* A folder's note is inherited by everything under it, so a rule written once on
+  a parent ("only for shots with no clear activity") reaches the model.
+* **New folders:** when nothing fits, the model can propose one under the right
+  existing parent. It is created, saved to the workspace config and offered to
+  every later clip; a near-duplicate of an existing sibling ("Beach and Water"
+  next to "Beach & Water") reuses it instead. Turn off with
+  `taxonomy.allow_new_folders: false`.
+* A `00_START HERE` Google Doc explains the naming format, the folders and the
+  emotion list. It is written once, so edit it by hand if you like.
+* The whole structure is created up front, empty folders included - editors
+  learn where things go by browsing it.
+
+Changing the tree is safe: `broll reorganise` moves files and shortcuts to match
+the database, and never deletes footage.
+
+## Running it day to day
+
+Double-click **B-Roll Librarian** (`scripts/B-Roll Librarian.command`; a copy
+can live on the Desktop). It starts the app and opens it in the browser; close
+the Terminal window to stop it. **Restart it after updating the code** - a
+running app keeps the code and settings it started with.
+
+The web app and CLI commands can share a workspace safely: each job records the
+process holding it, and a starting worker only reclaims jobs whose owner has
+actually died.
+
 ## How the Drive tree is organised
 
 One canonical copy of each file, plus a faceted tree of **shortcuts**. A shortcut

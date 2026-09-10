@@ -41,6 +41,7 @@ class AppState:
         self.worker: Worker | None = None
         self.worker_task: asyncio.Task | None = None
         self.worker_store: Store | None = None
+        self.drive_organise = None  # shared by the worker and the Top Picks star
         # Transcript runs live in memory: a run is cheap to redo, and
         # persisting a whole timeline would be a schema for one screen.
         self.runs: dict[str, object] = {}
@@ -60,9 +61,10 @@ class AppState:
             self.embedder = None
 
         self.worker_store = self.store()
+        self.drive_organise = drive_organise_callable(self.config)
         pipeline = IngestPipeline(
             self.config, self.worker_store, embedder=self.embedder,
-            organise=drive_organise_callable(self.config),
+            organise=self.drive_organise,
         )
         self.worker = Worker(self.config, self.worker_store, pipeline)
         self.worker_task = asyncio.create_task(self.worker.run(drain=False))

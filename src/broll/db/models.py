@@ -204,6 +204,7 @@ class Job(BaseModel):
     finished_at: str | None = None
     not_before: str | None = None
     cost_estimate_usd: float = 0.0
+    claimed_by: str | None = None
 
     @classmethod
     def from_row(cls, row: Any) -> "Job":

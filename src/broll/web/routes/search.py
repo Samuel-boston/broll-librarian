@@ -143,7 +143,7 @@ async def toggle_top_pick(request: Request, shot_id: str):
     finally:
         store.close()
 
-    organise = drive_organise_callable(state.config)
+    organise = state.drive_organise or drive_organise_callable(state.config)
     if organise is not None:
         try:
             await asyncio.to_thread(organise, shot.source_id)

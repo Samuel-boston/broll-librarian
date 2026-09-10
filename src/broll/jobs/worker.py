@@ -101,6 +101,11 @@ class Worker:
             self._notify("started", job, None)
             try:
                 result = await self._dispatch(job)
+            except asyncio.CancelledError:
+                # Stopped mid-job (shutdown, Ctrl-C): hand it back rather than
+                # leaving it "running" under an owner that is about to vanish.
+                self.store.release_job(job.id, "worker stopped mid-job")
+                raise
             except Exception as exc:  # noqa: BLE001 - the queue decides what is fatal
                 self._handle_failure(job, f"{type(exc).__name__}: {exc}")
                 return

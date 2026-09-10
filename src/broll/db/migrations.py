@@ -11,7 +11,7 @@ from pathlib import Path
 
 SQL_DIR = Path(__file__).parent
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _apply_sql_file(conn: sqlite3.Connection, name: str) -> None:
@@ -66,7 +66,22 @@ def _v3_client_aware_fields(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_shots_category ON shots (workspace_id, category)")
 
 
-MIGRATIONS = {1: _v1_base_schema, 2: _v2_drive_shortcuts, 3: _v3_client_aware_fields}
+def _v4_job_owner(conn: sqlite3.Connection) -> None:
+    """Which process holds a running job, so a starting worker can tell an
+    orphaned job from one a live sibling is working on."""
+    try:
+        conn.execute("ALTER TABLE jobs ADD COLUMN claimed_by TEXT")
+    except sqlite3.OperationalError as exc:
+        if "duplicate column" not in str(exc):
+            raise
+
+
+MIGRATIONS = {
+    1: _v1_base_schema,
+    2: _v2_drive_shortcuts,
+    3: _v3_client_aware_fields,
+    4: _v4_job_owner,
+}
 
 
 def migrate(conn: sqlite3.Connection) -> int:

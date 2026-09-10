@@ -80,6 +80,24 @@ class IngestPipeline:
         force: bool = False,
         overwrite_corrections: bool = False,
     ) -> IngestResult:
+        progress: dict[str, str] = {}
+        try:
+            return await self._ingest(discovered, force, overwrite_corrections, progress)
+        except BaseException:
+            # A failure partway through a source - a 503, a kill - must not
+            # strand it at "analysing": the shots already written decide its
+            # status (and its prompt version). Then let the queue retry.
+            if "source_id" in progress:
+                self.store.recompute_source_status(progress["source_id"])
+            raise
+
+    async def _ingest(
+        self,
+        discovered: DiscoveredFile,
+        force: bool,
+        overwrite_corrections: bool,
+        progress: dict[str, str],
+    ) -> IngestResult:
         result = IngestResult(filename=discovered.filename)
 
         video = await self._fetch(discovered)
@@ -105,6 +123,7 @@ class IngestPipeline:
 
         source = existing or self._create_source(discovered, video, digest, meta)
         result.source_id = source.id
+        progress["source_id"] = source.id
         self.store.update_source(
             source.id, status="analysing", analysis_version=PROMPT_VERSION, error_message=None
         )
@@ -291,27 +310,14 @@ def drive_organise_callable(config: WorkspaceConfig) -> Callable[[str], object] 
     """A thread-safe "file this source into Drive" function, or None.
 
     None when Drive is not connected or auto_organise is off. Each call opens
-    its own Store and Drive client, because it runs in a worker thread and
-    neither a sqlite3 connection nor an httplib2 client may cross threads.
+    its own Store, because it runs in a worker thread and a sqlite3 connection
+    may not cross threads; the Drive client is shared behind a lock.
     """
     if not config.ingest.auto_organise or not config.drive_token_path.exists():
         return None
 
-    def organise(source_id: str):
-        from ..drive.auth import load_credentials
-        from ..drive.client import DriveClient
-        from ..drive.organizer import Organizer
+    from ..drive.session import DriveSession
 
-        credentials = load_credentials(config)
-        if credentials is None:
-            return None
-        store = Store.for_config(config)
-        try:
-            report = Organizer(config, store, DriveClient(credentials)).organise_source(source_id)
-            if report.errors:
-                raise RuntimeError("; ".join(report.errors))
-            return report
-        finally:
-            store.close()
-
-    return organise
+    # One session for the whole run: a shared client and folder-id map, so
+    # filing clip N does not re-walk the client's tree from scratch.
+    return DriveSession(config).organise
