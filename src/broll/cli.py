@@ -463,6 +463,10 @@ def search(
     min_width: Optional[int] = typer.Option(None, "--min-width"),
     faces: Optional[bool] = typer.Option(None, "--faces/--no-faces"),
     clean: bool = typer.Option(False, "--clean", help="Exclude anything with a quality flag."),
+    emotion: list[str] = typer.Option([], "--emotion", help="e.g. --emotion calm --emotion grounded"),
+    category: list[str] = typer.Option([], "--folder", help="A folder, or a parent folder, in tree mode."),
+    featured: bool = typer.Option(False, "--featured", help="Only shots of the client's featured person."),
+    top_picks: bool = typer.Option(False, "--top-picks", help="Only starred shots."),
 ) -> None:
     """Search the library. Hybrid keyword + vector, fused with RRF."""
     workspace_config = resolve_workspace(workspace)
@@ -476,6 +480,9 @@ def search(
             time_of_day=list(time_of_day), usable_for=list(usable_for),
             duration_min_s=min_duration, duration_max_s=max_duration,
             min_width=min_width, has_faces=faces, exclude_flagged=clean,
+            emotions=list(emotion), category=list(category),
+            featured_person=True if featured else None,
+            top_pick=True if top_picks else None,
         )
         results = engine.search(query, filters, limit)
     finally:
@@ -494,7 +501,15 @@ def search(
             f"{result.source.original_filename} @{result.timecode} "
             f"({result.shot.duration_s:.1f}s, {result.shot.shot_type})"
         )
-        _echo(f"    {result.shot.caption}")
+        _echo(f"    {'★ ' if result.shot.top_pick else ''}{result.shot.caption}")
+        if result.shot.category:
+            _echo(f"    folder:   {result.shot.category.replace('/', ' > ')}")
+        if result.shot.emotions:
+            _echo(f"    emotions: {', '.join(result.shot.emotions)}")
+        if result.shot.mood:
+            _echo(f"    mood:     {', '.join(result.shot.mood)}")
+        if result.shot.tags:
+            _echo(f"    tags:     {', '.join(result.shot.tags)}")
         if link:
             _echo(f"    {link}")
 

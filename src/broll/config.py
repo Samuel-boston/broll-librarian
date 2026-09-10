@@ -63,6 +63,31 @@ def load_env() -> None:
 # --------------------------------------------------------------------------
 
 
+class CategoryNode(BaseModel):
+    """One folder in a client's own Drive structure."""
+
+    name: str
+    description: str = ""
+    children: list["CategoryNode"] = Field(default_factory=list)
+    # Whether clips can be filed here. Unset means "only if it has no
+    # subfolders". False for a guide folder or a shortcuts-only Top Picks;
+    # forced True when a subfolder is added to what used to be a leaf, so
+    # clips already filed there stay put.
+    destination: bool | None = None
+
+    def accepts_clips(self) -> bool:
+        return self.destination if self.destination is not None else not self.children
+
+    def walk(self, prefix: tuple[str, ...] = ()):
+        path = (*prefix, self.name)
+        yield path, self
+        for child in self.children:
+            yield from child.walk(path)
+
+
+CategoryNode.model_rebuild()
+
+
 class TaxonomyConfig(BaseModel):
     """Thresholds that stop the Drive tree exploding into one-item folders."""
 
@@ -76,6 +101,71 @@ class TaxonomyConfig(BaseModel):
     library_folder_name: str = "_Library"
     review_folder_name: str = "_Needs Review"
     filename_max_length: int = 100
+
+    # "faceted" builds the generic By Subject / By Mood / ... tree. "tree" uses a
+    # client's own folder structure: each file lives in its best-fit folder,
+    # with shortcuts wherever else it belongs.
+    mode: str = "faceted"
+    tree: list[CategoryNode] = Field(default_factory=list)
+    top_picks_folder: str | None = "\u2605 Top Picks"
+    guide_folder: str | None = None
+    unsorted_folder: str = "_Unsorted"
+    # Tokens: {setting} {action} {time_of_day} {shot_type} {leaf} {emotion}
+    # {mood} {subject}. The 8-character content hash is always appended.
+    filename_template: str = "{setting}_{action}_{time_of_day}_{shot_type}"
+    # Let the model add a folder when nothing in the tree genuinely fits.
+    allow_new_folders: bool = True
+
+    def tree_folders(self) -> list[tuple[str, ...]]:
+        return [path for node in self.tree for path, _ in node.walk()]
+
+    def category_leaves(self) -> list[tuple[str, str]]:
+        """(path, note) for every folder a clip can be filed in.
+
+        A folder's note carries its parents' notes too, so a rule written on a
+        parent ("only for shots with no clear activity") reaches the model.
+        """
+        leaves: list[tuple[str, str]] = []
+
+        def visit(node: CategoryNode, prefix: tuple[str, ...], inherited: list[str]) -> None:
+            path = (*prefix, node.name)
+            notes = inherited + ([f"{node.name}: {node.description}"] if node.children and node.description else [])
+            if node.accepts_clips():
+                own = (node.description if not node.children else "").rstrip(" .")
+                note = " ".join(([own + "."] if own else []) + [f"({n})" for n in inherited])
+                leaves.append(("/".join(path), note))
+            for child in node.children:
+                visit(child, path, notes)
+
+        for node in self.tree:
+            visit(node, (), [])
+        return leaves
+
+    def parent_folders(self) -> list[str]:
+        """Folders a new subfolder may be created under (not Top Picks or a guide)."""
+        return [
+            "/".join(path) for node in self.tree for path, item in node.walk()
+            if item.destination is not False
+        ]
+
+    def find_node(self, path: str) -> CategoryNode | None:
+        nodes, node = self.tree, None
+        for part in [p for p in path.split("/") if p]:
+            node = next((n for n in nodes if n.name == part), None)
+            if node is None:
+                return None
+            nodes = node.children
+        return node
+
+    def add_folder(self, parent_path: str, name: str, note: str = "") -> str:
+        """Add a folder under an existing one and return its path."""
+        parent = self.find_node(parent_path)
+        if parent is None:
+            raise KeyError(parent_path)
+        if parent.destination is None and not parent.children:
+            parent.destination = True  # it was a leaf: keep what is filed there
+        parent.children.append(CategoryNode(name=name, description=note))
+        return f"{parent_path}/{name}"
 
 
 class ProviderConfig(BaseModel):
@@ -127,10 +217,27 @@ class TranscriptConfig(BaseModel):
     sequence_fps: float | None = None  # None = modal fps of the suggested clips
 
 
+class ClientProfile(BaseModel):
+    """Who this library belongs to. Shapes captions, tags and emotions."""
+
+    name: str | None = None
+    # The recurring person to name in captions when they are clearly the
+    # subject. An instruction to the model, not face recognition: it names
+    # whoever is the lone featured person, so the review queue matters.
+    featured_person: str | None = None
+    # Helps the model tell the featured person from others, e.g. "a man".
+    featured_person_description: str | None = None
+    brief: str = ""
+    themes: list[str] = Field(default_factory=list)
+    # Replaces the default emotion vocabulary when set.
+    emotions: list[str] = Field(default_factory=list)
+
+
 class WorkspaceConfig(BaseModel):
     id: str
     name: str
     provider: ProviderConfig = Field(default_factory=ProviderConfig)
+    client: ClientProfile = Field(default_factory=ClientProfile)
     embedder: EmbedderConfig = Field(default_factory=EmbedderConfig)
     taxonomy: TaxonomyConfig = Field(default_factory=TaxonomyConfig)
     ingest: IngestConfig = Field(default_factory=IngestConfig)

@@ -1,0 +1,3 @@
+<button type="button" hx-post="/shots/{{ shot.id }}/top-pick" hx-swap="outerHTML"
+        title="{{ 'Remove from Top Picks' if shot.top_pick else 'Add to Top Picks' }}"
+        class="shrink-0 text-lg leading-none {% if shot.top_pick %}text-amber-500{% else %}text-slate-300 hover:text-amber-400{% endif %}">★</button>

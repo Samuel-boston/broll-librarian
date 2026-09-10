@@ -1,0 +1,191 @@
+# Adam Kunder's workspace settings: who he is, and his own Drive structure.
+# Merge into ~/.broll/workspaces/<id>/config.yaml. Edit freely - the brief,
+# themes and folder notes all go straight into the analysis prompt.
+
+name: Adam Kunder
+drive_root_folder_name: "ADAM KUNDER – B-ROLL"
+
+client:
+  name: Adam Kunder
+  featured_person: Adam Kunder
+  featured_person_description: a man
+  brief: >-
+    Adam Kunder is a mindset coach. His work centres on the nervous system -
+    breathwork, meditation and stillness, ice baths and cold exposure, sauna,
+    journaling and emotional regulation - helping people regulate themselves and
+    build a life they actually want to live. He runs men's work and community
+    events (including R1 and Reset), coaching calls, keynotes, workshops and
+    podcasts, and has written a book. Earlier chapters of his life include
+    working as a firefighter, and acting and modelling. Firefighting footage is
+    his past, and represents the conventional working life he left - tag it
+    with that (firefighting, work, 9-to-5).
+  themes:
+    - nervous system
+    - nervous system regulation
+    - self-regulation
+    - emotional regulation
+    - breathwork
+    - meditation
+    - stillness
+    - presence
+    - cold exposure
+    - ice bath
+    - sauna
+    - journaling
+    - mindset
+    - men's work
+    - brotherhood
+    - coaching
+    - personal growth
+    - resilience
+    - discipline
+    - recovery
+    - rest
+    - living the life you want
+  emotions:
+    - calm
+    - relaxed
+    - grounded
+    - regulated
+    - dysregulated
+    - present
+    - centred
+    - peaceful
+    - safe
+    - rest and digest
+    - fight or flight
+    - shut down
+    - content
+    - grateful
+    - joyful
+    - playful
+    - excited
+    - energised
+    - alive
+    - free
+    - hopeful
+    - inspired
+    - motivated
+    - determined
+    - disciplined
+    - resilient
+    - confident
+    - empowered
+    - proud
+    - focused
+    - aligned
+    - purposeful
+    - fulfilled
+    - reflective
+    - nostalgic
+    - connected
+    - loving
+    - tender
+    - vulnerable
+    - relieved
+    - tired
+    - exhausted
+    - drained
+    - restless
+    - lonely
+    - sad
+    - anxious
+    - stressed
+    - overwhelmed
+    - frustrated
+    - angry
+    - fearful
+    - tense
+    - numb
+    - burnt out
+    - stuck
+
+taxonomy:
+  mode: tree
+  guide_folder: "00_START HERE"
+  top_picks_folder: "★ Top Picks"
+  unsorted_folder: "_Unsorted"
+  allow_new_folders: true
+  filename_template: "{leaf}_{action}_{emotion}"
+  tree:
+    - name: "00_START HERE"
+      description: "Naming format, folder guide and emotion list."
+      destination: false
+
+    - name: "01_Nervous System Practices"
+      children:
+        - {name: "Breathwork", description: "Breathing exercises and breathwork sessions."}
+        - {name: "Meditation & Stillness", description: "Meditation, sitting in stillness, eyes closed, quiet presence and grounding."}
+        - {name: "Ice Baths & Cold", description: "Ice baths, cold plunges, cold showers and cold-water swims."}
+        - {name: "Sauna", description: "Sauna and heat sessions."}
+        - {name: "Journaling", description: "Writing in a journal by hand, reflective note-taking."}
+
+    - name: "02_Gym & Training"
+      description: "Gym sessions, lifting, workouts, running and physical training."
+
+    - name: "03_Work & Speaking"
+      children:
+        - {name: "Desk & Laptop", description: "Working at a desk, on a laptop or on the phone."}
+        - {name: "Coaching Calls", description: "One-to-one or group coaching calls, including Google Meet and other video-call recordings."}
+        - {name: "Writing & Book", description: "Writing, and anything to do with Adam's book - including the book launch."}
+        - name: "Speaking"
+          children:
+            - {name: "Keynotes", description: "Adam on stage giving a keynote to an audience."}
+            - {name: "Workshops & Events", description: "Workshops and live events - R1, Reset and similar events all go here."}
+            - {name: "Podcasts & Interviews", description: "Podcast recordings and interviews: microphones, two people in conversation."}
+            - {name: "Talking Head", description: "Adam speaking straight to camera."}
+        - name: "Men's Work & Community"
+          children:
+            - {name: "Men's Group Shots", description: "Groups of men together: men's circles, group work, brotherhood."}
+            - {name: "Audience & Participants", description: "Audiences and participants at events - the crowd rather than the speaker."}
+
+    - name: "04_Daily Rituals"
+      children:
+        - {name: "Coffee", description: "Making or drinking coffee."}
+        - {name: "Eating & Cooking", description: "Cooking, preparing food and eating."}
+        - {name: "Sleep & Rest", description: "Bed, waking up, sleeping, napping, lying down to rest."}
+        - {name: "Home", description: "Everyday moments at home that are not sleep, coffee or food."}
+
+    - name: "05_Travel & Adventure"
+      description: "Travel, including the Mexico trip, is split across these by what is happening"
+      children:
+        - name: "Travel"
+          description: "Getting from A to B"
+          children:
+            - {name: "Flights", description: "On a plane: window seats, cabins, take-off and landing."}
+            - {name: "Airports", description: "Airports, terminals, departure boards, security and gates."}
+            - {name: "Walking with Baggage", description: "Walking with suitcases or bags: arriving, leaving, in transit on foot."}
+            - {name: "In the Car", description: "Driving or riding in a car, road trips and views from the road."}
+            - {name: "On a Bike", description: "Riding a bicycle, motorbike or scooter."}
+        - {name: "Exploring & Streets", description: "Walking and exploring towns, streets and markets."}
+        - {name: "Nature & Landscapes", description: "Landscapes, mountains, forests and jungle from travel."}
+        - {name: "Beach & Water", description: "Beaches, the sea, pools and water activities such as swimming, surfing and jet skis."}
+        - {name: "Skydiving & Adrenaline", description: "Skydiving and other adrenaline activities."}
+
+    - name: "06_Social & Relationships"
+      children:
+        - {name: "Partner", description: "Adam with his partner - couple moments."}
+        - {name: "Family", description: "Family members and family time."}
+        - {name: "Friends & Nightlife", description: "Friends, social gatherings and nights out."}
+        - {name: "Drinking", description: "Drinks, bars and alcohol."}
+        - {name: "Birthdays & Celebrations", description: "Birthdays, parties and celebrations."}
+
+    - name: "07_Cinematic & Mood"
+      description: "Only for shots with no clear activity"
+      children:
+        - {name: "Night & City", description: "The city at night, lights and urban atmosphere."}
+        - {name: "Silent Storytelling", description: "Evocative detail shots that tell a story without an activity - hands, looks, textures."}
+        - {name: "Reflective", description: "Quiet, contemplative moments: looking out, thinking, alone."}
+        - {name: "Struggle & Upset", description: "Low moments: stress, overwhelm, exhaustion, upset or distress."}
+
+    - name: "08_Life Chapters"
+      description: "Adam's past - mostly old photos"
+      children:
+        - {name: "Childhood", description: "Adam's childhood: growing up, old family photos."}
+        - {name: "Firefighting", description: "Adam's previous career as a firefighter: fire engines, fire stations, firefighting."}
+        - {name: "Acting & Modelling", description: "Adam's acting and modelling work."}
+        - {name: "Bachelor Era", description: "Adam's earlier single chapter of life."}
+
+    - name: "★ Top Picks"
+      description: "Shortcuts to the best clips, chosen by hand."
+      destination: false

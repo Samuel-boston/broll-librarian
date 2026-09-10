@@ -17,8 +17,14 @@ router = APIRouter()
 EDITABLE = (
     "caption", "setting", "setting_detail", "action", "shot_type", "camera_movement",
     "time_of_day", "colour_profile", "people_count", "pace", "subjects", "mood",
-    "usable_for", "quality_flags", "tags",
+    "emotions", "usable_for", "quality_flags", "tags", "category", "top_pick",
 )
+
+
+def _categories(config) -> list[str]:
+    if config.taxonomy.mode != "tree":
+        return []
+    return [path for path, _ in config.taxonomy.category_leaves()]
 
 
 @router.get("/review", response_class=HTMLResponse)
@@ -31,6 +37,7 @@ async def review_page(request: Request):
             "workspace": state.config,
             "queue": review_queue(store),
             "options": ENUM_OPTIONS,
+            "categories": _categories(state.config),
             "indexed": store.count_shots("indexed"),
         }
     finally:
@@ -42,7 +49,8 @@ async def review_page(request: Request):
 async def save_correction(request: Request, shot_id: str, status: str = Form("indexed")):
     state = request.app.state.broll
     form = await request.form()
-    updates = {field: form[field] for field in EDITABLE if field in form}
+    # getlist()[-1]: a checkbox posts a hidden "false" then, if ticked, "true".
+    updates = {field: form.getlist(field)[-1] for field in EDITABLE if field in form}
 
     store = state.store()
     try:
@@ -52,6 +60,7 @@ async def save_correction(request: Request, shot_id: str, status: str = Form("in
             "workspace": state.config,
             "queue": review_queue(store),
             "options": ENUM_OPTIONS,
+            "categories": _categories(state.config),
             "indexed": store.count_shots("indexed"),
             "message": f"Saved {shot_id}. Search text and embedding recomputed.",
         }

@@ -78,6 +78,11 @@ class Shot(BaseModel):
     usable_for: list[str] = Field(default_factory=list)
     quality_flags: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+    emotions: list[str] = Field(default_factory=list)
+    category: str | None = None
+    secondary_categories: list[str] = Field(default_factory=list)
+    featured_person: bool = False
+    top_pick: bool = False
 
     status: ShotStatus = "pending"
     error_message: str | None = None
@@ -94,11 +99,15 @@ class Shot(BaseModel):
             ("mood_json", "mood"),
             ("usable_for_json", "usable_for"),
             ("quality_flags_json", "quality_flags"),
+            ("emotions_json", "emotions"),
+            ("secondary_categories_json", "secondary_categories"),
         ):
             d[dst] = json.loads(d.pop(src, "[]") or "[]")
         raw = d.pop("raw_analysis_json", None)
         d["raw_analysis"] = json.loads(raw) if raw else None
         d["is_primary"] = bool(d.get("is_primary"))
+        d["featured_person"] = bool(d.get("featured_person") or 0)
+        d["top_pick"] = bool(d.get("top_pick") or 0)
         for key in ("has_recognisable_faces", "has_text_on_screen"):
             if d.get(key) is not None:
                 d[key] = bool(d[key])
@@ -125,6 +134,11 @@ class Shot(BaseModel):
         self.usable_for = result.usable_for
         self.quality_flags = result.quality_flags
         self.tags = result.tags
+        self.emotions = result.emotions
+        self.category = result.category
+        self.secondary_categories = result.secondary_categories
+        self.featured_person = result.featured_person_in_shot
+        # top_pick is an editor's choice, so a re-analysis never touches it.
         self.raw_analysis = result.model_dump(mode="json")
         self.analysis_version = analysis_version
         self.analysed_at = datetime.now(UTC).isoformat(timespec="seconds")
@@ -148,6 +162,10 @@ class ShotFacets(BaseModel):
     time_of_day: str | None = None
     colour_profile: str | None = None
     needs_review: bool = False
+    emotions: list[str] = Field(default_factory=list)
+    category: str | None = None
+    secondary_categories: list[str] = Field(default_factory=list)
+    top_pick: bool = False
 
     @classmethod
     def from_shot(cls, shot: Shot) -> "ShotFacets":
@@ -166,6 +184,10 @@ class ShotFacets(BaseModel):
             time_of_day=shot.time_of_day,
             colour_profile=shot.colour_profile,
             needs_review=shot.status == "needs_review",
+            emotions=shot.emotions,
+            category=shot.category,
+            secondary_categories=shot.secondary_categories,
+            top_pick=shot.top_pick,
         )
 
 

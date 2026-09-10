@@ -6,32 +6,59 @@
   <p class="mb-3 text-xs text-slate-400">{{ results|length }} result{{ '' if results|length == 1 else 's' }}</p>
   <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
     {% for result in results %}
-    <article class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div class="aspect-video bg-slate-100">
-        {% if result.shot.thumbnail_path %}
-          <img src="/thumbnails/{{ result.shot.id }}.jpg" alt="" loading="lazy"
-               class="h-full w-full object-cover">
+    {% set shot = result.shot %}
+    <article class="flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+      <div class="relative aspect-video bg-slate-100">
+        {% if shot.thumbnail_path %}
+          <img src="/thumbnails/{{ shot.id }}.jpg" alt="" loading="lazy" class="h-full w-full object-cover">
         {% else %}
           <div class="grid h-full place-items-center text-xs text-slate-400">no thumbnail</div>
         {% endif %}
+        {% if shot.featured_person and featured_name %}
+          <span class="absolute left-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-[11px] font-medium text-white">{{ featured_name }}</span>
+        {% endif %}
       </div>
-      <div class="space-y-2 p-3">
-        <p class="text-sm leading-snug">{{ result.shot.caption or 'No caption' }}</p>
-        <p class="text-xs text-slate-400">
-          {{ result.source.original_filename }} · @{{ result.timecode }} · {{ '%.1f'|format(result.shot.duration_s) }}s
-          {% if result.shot.status == 'needs_review' %}
+      <div class="flex flex-1 flex-col gap-2 p-3">
+        <div class="flex items-start gap-2">
+          <p class="flex-1 text-sm leading-snug">{{ shot.caption or 'No caption' }}</p>
+          {% include "partials/star.html" %}
+        </div>
+
+        {% if shot.category %}
+          <p class="text-[11px] font-medium text-indigo-600">{{ shot.category.replace('/', ' › ') }}</p>
+        {% endif %}
+
+        {% if shot.emotions or shot.mood %}
+        <div class="flex flex-wrap gap-1">
+          {% for emotion in shot.emotions %}
+            <span class="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700">{{ emotion }}</span>
+          {% endfor %}
+          {% for m in shot.mood %}
+            <span class="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] text-violet-700">{{ m }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if shot.tags %}
+          <p class="text-[11px] leading-relaxed text-slate-500">{{ shot.tags[:14] | join(' · ') }}</p>
+        {% endif %}
+
+        <p class="text-[11px] text-slate-400">
+          {{ result.source.original_filename }} · @{{ result.timecode }} · {{ '%.1f'|format(shot.duration_s) }}s
+          {% if shot.status == 'needs_review' %}
             <span class="ml-1 rounded bg-amber-100 px-1 text-amber-700">needs review</span>
           {% endif %}
         </p>
         <div class="flex flex-wrap gap-1">
-          {% for facet in [result.shot.shot_type, result.shot.camera_movement, result.shot.setting, result.shot.time_of_day] %}
-            {% if facet %}<span class="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">{{ facet.replace('_',' ') }}</span>{% endif %}
+          {% for facet in [shot.action, shot.setting, shot.shot_type, shot.camera_movement, shot.time_of_day] %}
+            {% if facet %}<span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">{{ facet.replace('_',' ') }}</span>{% endif %}
           {% endfor %}
-          {% for flag in result.shot.quality_flags %}
-            <span class="rounded bg-rose-100 px-1.5 py-0.5 text-[11px] text-rose-700">{{ flag.replace('_',' ') }}</span>
+          {% for flag in shot.quality_flags %}
+            <span class="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] text-rose-700">{{ flag.replace('_',' ') }}</span>
           {% endfor %}
         </div>
-        <div class="flex items-center gap-3 pt-1 text-xs">
+
+        <div class="mt-auto flex items-center gap-3 pt-1 text-xs">
           {% if result.drive_link %}
             <a class="text-indigo-600 hover:underline" href="{{ result.drive_link }}" target="_blank" rel="noopener">Open in Drive</a>
             <button type="button" class="text-slate-500 hover:underline"

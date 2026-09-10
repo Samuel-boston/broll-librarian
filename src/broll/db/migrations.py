@@ -11,7 +11,7 @@ from pathlib import Path
 
 SQL_DIR = Path(__file__).parent
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _apply_sql_file(conn: sqlite3.Connection, name: str) -> None:
@@ -49,7 +49,24 @@ def _v2_drive_shortcuts(conn: sqlite3.Connection) -> None:
     )
 
 
-MIGRATIONS = {1: _v1_base_schema, 2: _v2_drive_shortcuts}
+def _v3_client_aware_fields(conn: sqlite3.Connection) -> None:
+    """Emotions, the client's category, the featured person, and Top Picks."""
+    for ddl in (
+        "ALTER TABLE shots ADD COLUMN emotions_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE shots ADD COLUMN category TEXT",
+        "ALTER TABLE shots ADD COLUMN secondary_categories_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE shots ADD COLUMN featured_person INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE shots ADD COLUMN top_pick INTEGER NOT NULL DEFAULT 0",
+    ):
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError as exc:
+            if "duplicate column" not in str(exc):
+                raise
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_shots_category ON shots (workspace_id, category)")
+
+
+MIGRATIONS = {1: _v1_base_schema, 2: _v2_drive_shortcuts, 3: _v3_client_aware_fields}
 
 
 def migrate(conn: sqlite3.Connection) -> int:

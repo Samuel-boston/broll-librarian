@@ -103,6 +103,18 @@ def _ascii_slug(value: str) -> str:
     return text.strip("_")
 
 
+FILENAME_TOKENS = {
+    "setting": lambda f: f.setting,
+    "action": lambda f: f.action,
+    "time_of_day": lambda f: f.time_of_day,
+    "shot_type": lambda f: f.shot_type,
+    "leaf": lambda f: f.category.split("/")[-1] if f.category else None,
+    "emotion": lambda f: f.emotions[0] if f.emotions else None,
+    "mood": lambda f: f.mood[0] if f.mood else None,
+    "subject": lambda f: f.subjects[0] if f.subjects else None,
+}
+
+
 def plan_filename(
     primary: ShotFacets,
     content_hash: str,
@@ -115,11 +127,11 @@ def plan_filename(
     traceable back to its database row.
     """
     config = config or TaxonomyConfig()
+    tokens = re.findall(r"\{(\w+)\}", config.filename_template)
     parts = [
-        _ascii_slug(primary.setting or ""),
-        _ascii_slug(primary.action or ""),
-        _ascii_slug(primary.time_of_day or ""),
-        _ascii_slug(primary.shot_type or ""),
+        _ascii_slug(FILENAME_TOKENS[token](primary) or "")
+        for token in tokens
+        if token in FILENAME_TOKENS
     ]
     parts = [p for p in parts if p and p not in ("unknown", "none")]
     suffix = content_hash[:8]
@@ -285,3 +297,104 @@ def primary_shot(shots: Sequence[ShotFacets]) -> ShotFacets | None:
         if shot.is_primary:
             return shot
     return shots[0] if shots else None
+
+
+# --------------------------------------------------------------------------
+# A client's own folder structure ("tree" mode)
+# --------------------------------------------------------------------------
+
+
+def plan_tree(
+    shots: Sequence[ShotFacets],
+    filename: str,
+    config: TaxonomyConfig,
+) -> tuple[FolderPath, list[ShortcutPlan]]:
+    """Where the real file lives, and which shortcuts point at it.
+
+    The file itself goes in the primary shot's category - the folder an editor
+    browsing the client's structure will look in first. Shortcuts cover the
+    rest: other shots' categories, secondary categories, and Top Picks for a
+    starred shot. Nothing is ever shortcut into the folder the file is in.
+    """
+    leaves = {path for path, _ in config.category_leaves()}
+    primary = primary_shot(shots)
+    home_category = primary.category if primary and primary.category in leaves else None
+    home = (
+        FolderPath(tuple(home_category.split("/")))
+        if home_category
+        else FolderPath((config.unsorted_folder,))
+    )
+
+    plans: list[ShortcutPlan] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(parts, shot: ShotFacets) -> None:
+        name = shortcut_name(filename, shot)
+        key = ("/".join(parts), name)
+        if key not in seen:
+            seen.add(key)
+            plans.append(ShortcutPlan(folder=FolderPath(tuple(parts)), name=name,
+                                      shot_id=shot.shot_id))
+
+    for shot in shots:
+        for category in (shot.category, *shot.secondary_categories):
+            if category and category in leaves and category != home_category:
+                add(category.split("/"), shot)
+        if shot.top_pick and config.top_picks_folder:
+            add((config.top_picks_folder,), shot)
+    return home, plans
+
+
+_TOKEN_LABELS = {
+    "setting": "setting", "action": "action", "time_of_day": "time-of-day",
+    "shot_type": "shot-type", "leaf": "folder", "emotion": "emotion",
+    "mood": "mood", "subject": "subject",
+}
+_TOKEN_EXAMPLES = {
+    "setting": "beach", "action": "meditating", "time_of_day": "golden_hour",
+    "shot_type": "wide", "leaf": "meditation_stillness", "emotion": "calm",
+    "mood": "serene", "subject": "man",
+}
+
+
+def render_guide(
+    config: TaxonomyConfig,
+    emotions: Sequence[str],
+    client_name: str | None = None,
+) -> str:
+    """The text of the 00_START HERE guide. Pure, so it is testable."""
+    tokens = [t for t in re.findall(r"\{(\w+)\}", config.filename_template) if t in _TOKEN_LABELS]
+    pattern = "_".join(_TOKEN_LABELS[t] for t in tokens) + "_<id>.<ext>"
+    example = "_".join(_TOKEN_EXAMPLES[t] for t in tokens) + "_f54362f4.mov"
+
+    lines = [
+        f"{client_name + ' - ' if client_name else ''}B-ROLL LIBRARY: HOW IT WORKS",
+        "",
+        "Every clip lives in exactly one folder - the one that fits it best. If it also "
+        "fits somewhere else, there is a shortcut to it there too (the icon has a small "
+        "arrow). Shortcuts take up no space and open the same file.",
+        "",
+    ]
+    if config.top_picks_folder:
+        lines.append(f"{config.top_picks_folder} holds shortcuts to the strongest clips, chosen by hand.")
+    lines += [
+        f"{config.unsorted_folder} holds anything that has not clearly fitted a folder yet.",
+        "",
+        "FILE NAMES",
+        f"Files are renamed to: {pattern}",
+        f"For example: {example}",
+        "The id at the end is how the library finds the file again - please don't remove it.",
+        "If a clip holds more than one shot, shortcuts to the later shots end in "
+        "_at_1m23s, so you know where to scrub to.",
+        "",
+        "FOLDERS",
+    ]
+    for path, note in config.category_leaves():
+        lines.append(f"{path.replace('/', ' > ')}" + (f" - {note}" if note else ""))
+    lines += [
+        "",
+        "EMOTIONS",
+        "Every clip is tagged with the emotions it carries, so you can search by feeling:",
+        ", ".join(emotions),
+    ]
+    return "\n".join(lines) + "\n"

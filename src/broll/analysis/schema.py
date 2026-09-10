@@ -280,11 +280,26 @@ DEFECT_FLAGS: frozenset[str] = frozenset({
     "noisy", "compression_artifacts", "empty_frame", "low_resolution",
 })
 
+# Human emotions, deliberately separate from mood. Mood is how a shot *looks*
+# (cinematic, moody, clean); emotions are what the person feels and what a
+# viewer is made to feel. Editors cut to feeling, so this is what they search.
+EMOTIONS: tuple[str, ...] = (
+    "calm", "relaxed", "grounded", "centred", "peaceful", "present", "safe",
+    "content", "grateful", "joyful", "happy", "playful", "excited", "energised",
+    "alive", "free", "hopeful", "inspired", "motivated", "determined",
+    "confident", "empowered", "proud", "focused", "curious", "reflective",
+    "nostalgic", "connected", "loving", "tender", "vulnerable", "relieved",
+    "tired", "exhausted", "drained", "bored", "restless", "lonely", "sad",
+    "anxious", "stressed", "overwhelmed", "frustrated", "angry", "fearful",
+    "tense", "numb", "burnt out", "stuck", "defeated",
+)
+
 VOCABULARIES: dict[str, tuple[str, ...]] = {
     "subjects": SUBJECTS,
     "action": ACTIONS,
     "setting": SETTINGS,
     "mood": MOODS,
+    "emotions": EMOTIONS,
     "usable_for": USABLE_FOR,
     "quality_flags": QUALITY_FLAGS,
 }
@@ -336,6 +351,10 @@ class AnalysisResult(BaseModel):
     camera_movement: CameraMove
     time_of_day: TimeOfDay
     mood: list[str] = Field(default_factory=list, description="Up to 3 mood terms.")
+    emotions: list[str] = Field(
+        default_factory=list,
+        description="2-5 human emotions: what the person feels and what a viewer feels.",
+    )
     colour_profile: ColourProfile
     people_count: PeopleCount
     has_recognisable_faces: bool = False
@@ -345,6 +364,26 @@ class AnalysisResult(BaseModel):
     usable_for: list[str] = Field(default_factory=list)
     quality_flags: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    category: str | None = Field(
+        default=None,
+        description="Best-fit folder from the client's category list, exactly as written.",
+    )
+    secondary_categories: list[str] = Field(
+        default_factory=list,
+        description="Up to 2 other folders from the list that it also clearly belongs in.",
+    )
+    featured_person_in_shot: bool = Field(
+        default=False,
+        description="True when the client's featured person is clearly the subject.",
+    )
+    new_category: str | None = Field(
+        default=None,
+        description="Only when no folder fits: a new folder as 'Existing Folder/New Name'.",
+    )
+    new_category_note: str | None = Field(
+        default=None,
+        description="One line saying what belongs in the new folder.",
+    )
 
     # -- coercion -----------------------------------------------------------
 
@@ -380,7 +419,7 @@ class AnalysisResult(BaseModel):
     def _pace(cls, v):
         return coerce_enum("pace", v, Pace) if isinstance(v, str) else v
 
-    @field_validator("subjects", "mood", "tags", "usable_for", "quality_flags", mode="before")
+    @field_validator("subjects", "mood", "emotions", "tags", "usable_for", "quality_flags", mode="before")
     @classmethod
     def _clean_list(cls, v):
         if v is None:
@@ -413,6 +452,32 @@ class AnalysisResult(BaseModel):
     def _cap_mood(cls, v: list[str]) -> list[str]:
         return v[:3]
 
+    @field_validator("emotions", mode="after")
+    @classmethod
+    def _cap_emotions(cls, v: list[str]) -> list[str]:
+        return v[:5]
+
+    @field_validator("category", "new_category", "new_category_note", mode="before")
+    @classmethod
+    def _clean_category(cls, v):
+        if isinstance(v, str):
+            return v.strip() or None
+        return v
+
+    @field_validator("secondary_categories", mode="before")
+    @classmethod
+    def _clean_categories(cls, v):
+        # Folder paths keep their case - they are names, not vocabulary.
+        if v is None:
+            return []
+        if isinstance(v, str):
+            v = [v]
+        out: list[str] = []
+        for item in v:
+            if isinstance(item, str) and item.strip() and item.strip() not in out:
+                out.append(item.strip())
+        return out[:2]
+
     @field_validator("tags", mode="after")
     @classmethod
     def _cap_tags(cls, v: list[str]) -> list[str]:
@@ -437,8 +502,12 @@ class AnalysisResult(BaseModel):
         parts.append(self.setting)
         if self.setting_detail:
             parts.append(self.setting_detail)
+        for category in (self.category, *self.secondary_categories):
+            if category:
+                parts.append(category.split("/")[-1])
         parts.extend(self.subjects)
         parts.extend(self.mood)
+        parts.extend(self.emotions)
         parts.extend(self.usable_for)
         parts.extend(self.tags)
         parts.extend([
@@ -467,6 +536,11 @@ class ShotContext(BaseModel):
     shot_count: int = 1
     start_s: float = 0.0
     end_s: float | None = None
+    # Workspace context, filled in by the Analyzer, so every provider sends the
+    # same prompt without having to know what a workspace is.
+    client_context: str = ""
+    emotion_vocab: list[str] = Field(default_factory=list)
+    category_options: list[str] = Field(default_factory=list)
 
     def describe(self) -> str:
         pos = (
@@ -493,6 +567,7 @@ _VOCAB_FIELDS = {
     "action": "action",
     "setting": "setting",
     "mood": "mood",
+    "emotions": "emotions",
     "usable_for": "usable_for",
     "quality_flags": "quality_flags",
 }

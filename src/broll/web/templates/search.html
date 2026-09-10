@@ -14,40 +14,56 @@
         <label class="block text-xs font-medium uppercase tracking-wide text-slate-400">Search</label>
         <input id="q" name="q" value="{{ query }}" autocomplete="off"
                hx-get="/search" hx-trigger="keyup changed delay:400ms, search"
-               placeholder="calm beach wide shot golden hour"
+               placeholder="calm, grounded, switching off"
                class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
         <p class="mt-1 text-xs text-slate-400">{{ total_shots }} shots indexed</p>
       </div>
 
-      <label class="flex items-center gap-2 text-sm">
-        <input type="checkbox" name="clean" value="true" hx-get="/search" hx-trigger="change" class="filter-input rounded border-slate-300"
-               {% if selected.clean %}checked{% endif %}>
-        Hide flagged clips
-      </label>
+      <div class="space-y-1.5">
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="top_picks" value="true" hx-get="/search" hx-trigger="change"
+                 class="filter-input rounded border-slate-300" {% if selected.top_picks %}checked{% endif %}>
+          <span class="text-amber-500">★</span> Top picks only
+        </label>
+        {% if featured_name %}
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="featured" value="true" hx-get="/search" hx-trigger="change"
+                 class="filter-input rounded border-slate-300" {% if selected.featured %}checked{% endif %}>
+          {{ featured_name }} in shot
+        </label>
+        {% endif %}
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="clean" value="true" hx-get="/search" hx-trigger="change"
+                 class="filter-input rounded border-slate-300" {% if selected.clean %}checked{% endif %}>
+          Hide flagged clips
+        </label>
+      </div>
 
       <div class="grid grid-cols-2 gap-2">
         <div>
           <label class="block text-xs text-slate-400">Min secs</label>
           <input name="min_duration" type="number" step="0.5" min="0" value="{{ selected.min_duration or '' }}"
-                 hx-get="/search" hx-trigger="change" class="filter-input mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-sm">
+                 hx-get="/search" hx-trigger="change"
+                 class="filter-input mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-sm">
         </div>
         <div>
           <label class="block text-xs text-slate-400">Max secs</label>
           <input name="max_duration" type="number" step="0.5" min="0" value="{{ selected.max_duration or '' }}"
-                 hx-get="/search" hx-trigger="change" class="filter-input mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-sm">
+                 hx-get="/search" hx-trigger="change"
+                 class="filter-input mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-sm">
         </div>
       </div>
 
-      {% macro facet_group(title, name, options, chosen) %}
+      {% macro facet_group(title, name, options, chosen, open=False, path=False) %}
         {% if options %}
-        <details class="rounded-md border border-slate-200 bg-white" {% if chosen %}open{% endif %}>
+        <details class="rounded-md border border-slate-200 bg-white" {% if chosen or open %}open{% endif %}>
           <summary class="cursor-pointer px-3 py-2 text-xs font-medium uppercase tracking-wide text-slate-500">{{ title }}</summary>
           <div class="max-h-56 space-y-1 overflow-y-auto px-3 pb-3">
             {% for value, count in options %}
             <label class="flex items-center gap-2 text-sm">
               <input type="checkbox" hx-get="/search" hx-trigger="change" class="filter-input rounded border-slate-300"
                      name="{{ name }}" value="{{ value }}" {% if value in chosen %}checked{% endif %}>
-              <span class="flex-1">{{ value.replace('_', ' ') }}</span>
+              <span class="flex-1">{% if path %}{{ value.split('/')[-1] }}{% else %}{{ value.replace('_', ' ') }}{% endif %}</span>
               <span class="text-xs text-slate-400">{{ count }}</span>
             </label>
             {% endfor %}
@@ -56,11 +72,13 @@
         {% endif %}
       {% endmacro %}
 
+      {{ facet_group('Emotion', 'emotion', facets.emotion, selected.emotion, open=True) }}
+      {{ facet_group('Folder', 'category', facets.category, selected.category, path=True) }}
+      {{ facet_group('Mood', 'mood', facets.mood, selected.mood) }}
+      {{ facet_group('Setting', 'setting', facets.setting, selected.setting) }}
       {{ facet_group('Shot type', 'shot_type', facets.shot_type, selected.shot_type) }}
       {{ facet_group('Camera', 'camera_movement', facets.camera_movement, selected.camera_movement) }}
       {{ facet_group('People', 'people', facets.people, selected.people) }}
-      {{ facet_group('Mood', 'mood', facets.mood, selected.mood) }}
-      {{ facet_group('Setting', 'setting', facets.setting, selected.setting) }}
       {{ facet_group('Time of day', 'time_of_day', facets.time_of_day, selected.time_of_day) }}
       {{ facet_group('Use', 'usable_for', facets.usable_for, selected.usable_for) }}
 

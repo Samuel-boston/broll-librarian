@@ -39,9 +39,10 @@ SCALAR_FIELDS = {
     "colour_profile": ColourProfile,
     "people_count": PeopleCount,
     "pace": Pace,
+    "category": None,
 }
-LIST_FIELDS = ("subjects", "mood", "usable_for", "quality_flags", "tags")
-BOOL_FIELDS = ("has_recognisable_faces", "has_text_on_screen")
+LIST_FIELDS = ("subjects", "mood", "emotions", "usable_for", "quality_flags", "tags")
+BOOL_FIELDS = ("has_recognisable_faces", "has_text_on_screen", "top_pick", "featured_person")
 
 ENUM_OPTIONS = {
     "shot_type": [m.value for m in ShotType],

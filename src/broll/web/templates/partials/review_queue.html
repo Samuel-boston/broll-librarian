@@ -56,12 +56,30 @@
       </label>
       {% endfor %}
 
-      {% for field in ['subjects', 'mood', 'usable_for', 'quality_flags', 'tags'] %}
+      {% for field in ['emotions', 'subjects', 'mood', 'usable_for', 'quality_flags', 'tags'] %}
       <label class="block text-xs uppercase tracking-wide text-slate-400">{{ field.replace('_',' ') }} (comma separated)
         <input name="{{ field }}" value="{{ shot[field] | join(', ') }}"
                class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm normal-case tracking-normal text-slate-800">
       </label>
       {% endfor %}
+
+      {% if categories %}
+      <label class="sm:col-span-2 block text-xs uppercase tracking-wide text-slate-400">Folder
+        <select name="category"
+                class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm normal-case tracking-normal text-slate-800">
+          <option value="">— not sure yet (goes to _Unsorted) —</option>
+          {% for path in categories %}
+          <option value="{{ path }}" {% if shot.category == path %}selected{% endif %}>{{ path.replace('/', ' › ') }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endif %}
+      <label class="flex items-center gap-2 text-sm">
+        <input type="hidden" name="top_pick" value="false">
+        <input type="checkbox" name="top_pick" value="true" {% if shot.top_pick %}checked{% endif %}
+               class="rounded border-slate-300">
+        ★ Top pick
+      </label>
     </div>
 
     <footer class="flex items-center gap-3 border-t border-slate-100 px-4 py-3">

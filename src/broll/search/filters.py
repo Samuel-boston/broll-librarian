@@ -30,10 +30,14 @@ class SearchFilters(BaseModel):
     setting: list[str] = Field(default_factory=list)
     action: list[str] = Field(default_factory=list)
     subjects: list[str] = Field(default_factory=list)
+    emotions: list[str] = Field(default_factory=list)
+    category: list[str] = Field(default_factory=list)   # a folder, or a parent of folders
     mood: list[str] = Field(default_factory=list)
     usable_for: list[str] = Field(default_factory=list)
     has_faces: bool | None = None
     has_text_on_screen: bool | None = None
+    featured_person: bool | None = None
+    top_pick: bool | None = None
     min_width: int | None = None
     min_height: int | None = None
     quality_flags: list[str] = Field(default_factory=list)      # must have all of these
@@ -84,6 +88,14 @@ class SearchFilters(BaseModel):
         json_any("mood_json", self.mood)
         json_any("usable_for_json", self.usable_for)
         json_any("subjects_json", self.subjects)
+        json_any("emotions_json", self.emotions)
+        if self.category:
+            # Picking "01_Nervous System Practices" should find everything under it.
+            clauses.append(
+                "(" + " OR ".join("(s.category = ? OR s.category LIKE ?)" for _ in self.category) + ")"
+            )
+            for value in self.category:
+                params.extend([value, value + "/%"])
 
         if self.has_faces is not None:
             clauses.append("s.has_recognisable_faces = ?")
@@ -91,6 +103,12 @@ class SearchFilters(BaseModel):
         if self.has_text_on_screen is not None:
             clauses.append("s.has_text_on_screen = ?")
             params.append(int(self.has_text_on_screen))
+        if self.featured_person is not None:
+            clauses.append("s.featured_person = ?")
+            params.append(int(self.featured_person))
+        if self.top_pick is not None:
+            clauses.append("s.top_pick = ?")
+            params.append(int(self.top_pick))
 
         if self.min_width is not None:
             clauses.append("src.width >= ?")

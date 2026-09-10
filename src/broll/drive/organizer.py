@@ -23,13 +23,18 @@ from .client import (
     DriveError,
     DriveStorageFullError,
 )
+from ..analysis.schema import EMOTIONS
 from .taxonomy import (
     ShortcutPlan,
     library_folder,
     plan_filename,
     plan_shortcuts,
+    plan_tree,
     primary_shot,
+    render_guide,
 )
+
+GUIDE_NAME = "READ ME FIRST - how this library works"
 
 log = logging.getLogger(__name__)
 
@@ -83,6 +88,7 @@ class Organizer:
         self.dry_run = dry_run
         self._root_id: str | None = None
         self._folder_ids: dict[str, str] = {}
+        self._tree_ready = False
 
     # -- root ---------------------------------------------------------------
 
@@ -161,29 +167,39 @@ class Organizer:
         extension = Path(source.original_filename).suffix or ".mp4"
         filename = plan_filename(primary, source.content_hash, extension, self.config.taxonomy)
 
-        file_id = self._ensure_canonical_file(source, filename, report)
+        if self.config.taxonomy.mode == "tree":
+            self._ensure_tree(report)
+            home, desired = plan_tree(facets, filename, self.config.taxonomy)
+            target = home.parts
+        else:
+            target = library_folder(_ingest_month(source), self.config.taxonomy).parts
+            desired = plan_shortcuts(
+                facets,
+                filename,
+                self.store.facet_counts(),
+                self.config.taxonomy,
+                self._pair_counts(),
+            )
+
+        file_id = self._ensure_canonical_file(source, filename, target, report)
         if file_id is None:
             return report
-
-        desired = plan_shortcuts(
-            facets,
-            filename,
-            self.store.facet_counts(),
-            self.config.taxonomy,
-            self._pair_counts(),
-        )
         self._reconcile_shortcuts(source.id, file_id, desired, report)
         report.sources += 1
         return report
 
     def _ensure_canonical_file(
-        self, source: Source, filename: str, report: OrganiseReport
+        self, source: Source, filename: str, target: tuple[str, ...],
+        report: OrganiseReport,
     ) -> str | None:
-        """One real copy, in _Library/<ingest month>, named for its primary shot."""
-        month = _ingest_month(source)
-        library = library_folder(month, self.config.taxonomy)
-        library_id = self._folder_id(library.parts, report)
-        drive_path = f"{library}/{filename}"
+        """One real copy, in its target folder, named for its primary shot.
+
+        Faceted mode keeps it in _Library/<ingest month>; tree mode keeps it in
+        the client's best-fit folder. Either way a change of folder is a move
+        and a change of name is a rename - never a second upload.
+        """
+        library_id = self._folder_id(tuple(target), report)
+        drive_path = "/".join(target) + f"/{filename}"
 
         if source.drive_file_id:
             entry = self.client.get(source.drive_file_id)
@@ -229,6 +245,39 @@ class Organizer:
             drive_path=drive_path,
         )
         return uploaded.id
+
+    def _ensure_tree(self, report: OrganiseReport) -> None:
+        """Create the client's whole folder structure, empty folders included.
+
+        Editors browse this structure, so every folder should exist before
+        anything is in it - that is how they learn where things go.
+        """
+        if self._tree_ready:
+            return
+        taxonomy = self.config.taxonomy
+        for parts in taxonomy.tree_folders():
+            self._folder_id(parts, report)
+        if taxonomy.top_picks_folder:
+            self._folder_id((taxonomy.top_picks_folder,), report)
+        if taxonomy.guide_folder:
+            guide_id = self._folder_id((taxonomy.guide_folder,), report)
+            self._ensure_guide(guide_id, report)
+        self._tree_ready = True
+
+    def _ensure_guide(self, folder_id: str, report: OrganiseReport) -> None:
+        path = f"{self.config.taxonomy.guide_folder}/{GUIDE_NAME}"
+        if not folder_id.startswith("dry-run"):
+            if GUIDE_NAME in self.client.list_children(folder_id):
+                return  # created once; editing it by hand is fine
+        report.record("create_doc", path)
+        if self.dry_run:
+            return
+        text = render_guide(
+            self.config.taxonomy,
+            list(self.config.client.emotions) or list(EMOTIONS),
+            self.config.client.name,
+        )
+        self.client.create_doc(GUIDE_NAME, text, folder_id)
 
     def _reconcile_shortcuts(
         self, source_id: str, file_id: str, desired: list[ShortcutPlan],

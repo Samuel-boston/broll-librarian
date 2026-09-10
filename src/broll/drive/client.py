@@ -232,6 +232,30 @@ class DriveClient:
         self._children.setdefault(parent_id, {})[name] = created
         return created
 
+    def create_doc(self, name: str, text: str, parent_id: str) -> DriveFile:
+        """A Google Doc from plain text - Drive converts it on upload."""
+        import io
+
+        from googleapiclient.http import MediaIoBaseUpload
+
+        media = MediaIoBaseUpload(io.BytesIO(text.encode("utf-8")), mimetype="text/plain")
+
+        def call():
+            return self.service.files().create(
+                body={
+                    "name": name,
+                    "mimeType": "application/vnd.google-apps.document",
+                    "parents": [parent_id],
+                },
+                media_body=media,
+                fields="id,name,mimeType,parents,webViewLink",
+                supportsAllDrives=True,
+            ).execute()
+
+        created = _to_file(with_backoff(call, description=f"create doc {name}"))
+        self._children.setdefault(parent_id, {})[name] = created
+        return created
+
     def rename(self, file_id: str, name: str) -> DriveFile:
         def call():
             return self.service.files().update(

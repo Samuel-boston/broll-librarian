@@ -112,6 +112,16 @@ class FakeDriveClient:
         self._files[entry.id] = entry
         return entry
 
+    def create_doc(self, name: str, text: str, parent_id: str) -> DriveFile:
+        self._record(f"create_doc:{name}")
+        entry = DriveFile(
+            id=self._new_id("doc"), name=name,
+            mime_type="application/vnd.google-apps.document", parents=[parent_id],
+        )
+        entry.text = text  # type: ignore[attr-defined]
+        self._files[entry.id] = entry
+        return entry
+
     def rename(self, file_id: str, name: str) -> DriveFile:
         self._record(f"rename:{name}")
         self._files[file_id].name = name

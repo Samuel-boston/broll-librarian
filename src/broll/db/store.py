@@ -23,7 +23,7 @@ from .migrations import migrate, migrate_registry
 from .models import Job, Shot, ShotFacets, Source, Workspace
 from .vectors import VectorIndex, get_vector_index
 
-LIST_FACETS = ("subjects", "mood", "usable_for", "quality_flags")
+LIST_FACETS = ("subjects", "mood", "emotions", "usable_for", "quality_flags")
 SCALAR_FACETS = (
     "action",
     "setting",
@@ -33,6 +33,7 @@ SCALAR_FACETS = (
     "colour_profile",
     "people_count",
     "pace",
+    "category",
 )
 
 
@@ -295,6 +296,11 @@ class Store:
             "mood_json": json.dumps(shot.mood),
             "usable_for_json": json.dumps(shot.usable_for),
             "quality_flags_json": json.dumps(shot.quality_flags),
+            "emotions_json": json.dumps(shot.emotions),
+            "category": shot.category,
+            "secondary_categories_json": json.dumps(shot.secondary_categories),
+            "featured_person": int(shot.featured_person),
+            "top_pick": int(shot.top_pick),
             "status": shot.status,
             "error_message": shot.error_message,
             "analysis_version": shot.analysis_version,
@@ -388,8 +394,10 @@ class Store:
             value = row[field]
             if value:
                 parts.append(str(value).replace("_", " "))
-        for field in ("subjects_json", "mood_json", "usable_for_json"):
+        for field in ("subjects_json", "mood_json", "emotions_json", "usable_for_json"):
             parts.extend(json.loads(row[field] or "[]"))
+        categories = [row["category"], *json.loads(row["secondary_categories_json"] or "[]")]
+        parts.extend(c.split("/")[-1] for c in categories if c)
         parts.extend(self.shot_tags(shot_id))
         text = ", ".join(str(p) for p in parts if p)
         self.conn.execute(
