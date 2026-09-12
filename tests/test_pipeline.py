@@ -227,6 +227,41 @@ async def test_only_real_defects_route_a_shot_to_review(workspace, tmp_path):
     assert blurry.status == "needs_review"
 
 
+async def test_a_hedging_model_sends_the_shot_to_review(workspace, tmp_path):
+    from broll.analysis.schema import AnalysisResult
+
+    class Unsure:
+        name = "unsure"
+
+        def __init__(self, confidence):
+            self.confidence = confidence
+
+        async def analyse(self, frames, context, retry_error=None):
+            return AnalysisResult.model_validate({
+                "caption": "Possibly a person, possibly a wall.", "setting": "bedroom",
+                "shot_type": "medium", "camera_movement": "static", "time_of_day": "afternoon",
+                "colour_profile": "neutral", "people_count": "one", "pace": "slow",
+                "confidence": self.confidence,
+            })
+
+        def estimate_cost(self, frames):
+            return 0.0
+
+    context = ShotContext(source_filename="a.mp4", duration_s=3.0, width=640, height=360)
+    frames = [tmp_path / "frame.jpg"]
+
+    hedged = await Analyzer(workspace, provider=Unsure(0.55)).analyse_frames(frames, context)
+    assert hedged.status == "needs_review"
+
+    sure = await Analyzer(workspace, provider=Unsure(0.95)).analyse_frames(frames, context)
+    assert sure.status == "indexed"
+
+    # And the bar is the workspace's to set.
+    workspace.ingest.review_below_confidence = 0.5
+    relaxed = await Analyzer(workspace, provider=Unsure(0.55)).analyse_frames(frames, context)
+    assert relaxed.status == "indexed"
+
+
 async def test_an_uploaded_clip_is_kept_until_it_reaches_drive(workspace, clips):
     """Regression: browser uploads were deleted after indexing, so a later
     `organise` had nothing to upload and they could never reach Drive."""

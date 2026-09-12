@@ -35,7 +35,7 @@ async def review_page(request: Request):
         context = {
             "request": request,
             "workspace": state.config,
-            "queue": review_queue(store),
+            "queue": review_queue(store, below_confidence=state.config.ingest.review_below_confidence),
             "options": ENUM_OPTIONS,
             "categories": _categories(state.config),
             "indexed": store.count_shots("indexed"),
@@ -58,7 +58,7 @@ async def save_correction(request: Request, shot_id: str, status: str = Form("in
         context = {
             "request": request,
             "workspace": state.config,
-            "queue": review_queue(store),
+            "queue": review_queue(store, below_confidence=state.config.ingest.review_below_confidence),
             "options": ENUM_OPTIONS,
             "categories": _categories(state.config),
             "indexed": store.count_shots("indexed"),

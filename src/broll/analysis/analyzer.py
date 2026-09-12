@@ -211,7 +211,7 @@ class Analyzer:
                 outcome.result = result
                 outcome.oov = find_oov(result, self.vocab_overrides) + unmatched
                 defects = DEFECT_FLAGS.intersection(result.quality_flags)
-                if result.confidence < 0.35 or defects:
+                if result.confidence < self.config.ingest.review_below_confidence or defects:
                     outcome.status = "needs_review"
                 return outcome
 

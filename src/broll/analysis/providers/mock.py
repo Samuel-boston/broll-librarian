@@ -93,7 +93,7 @@ class MockVisionProvider(VisionProvider):
             tags=sorted({*subjects, *mood, setting, action, "mock"}),
             usable_for=[_pick(USABLE_FOR, seed), _pick(USABLE_FOR, seed, 4)],
             quality_flags=[],
-            confidence=0.42 + (seed % 50) / 100,
+            confidence=0.80 + (seed % 20) / 100,
         )
 
     def estimate_cost(self, frames) -> float:

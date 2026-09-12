@@ -907,7 +907,7 @@ def review(
     workspace_config = resolve_workspace(workspace)
     store = Store.for_config(workspace_config)
     try:
-        queue = review_queue(store, limit)
+        queue = review_queue(store, limit, workspace_config.ingest.review_below_confidence)
     finally:
         store.close()
 

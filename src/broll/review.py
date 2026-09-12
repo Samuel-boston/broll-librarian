@@ -155,7 +155,9 @@ def _as_bool(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def review_queue(store: Store, limit: int = 200) -> list[dict[str, Any]]:
+def review_queue(
+    store: Store, limit: int = 200, below_confidence: float = 0.7
+) -> list[dict[str, Any]]:
     """Shots needing attention, newest first, with why."""
     rows = store.conn.execute(
         """SELECT s.*, src.original_filename, src.duration_s AS source_duration
@@ -174,7 +176,7 @@ def review_queue(store: Store, limit: int = 200) -> list[dict[str, Any]]:
             reasons.append(row["error_message"])
         if shot.quality_flags:
             reasons.append("quality flags: " + ", ".join(shot.quality_flags))
-        if shot.confidence is not None and shot.confidence < 0.35:
+        if shot.confidence is not None and shot.confidence < below_confidence:
             reasons.append(f"low confidence ({shot.confidence:.2f})")
         queue.append(
             {

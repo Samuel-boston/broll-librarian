@@ -202,6 +202,10 @@ class IngestConfig(BaseModel):
     min_average_shot_length_s: float = 2.0
     concurrency: int = 4
     drive_concurrency: int = 2
+    # Send a shot to the review queue when the model's own confidence is below
+    # this. Clean footage comes back at 0.95+, so anything under this really is
+    # the model hedging - and a wrong caption is worse than a minute of review.
+    review_below_confidence: float = 0.7
     # File each source into Drive as soon as it is indexed, when Drive is
     # connected. This has to happen inside the pipeline: an uploaded file's
     # only copy is in staging, and cleanup would otherwise delete it first.

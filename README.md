@@ -160,8 +160,11 @@ dropping files in the browser is all it takes — no CLI step.
 * **Transcript** — paste or upload, see suggestions per beat, swap any of them,
   export FCP7 XML / EDL / CSV.
 * **Review** — the `needs_review` queue at *shot* level, so a multi-shot file
-  shows exactly which shot needs attention. Corrections are ground truth: saving
-  one recomputes the shot's search text and embedding immediately.
+  shows exactly which shot needs attention. A shot lands here when the model's
+  own confidence is below `ingest.review_below_confidence` (0.7 by default;
+  clean footage scores 0.95+), when it reports a defect in the footage, or when
+  the analysis failed twice. Corrections are ground truth: saving one recomputes
+  the shot's search text and embedding immediately.
 * **Settings** — provider and model, API keys, Drive connection, taxonomy
   thresholds, the Drive-for-Desktop mount path, and vocabulary promotion.
 
