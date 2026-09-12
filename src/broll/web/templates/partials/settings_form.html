@@ -1,127 +1,123 @@
 <div id="settings" class="grid gap-6 lg:grid-cols-2">
   {% if message %}
-  <p class="lg:col-span-2 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ message }}</p>
+  <p class="alert alert-ok lg:col-span-2">{{ message }}</p>
   {% endif %}
 
-  <form hx-post="/settings" hx-target="#settings" hx-swap="outerHTML"
-        class="space-y-4 rounded-lg border border-slate-200 bg-white p-5">
-    <h2 class="text-sm font-semibold">Workspace</h2>
+  <form hx-post="/settings" hx-target="#settings" hx-swap="outerHTML" class="card space-y-4 p-6">
+    <h2 class="text-sm font-semibold text-white">Workspace</h2>
 
-    <label class="block text-xs uppercase tracking-wide text-slate-400">Vision provider
-      <select name="provider" class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm normal-case tracking-normal text-slate-800">
+    <label class="block">
+      <span class="label">Vision provider</span>
+      <select name="provider" class="select mt-1.5">
         {% for name in providers %}
         <option value="{{ name }}" {% if workspace.provider.vision == name %}selected{% endif %}>{{ name }}</option>
         {% endfor %}
       </select>
     </label>
 
-    <label class="block text-xs uppercase tracking-wide text-slate-400">Model
+    <label class="block">
+      <span class="label">Model</span>
       <input name="model" value="{{ workspace.provider.vision_model or '' }}"
-             placeholder="{{ workspace.provider.resolved_vision_model() }}"
-             class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm normal-case tracking-normal text-slate-800">
+             placeholder="{{ workspace.provider.resolved_vision_model() }}" class="input mt-1.5">
     </label>
 
-    <div class="grid grid-cols-2 gap-3">
-      <label class="block text-xs uppercase tracking-wide text-slate-400">Min clips for a subfolder
+    <div class="grid grid-cols-2 gap-4">
+      <label class="block">
+        <span class="label">Min clips for a subfolder</span>
         <input name="min_clips_for_subfolder" type="number" min="1"
-               value="{{ workspace.taxonomy.min_clips_for_subfolder }}"
-               class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+               value="{{ workspace.taxonomy.min_clips_for_subfolder }}" class="input mt-1.5">
       </label>
-      <label class="block text-xs uppercase tracking-wide text-slate-400">Max folders per level
+      <label class="block">
+        <span class="label">Max folders per level</span>
         <input name="max_folders_per_level" type="number" min="1"
-               value="{{ workspace.taxonomy.max_folders_per_level }}"
-               class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+               value="{{ workspace.taxonomy.max_folders_per_level }}" class="input mt-1.5">
       </label>
-      <label class="block text-xs uppercase tracking-wide text-slate-400">Transcript words / minute
+      <label class="block">
+        <span class="label">Transcript words / minute</span>
         <input name="words_per_minute" type="number" min="30"
-               value="{{ workspace.transcript.words_per_minute }}"
-               class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+               value="{{ workspace.transcript.words_per_minute }}" class="input mt-1.5">
       </label>
-      <label class="block text-xs uppercase tracking-wide text-slate-400">Worker concurrency
+      <label class="block">
+        <span class="label">Worker concurrency</span>
         <input name="concurrency" type="number" min="1"
-               value="{{ workspace.ingest.concurrency }}"
-               class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+               value="{{ workspace.ingest.concurrency }}" class="input mt-1.5">
       </label>
     </div>
 
-    <label class="block text-xs uppercase tracking-wide text-slate-400">Drive root folder ID
+    <label class="block">
+      <span class="label">Drive root folder ID</span>
       <input name="drive_root_folder_id" value="{{ workspace.drive_root_folder_id or '' }}"
-             placeholder="leave blank to use a folder named {{ workspace.drive_root_folder_name }}"
-             class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm normal-case tracking-normal text-slate-800">
+             placeholder="leave blank to use a folder named {{ workspace.drive_root_folder_name }}" class="input mt-1.5">
     </label>
 
-    <label class="block text-xs uppercase tracking-wide text-slate-400">Google Drive for Desktop mount
+    <label class="block">
+      <span class="label">Google Drive for Desktop mount</span>
       <input name="drive_local_mount_path" value="{{ workspace.drive_local_mount_path or '' }}"
-             placeholder="/Users/you/Library/CloudStorage/GoogleDrive-.../My Drive"
-             class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm normal-case tracking-normal text-slate-800">
-      <span class="mt-1 block text-[11px] normal-case tracking-normal text-slate-400">
+             placeholder="/Users/you/Library/CloudStorage/GoogleDrive-.../My Drive" class="input mt-1.5">
+      <span class="mt-1.5 block text-[11px] text-faint">
         Without this, NLE exports import offline and need relinking.
       </span>
     </label>
 
-    <button class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
-      Save settings
-    </button>
+    <button class="btn btn-primary">Save settings</button>
   </form>
 
   <div class="space-y-6">
-    <form hx-post="/settings/key" hx-target="#settings" hx-swap="outerHTML"
-          class="space-y-3 rounded-lg border border-slate-200 bg-white p-5">
-      <h2 class="text-sm font-semibold">API keys</h2>
-      <ul class="space-y-1 text-sm">
+    <form hx-post="/settings/key" hx-target="#settings" hx-swap="outerHTML" class="card space-y-4 p-6">
+      <h2 class="text-sm font-semibold text-white">API keys</h2>
+      <ul class="space-y-2 text-sm">
         {% for name, present in keys.items() %}
-        <li class="flex items-center gap-2">
-          <span class="h-2 w-2 rounded-full {% if present %}bg-emerald-500{% else %}bg-slate-300{% endif %}"></span>
+        <li class="flex items-center gap-2.5">
+          <span class="h-2 w-2 rounded-full {% if present %}bg-[#4ade9b]{% else %}bg-[#39414f]{% endif %}"></span>
           <span class="flex-1">{{ name }}</span>
-          <span class="text-xs text-slate-400">{{ key_env[name] }} {{ 'set' if present else 'not set' }}</span>
+          <span class="mono text-[11px] text-faint">{{ key_env[name] }} {{ 'set' if present else 'not set' }}</span>
         </li>
         {% endfor %}
       </ul>
       <div class="flex gap-2">
-        <select name="provider" class="rounded-md border border-slate-300 px-2 py-2 text-sm">
+        <select name="provider" class="select w-auto py-2 text-sm">
           {% for name in keys %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
         </select>
-        <input name="api_key" type="password" placeholder="paste a key" autocomplete="off"
-               class="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm">
-        <button class="rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50">Save</button>
+        <input name="api_key" type="password" placeholder="paste a key" autocomplete="off" class="input flex-1">
+        <button class="btn">Save</button>
       </div>
-      <p class="text-[11px] text-slate-400">
+      <p class="text-[11px] leading-relaxed text-faint">
         Written to {{ env_path }} with owner-only permissions, and never shown again.
         Keys are never stored in the database or config.yaml.
       </p>
     </form>
 
-    <div class="space-y-2 rounded-lg border border-slate-200 bg-white p-5 text-sm">
-      <h2 class="text-sm font-semibold">Status</h2>
-      <p>Drive: <span class="{{ 'text-emerald-600' if drive_connected else 'text-amber-600' }}">
+    <div class="card space-y-2 p-6 text-sm">
+      <h2 class="text-sm font-semibold text-white">Status</h2>
+      <p class="text-muted">Drive: <span class="{{ 'text-emerald' if drive_connected else 'text-amber' }}">
         {{ 'connected' if drive_connected else 'not connected - run broll drive login' }}</span></p>
-      <p>Embeddings: {{ 'local (sentence-transformers)' if embeddings_local else 'provider fallback' }}</p>
-      <p>Vector index: {{ vectors }} vector(s), {{ vector_backend }} backend</p>
+      <p class="text-muted">Embeddings: <span class="text-white">{{ 'local (sentence-transformers)' if embeddings_local else 'provider fallback' }}</span></p>
+      <p class="text-muted">Vector index: <span class="text-white">{{ vectors }} vector(s), {{ vector_backend }} backend</span></p>
     </div>
 
-    <div class="rounded-lg border border-slate-200 bg-white p-5">
-      <h2 class="text-sm font-semibold">Vocabulary candidates</h2>
-      <p class="mt-1 text-xs text-slate-400">
+    <div class="card p-6">
+      <h2 class="text-sm font-semibold text-white">Vocabulary candidates</h2>
+      <p class="mt-1.5 text-xs leading-relaxed text-faint">
         Terms the model keeps returning that are not in the controlled vocabulary.
         Promote the ones worth keeping - they then stop being flagged and can earn folders.
       </p>
       {% if candidates %}
-      <ul class="mt-3 space-y-1 text-sm">
+      <ul class="mt-4 space-y-2 text-sm">
         {% for candidate in candidates %}
-        <li class="flex items-center gap-2">
-          <span class="w-10 text-right text-xs text-slate-400">{{ candidate.count }}x</span>
-          <span class="text-xs text-slate-400">{{ candidate.field }}</span>
+        <li class="flex items-center gap-2.5">
+          <span class="mono w-10 text-right text-xs text-faint">{{ candidate.count }}x</span>
+          <span class="text-xs text-faint">{{ candidate.field }}</span>
           <span class="flex-1">{{ candidate.term }}</span>
           <form hx-post="/settings/vocab" hx-target="#settings" hx-swap="outerHTML">
             <input type="hidden" name="field" value="{{ candidate.field }}">
             <input type="hidden" name="term" value="{{ candidate.term }}">
-            <button class="rounded border border-slate-300 px-2 py-0.5 text-xs hover:bg-slate-50">Promote</button>
+            <button class="btn btn-sm">Promote</button>
           </form>
         </li>
         {% endfor %}
       </ul>
       {% else %}
-      <p class="mt-3 text-sm text-slate-400">None seen twice or more yet.</p>
+      <p class="mt-4 text-sm text-faint">None seen twice or more yet.</p>
       {% endif %}
     </div>
   </div>

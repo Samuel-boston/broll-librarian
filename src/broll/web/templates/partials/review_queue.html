@@ -1,54 +1,52 @@
-<div id="review-queue" class="space-y-4">
+<div id="review-queue" class="space-y-5">
   {% if message %}
-    <p class="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{{ message }}</p>
+    <p class="alert alert-ok">{{ message }}</p>
   {% endif %}
 
   {% if not queue %}
-    <p class="rounded-md border border-dashed border-slate-300 bg-white px-6 py-12 text-center text-sm text-slate-500">
-      Nothing needs review. {{ indexed }} shot(s) are indexed.
-    </p>
+    <p class="empty">Nothing needs review. {{ indexed }} shot(s) are indexed.</p>
   {% else %}
-  <p class="text-sm text-slate-500">{{ queue|length }} shot(s) flagged. Corrections are kept and
+  <p class="text-sm text-muted">{{ queue|length }} shot(s) flagged. Corrections are kept and
      recompute the shot's search text and embedding.</p>
 
   {% for entry in queue %}
   {% set shot = entry.shot %}
-  <form class="rounded-lg border border-slate-200 bg-white" hx-post="/review/{{ shot.id }}"
+  <form class="card overflow-hidden" hx-post="/review/{{ shot.id }}"
         hx-target="#review-queue" hx-swap="outerHTML">
-    <header class="flex flex-wrap items-center gap-3 border-b border-slate-100 px-4 py-3">
-      <div class="h-14 w-24 shrink-0 overflow-hidden rounded bg-slate-100">
+    <header class="flex flex-wrap items-center gap-3.5 border-b border-line-soft px-5 py-4">
+      <div class="thumb h-14 w-24 shrink-0 rounded-md">
         {% if shot.thumbnail_path %}
           <img src="/thumbnails/{{ shot.id }}.jpg" alt="" class="h-full w-full object-cover">
         {% endif %}
       </div>
       <div class="min-w-0 flex-1">
         <p class="truncate text-sm font-medium">{{ entry.filename }}
-          <span class="text-xs font-normal text-slate-400">
+          <span class="mono text-[11px] font-normal text-faint">
             shot {{ shot.shot_index + 1 }} · @{{ '%.1f'|format(shot.start_s) }}s ·
             {{ '%.1f'|format(shot.duration_s) }}s
           </span>
         </p>
-        <p class="text-xs text-amber-700">{{ entry.reasons | join('; ') }}</p>
+        <p class="mt-0.5 text-xs" style="color:#f6c887">{{ entry.reasons | join('; ') }}</p>
       </div>
     </header>
 
-    <div class="grid gap-3 px-4 py-4 sm:grid-cols-2">
-      <label class="sm:col-span-2 block text-xs uppercase tracking-wide text-slate-400">Caption
-        <input name="caption" value="{{ shot.caption or '' }}"
-               class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm normal-case tracking-normal text-slate-800">
+    <div class="grid gap-4 px-5 py-5 sm:grid-cols-2">
+      <label class="block sm:col-span-2">
+        <span class="label">Caption</span>
+        <input name="caption" value="{{ shot.caption or '' }}" class="input mt-1.5">
       </label>
 
       {% for field in ['setting', 'action', 'setting_detail'] %}
-      <label class="block text-xs uppercase tracking-wide text-slate-400">{{ field.replace('_',' ') }}
-        <input name="{{ field }}" value="{{ shot[field] or '' }}"
-               class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm normal-case tracking-normal text-slate-800">
+      <label class="block">
+        <span class="label">{{ field.replace('_',' ') }}</span>
+        <input name="{{ field }}" value="{{ shot[field] or '' }}" class="input mt-1.5">
       </label>
       {% endfor %}
 
       {% for field, values in options.items() %}
-      <label class="block text-xs uppercase tracking-wide text-slate-400">{{ field.replace('_',' ') }}
-        <select name="{{ field }}"
-                class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm normal-case tracking-normal text-slate-800">
+      <label class="block">
+        <span class="label">{{ field.replace('_',' ') }}</span>
+        <select name="{{ field }}" class="select mt-1.5">
           {% for value in values %}
           <option value="{{ value }}" {% if shot[field] == value %}selected{% endif %}>{{ value.replace('_',' ') }}</option>
           {% endfor %}
@@ -57,16 +55,16 @@
       {% endfor %}
 
       {% for field in ['emotions', 'subjects', 'mood', 'usable_for', 'quality_flags', 'tags'] %}
-      <label class="block text-xs uppercase tracking-wide text-slate-400">{{ field.replace('_',' ') }} (comma separated)
-        <input name="{{ field }}" value="{{ shot[field] | join(', ') }}"
-               class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm normal-case tracking-normal text-slate-800">
+      <label class="block">
+        <span class="label">{{ field.replace('_',' ') }} <span class="normal-case tracking-normal text-faint">(comma separated)</span></span>
+        <input name="{{ field }}" value="{{ shot[field] | join(', ') }}" class="input mt-1.5">
       </label>
       {% endfor %}
 
       {% if categories %}
-      <label class="sm:col-span-2 block text-xs uppercase tracking-wide text-slate-400">Folder
-        <select name="category"
-                class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm normal-case tracking-normal text-slate-800">
+      <label class="block sm:col-span-2">
+        <span class="label">Folder</span>
+        <select name="category" class="select mt-1.5">
           <option value="">— not sure yet (goes to _Unsorted) —</option>
           {% for path in categories %}
           <option value="{{ path }}" {% if shot.category == path %}selected{% endif %}>{{ path.replace('/', ' › ') }}</option>
@@ -74,22 +72,19 @@
         </select>
       </label>
       {% endif %}
-      <label class="flex items-center gap-2 text-sm">
+      <label class="flex cursor-pointer items-center gap-2 text-sm">
         <input type="hidden" name="top_pick" value="false">
-        <input type="checkbox" name="top_pick" value="true" {% if shot.top_pick %}checked{% endif %}
-               class="rounded border-slate-300">
-        ★ Top pick
+        <input type="checkbox" name="top_pick" value="true" {% if shot.top_pick %}checked{% endif %}>
+        <span class="text-amber">★</span> Top pick
       </label>
     </div>
 
-    <footer class="flex items-center gap-3 border-t border-slate-100 px-4 py-3">
-      <select name="status" class="rounded-md border border-slate-300 px-2 py-1.5 text-sm">
+    <footer class="flex items-center gap-3 border-t border-line-soft px-5 py-4">
+      <select name="status" class="select w-auto py-1.5 text-sm">
         <option value="indexed">Mark reviewed</option>
         <option value="needs_review">Leave flagged</option>
       </select>
-      <button class="ml-auto rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
-        Save correction
-      </button>
+      <button class="btn btn-primary ml-auto">Save correction</button>
     </footer>
   </form>
   {% endfor %}

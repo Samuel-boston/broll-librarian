@@ -1,9 +1,18 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Not found</title>
-<script src="https://cdn.tailwindcss.com"></script></head>
-<body class="grid min-h-screen place-items-center bg-slate-50 text-slate-600">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap">
+<style>
+  html { color-scheme: dark; }
+  body { background: #0a0b0e; color: #98a1b2; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
+  body::before { content: ''; position: fixed; inset: 0; z-index: -1;
+    background: radial-gradient(700px 420px at 50% 0%, rgba(139,140,255,.16), transparent 62%); }
+</style></head>
+<body class="grid min-h-screen place-items-center">
   <div class="text-center">
-    <p class="text-3xl font-semibold">404</p>
-    <p class="mt-2 text-sm">No such page. <a class="text-indigo-600 underline" href="/search">Back to search</a></p>
+    <p class="text-5xl font-semibold tracking-tight text-white">404</p>
+    <p class="mt-3 text-sm">No such page.
+      <a class="underline decoration-dotted underline-offset-4" style="color:#8b8cff" href="/library">Back to the library</a>
+    </p>
   </div>
 </body></html>

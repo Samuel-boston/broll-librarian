@@ -8,63 +8,61 @@
      whole form into the query string. -->
 <form id="search-form" hx-target="#results" hx-push-url="true"
       hx-include="#search-form" hx-swap="innerHTML" onsubmit="return false">
-  <div class="flex gap-6">
+  <div class="flex gap-7">
     <aside class="w-64 shrink-0 space-y-5">
       <div>
-        <label class="block text-xs font-medium uppercase tracking-wide text-slate-400">Search</label>
+        <label class="label">Search</label>
         <input id="q" name="q" value="{{ query }}" autocomplete="off"
                hx-get="/search" hx-trigger="keyup changed delay:400ms, search"
                placeholder="calm, grounded, switching off"
-               class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none">
-        <p class="mt-1 text-xs text-slate-400">{{ total_shots }} shots indexed</p>
+               class="input mt-1.5">
+        <p class="mt-1.5 text-xs text-faint">{{ total_shots }} shots indexed</p>
       </div>
 
-      <div class="space-y-1.5">
-        <label class="flex items-center gap-2 text-sm">
+      <div class="card space-y-2 p-3.5">
+        <label class="flex cursor-pointer items-center gap-2 text-sm">
           <input type="checkbox" name="top_picks" value="true" hx-get="/search" hx-trigger="change"
-                 class="filter-input rounded border-slate-300" {% if selected.top_picks %}checked{% endif %}>
-          <span class="text-amber-500">★</span> Top picks only
+                 class="filter-input" {% if selected.top_picks %}checked{% endif %}>
+          <span class="text-amber">★</span> Top picks only
         </label>
         {% if featured_name %}
-        <label class="flex items-center gap-2 text-sm">
+        <label class="flex cursor-pointer items-center gap-2 text-sm">
           <input type="checkbox" name="featured" value="true" hx-get="/search" hx-trigger="change"
-                 class="filter-input rounded border-slate-300" {% if selected.featured %}checked{% endif %}>
+                 class="filter-input" {% if selected.featured %}checked{% endif %}>
           {{ featured_name }} in shot
         </label>
         {% endif %}
-        <label class="flex items-center gap-2 text-sm">
+        <label class="flex cursor-pointer items-center gap-2 text-sm">
           <input type="checkbox" name="clean" value="true" hx-get="/search" hx-trigger="change"
-                 class="filter-input rounded border-slate-300" {% if selected.clean %}checked{% endif %}>
+                 class="filter-input" {% if selected.clean %}checked{% endif %}>
           Hide flagged clips
         </label>
       </div>
 
-      <div class="grid grid-cols-2 gap-2">
+      <div class="grid grid-cols-2 gap-3">
         <div>
-          <label class="block text-xs text-slate-400">Min secs</label>
+          <label class="label">Min secs</label>
           <input name="min_duration" type="number" step="0.5" min="0" value="{{ selected.min_duration or '' }}"
-                 hx-get="/search" hx-trigger="change"
-                 class="filter-input mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-sm">
+                 hx-get="/search" hx-trigger="change" class="filter-input input mt-1.5 py-1.5 text-sm">
         </div>
         <div>
-          <label class="block text-xs text-slate-400">Max secs</label>
+          <label class="label">Max secs</label>
           <input name="max_duration" type="number" step="0.5" min="0" value="{{ selected.max_duration or '' }}"
-                 hx-get="/search" hx-trigger="change"
-                 class="filter-input mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-sm">
+                 hx-get="/search" hx-trigger="change" class="filter-input input mt-1.5 py-1.5 text-sm">
         </div>
       </div>
 
       {% macro facet_group(title, name, options, chosen, open=False, path=False) %}
         {% if options %}
-        <details class="rounded-md border border-slate-200 bg-white" {% if chosen or open %}open{% endif %}>
-          <summary class="cursor-pointer px-3 py-2 text-xs font-medium uppercase tracking-wide text-slate-500">{{ title }}</summary>
-          <div class="max-h-56 space-y-1 overflow-y-auto px-3 pb-3">
+        <details class="card overflow-hidden" {% if chosen or open %}open{% endif %}>
+          <summary class="label cursor-pointer px-3.5 py-2.5 transition hover:text-white">{{ title }}</summary>
+          <div class="max-h-56 space-y-1.5 overflow-y-auto px-3.5 pb-3.5">
             {% for value, count in options %}
-            <label class="flex items-center gap-2 text-sm">
-              <input type="checkbox" hx-get="/search" hx-trigger="change" class="filter-input rounded border-slate-300"
+            <label class="flex cursor-pointer items-center gap-2 text-sm text-muted transition hover:text-white">
+              <input type="checkbox" hx-get="/search" hx-trigger="change" class="filter-input"
                      name="{{ name }}" value="{{ value }}" {% if value in chosen %}checked{% endif %}>
               <span class="flex-1">{% if path %}{{ value.split('/')[-1] }}{% else %}{{ value.replace('_', ' ') }}{% endif %}</span>
-              <span class="text-xs text-slate-400">{{ count }}</span>
+              <span class="text-xs text-faint">{{ count }}</span>
             </label>
             {% endfor %}
           </div>
@@ -82,7 +80,7 @@
       {{ facet_group('Time of day', 'time_of_day', facets.time_of_day, selected.time_of_day) }}
       {{ facet_group('Use', 'usable_for', facets.usable_for, selected.usable_for) }}
 
-      <a href="/search" class="block text-xs text-slate-400 underline">Clear all filters</a>
+      <a href="/search" class="block text-xs text-faint underline decoration-dotted underline-offset-4 transition hover:text-white">Clear all filters</a>
     </aside>
 
     <section id="results" class="min-w-0 flex-1">

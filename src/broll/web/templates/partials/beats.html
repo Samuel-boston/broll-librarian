@@ -1,66 +1,67 @@
 <div class="space-y-4">
-  <div class="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white p-4">
-    <div class="text-sm">
-      <span class="font-medium">{{ timeline.items|length }}</span> clip(s) ·
-      <span class="font-medium">{{ gaps|length }}</span> gap(s) ·
-      {{ timeline.fps }} fps
+  <div class="card flex flex-wrap items-center gap-3 px-5 py-4">
+    <div class="text-sm text-muted">
+      <span class="font-medium text-white">{{ timeline.items|length }}</span> clip(s) ·
+      <span class="font-medium text-white">{{ gaps|length }}</span> gap(s) ·
+      <span class="mono text-xs">{{ timeline.fps }} fps</span>
     </div>
-    <div class="ml-auto flex gap-2 text-sm">
-      <a class="rounded-md border border-slate-300 px-3 py-1.5 hover:bg-slate-50"
-         href="/transcript/{{ run.id }}/export/xml">FCP7 XML</a>
-      <a class="rounded-md border border-slate-300 px-3 py-1.5 hover:bg-slate-50"
-         href="/transcript/{{ run.id }}/export/edl">EDL</a>
-      <a class="rounded-md border border-slate-300 px-3 py-1.5 hover:bg-slate-50"
-         href="/transcript/{{ run.id }}/export/csv">CSV</a>
+    <div class="ml-auto flex gap-2">
+      <a class="btn btn-sm" href="/transcript/{{ run.id }}/export/xml">FCP7 XML</a>
+      <a class="btn btn-sm" href="/transcript/{{ run.id }}/export/edl">EDL</a>
+      <a class="btn btn-sm" href="/transcript/{{ run.id }}/export/csv">CSV</a>
     </div>
   </div>
 
   {% if timeline.warnings %}
-  <ul class="space-y-1 rounded-lg border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800">
-    {% for warning in timeline.warnings %}<li>• {{ warning }}</li>{% endfor %}
+  <ul class="alert alert-warn space-y-1.5">
+    {% for warning in timeline.warnings %}<li class="flex gap-2"><span class="text-amber">•</span><span>{{ warning }}</span></li>{% endfor %}
   </ul>
   {% endif %}
 
   {% for match in matches %}
-  <section class="rounded-lg border border-slate-200 bg-white">
-    <header class="flex items-baseline gap-3 border-b border-slate-100 px-4 py-3">
-      <span class="font-mono text-xs text-slate-400">{{ match.beat.timecode }}</span>
-      <p class="flex-1 text-sm">{{ match.beat.text }}</p>
-      <span class="text-xs text-slate-400">{{ '%.1f'|format(match.beat.duration_s) }}s</span>
+  <section class="card overflow-hidden">
+    <header class="flex items-baseline gap-3 border-b border-line-soft px-5 py-3.5">
+      <span class="mono text-xs text-faint">{{ match.beat.timecode }}</span>
+      <p class="flex-1 text-sm leading-relaxed">{{ match.beat.text }}</p>
+      <span class="mono text-xs text-faint">{{ '%.1f'|format(match.beat.duration_s) }}s</span>
     </header>
 
     {% if match.no_good_match %}
-      <p class="px-4 py-3 text-sm text-amber-700">
-        No good match. {{ match.missing_footage or 'Nothing in the library suited this beat.' }}
+      <p class="flex items-start gap-2 px-5 py-4 text-sm" style="color:#f6c887">
+        <svg class="mt-0.5 shrink-0" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.2M12 16.3v.2"/>
+        </svg>
+        <span><span class="font-medium">No good match.</span> {{ match.missing_footage or 'Nothing in the library suited this beat.' }}</span>
       </p>
     {% else %}
-      <ul class="divide-y divide-slate-100">
+      <ul class="divide-line">
         {% for suggestion in match.suggestions %}
-        <li class="flex items-start gap-3 px-4 py-3 {% if loop.first %}bg-indigo-50/40{% endif %}">
-          <div class="h-12 w-20 shrink-0 overflow-hidden rounded bg-slate-100">
+        <li class="flex items-start gap-3.5 px-5 py-3.5 {% if loop.first %}bg-[rgba(139,140,255,.06)] shadow-[inset_3px_0_0_0_#8b8cff]{% endif %}">
+          <div class="thumb h-12 w-20 shrink-0 rounded-md">
             {% if suggestion.shot.thumbnail_path %}
               <img src="/thumbnails/{{ suggestion.shot.id }}.jpg" alt="" class="h-full w-full object-cover">
             {% endif %}
           </div>
           <div class="min-w-0 flex-1">
             <p class="truncate text-sm">
-              {% if loop.first %}<span class="mr-1 rounded bg-indigo-600 px-1.5 py-0.5 text-[11px] text-white">on timeline</span>{% endif %}
+              {% if loop.first %}<span class="tag tag-accent mr-1.5">on timeline</span>{% endif %}
               {{ suggestion.source.original_filename }}
-              <span class="text-xs text-slate-400">@{{ '%.1f'|format(suggestion.shot.start_s) }}s · {{ '%.1f'|format(suggestion.shot.duration_s) }}s</span>
-              {% if suggestion.reused %}<span class="ml-1 rounded bg-slate-100 px-1 text-[11px] text-slate-500">reused</span>{% endif %}
+              <span class="mono text-[11px] text-faint">@{{ '%.1f'|format(suggestion.shot.start_s) }}s · {{ '%.1f'|format(suggestion.shot.duration_s) }}s</span>
+              {% if suggestion.reused %}<span class="tag ml-1">reused</span>{% endif %}
             </p>
-            <p class="text-xs text-slate-500">{{ suggestion.reason }}</p>
+            <p class="mt-0.5 text-xs leading-relaxed text-muted">{{ suggestion.reason }}</p>
           </div>
-          <div class="flex shrink-0 items-center gap-2">
+          <div class="flex shrink-0 items-center gap-3">
             {% if suggestion.drive_link %}
-              <a class="text-xs text-indigo-600 hover:underline" target="_blank" rel="noopener"
+              <a class="text-xs text-accent transition hover:underline" target="_blank" rel="noopener"
                  href="{{ suggestion.drive_link }}">Drive</a>
             {% endif %}
             {% if not loop.first %}
             <form hx-post="/transcript/{{ run.id }}/swap" hx-target="#beats" hx-swap="innerHTML">
               <input type="hidden" name="beat" value="{{ match.beat.index }}">
               <input type="hidden" name="shot_id" value="{{ suggestion.shot.id }}">
-              <button class="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50">Use this</button>
+              <button class="btn btn-sm">Use this</button>
             </form>
             {% endif %}
           </div>
@@ -72,12 +73,14 @@
   {% endfor %}
 
   {% if gaps %}
-  <section class="rounded-lg border border-amber-200 bg-white p-4">
-    <h2 class="text-sm font-semibold">Footage you should go and shoot</h2>
-    <ul class="mt-2 space-y-1 text-sm text-slate-600">
+  <section class="card p-5" style="border-color:rgba(242,178,74,.28)">
+    <h2 class="flex items-center gap-2 text-sm font-semibold text-white">
+      <span class="text-amber">◎</span> Footage you should go and shoot
+    </h2>
+    <ul class="mt-3 space-y-2 text-sm text-muted">
       {% for gap in gaps %}
-      <li><span class="font-mono text-xs text-slate-400">{{ gap.beat.timecode }}</span>
-        {{ gap.missing_footage or gap.beat.text }}</li>
+      <li class="flex gap-3"><span class="mono shrink-0 text-xs text-faint">{{ gap.beat.timecode }}</span>
+        <span>{{ gap.missing_footage or gap.beat.text }}</span></li>
       {% endfor %}
     </ul>
   </section>
