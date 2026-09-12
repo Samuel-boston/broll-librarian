@@ -3,10 +3,10 @@
 Turns a pile of unsorted B-roll into a searchable, auto-organised library backed
 by Google Drive.
 
-Drop in videos (or point it at a Drive folder). In the background it splits each
-video into shots, analyses them with a vision model, writes rich structured
-metadata into a local database, uploads the files into a meticulously organised
-Drive tree, and then lets you find footage two ways:
+Drop in videos and photographs (or point it at a Drive folder). In the background
+it splits each video into shots, analyses them with a vision model, writes rich
+structured metadata into a local database, uploads the files into a meticulously
+organised Drive tree, and then lets you find footage two ways:
 
 1. **Search** — natural language plus filters, returning thumbnails and Drive links.
 2. **Transcript matching** — paste a transcript, get suggested B-roll per beat,
@@ -14,6 +14,13 @@ Drive tree, and then lets you find footage two ways:
 
 **The video files never live in the database.** The database stores metadata and
 a Google Drive file ID. Everything else follows from that constraint.
+
+**Photographs are footage too.** A still runs the same pipeline with the shot
+detection removed: one "shot", one frame, no duration and no camera movement.
+It is captioned, tagged, filed and searched exactly like a clip, and can be cut
+under a line of narration - where it holds the frame for as long as the beat
+needs. `.jpg .jpeg .png .heic .heif .webp .tif .tiff .avif .bmp` are indexed;
+HEIC is read through ffmpeg, so there is nothing extra to install.
 
 ---
 
@@ -281,6 +288,9 @@ folder notes all go straight into the analysis prompt.
   every later clip; a near-duplicate of an existing sibling ("Beach and Water"
   next to "Beach & Water") reuses it instead. Turn off with
   `taxonomy.allow_new_folders: false`.
+* **Splitting video from photographs** (`taxonomy.media_split: true`): the same
+  tree exists under `Videos/` and `Images/`, and a source is filed under the one
+  that matches it. The tree is written once and used for both.
 * A `00_START HERE` Google Doc explains the naming format, the folders and the
   emotion list. It is written once, so edit it by hand if you like.
 * The whole structure is created up front, empty folders included - editors

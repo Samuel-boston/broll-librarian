@@ -115,6 +115,25 @@ class TaxonomyConfig(BaseModel):
     filename_template: str = "{setting}_{action}_{time_of_day}_{shot_type}"
     # Let the model add a folder when nothing in the tree genuinely fits.
     allow_new_folders: bool = True
+    # Split the whole tree by media at the top level, so photographs and clips
+    # never sit in the same folder: Videos/<tree> and Images/<tree>. The tree
+    # itself is written once and used for both.
+    media_split: bool = False
+    video_folder_name: str = "Videos"
+    image_folder_name: str = "Images"
+
+    def media_prefix(self, media_kind: str) -> tuple[str, ...]:
+        """The folder a source of this kind hangs under. Empty when not split."""
+        if not self.media_split:
+            return ()
+        name = self.image_folder_name if media_kind == "image" else self.video_folder_name
+        return (name,)
+
+    def media_prefixes(self) -> list[tuple[str, ...]]:
+        """Every prefix the tree has to exist under."""
+        if not self.media_split:
+            return [()]
+        return [(self.video_folder_name,), (self.image_folder_name,)]
 
     def tree_folders(self) -> list[tuple[str, ...]]:
         return [path for node in self.tree for path, _ in node.walk()]

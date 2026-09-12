@@ -23,6 +23,8 @@ VIEWS = {
     "featured": (None, {"featured_person": True}),
     "unsorted": ("Unsorted", {"uncategorised": True}),
     "review": ("Needs review", {"status": ["needs_review"]}),
+    "photos": ("Photos", {"media_kind": ["image"]}),
+    "videos": ("Clips", {"media_kind": ["video"]}),
 }
 
 
@@ -108,6 +110,7 @@ async def library(
                 "top_picks": sum(1 for r in rows if r["top_pick"]),
                 "featured": sum(1 for r in rows if r["featured"]),
                 "unsorted": sum(1 for r in rows if not r["category"]),
+                "photos": sum(1 for r in rows if r["media_kind"] == "image"),
                 "review": store.count_shots("needs_review"),
             },
         }

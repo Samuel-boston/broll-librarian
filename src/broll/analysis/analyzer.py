@@ -21,7 +21,15 @@ from ..ingest.frames import extract_frames
 from .prompt import PROMPT_VERSION, render_client_context
 from .providers.base import ProviderError, TransientProviderError, VisionProvider
 from .providers.registry import get_vision_provider
-from .schema import DEFECT_FLAGS, EMOTIONS, AnalysisResult, ShotContext, find_oov
+from .schema import (
+    DEFECT_FLAGS,
+    EMOTIONS,
+    AnalysisResult,
+    CameraMove,
+    Pace,
+    ShotContext,
+    find_oov,
+)
 
 log = logging.getLogger(__name__)
 
@@ -130,12 +138,15 @@ class Analyzer:
     # -- frames -------------------------------------------------------------
 
     def extract(self, video: Path, context: ShotContext, work_dir: Path) -> list[Path]:
+        # A photograph has one frame, and sending it three times would only
+        # triple the bill. ffmpeg does the decode either way, HEIC included.
+        count = 1 if context.media_kind == "image" else self.config.ingest.frames_per_shot
         return extract_frames(
             video,
             work_dir,
             start_s=context.start_s,
             duration_s=context.duration_s,
-            count=self.config.ingest.frames_per_shot,
+            count=count,
             max_edge=self.config.ingest.frame_max_edge,
             prefix=f"shot{context.shot_index:03d}",
         )
@@ -208,6 +219,11 @@ class Analyzer:
                 retry_error = str(exc)
             else:
                 unmatched = self._normalise(result)
+                if context.media_kind == "image":
+                    # Not the model's to judge: a photograph cannot move, and a
+                    # model that says it pans left is describing an illusion.
+                    result.camera_movement = CameraMove.static
+                    result.pace = Pace.still
                 outcome.result = result
                 outcome.oov = find_oov(result, self.vocab_overrides) + unmatched
                 defects = DEFECT_FLAGS.intersection(result.quality_flags)

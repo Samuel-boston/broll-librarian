@@ -173,7 +173,13 @@ def build_timeline(
         wanted_frames = max(1, seconds_to_frames(beat.duration_s, fps))
         source_fps = float(snap_fps(suggestion.source.fps) or fps)
 
-        available_frames = max(1, seconds_to_frames(suggestion.shot.duration_s, fps))
+        # A photograph has no length of its own: it holds the frame for as long
+        # as the beat needs, so it never leaves a gap.
+        still = suggestion.source.media_kind == "image"
+        available_frames = (
+            wanted_frames if still
+            else max(1, seconds_to_frames(suggestion.shot.duration_s, fps))
+        )
         used_frames = min(wanted_frames, available_frames)
         gap_frames = wanted_frames - used_frames
         if gap_frames > 0:

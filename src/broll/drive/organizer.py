@@ -176,7 +176,8 @@ class Organizer:
 
         if self.config.taxonomy.mode == "tree":
             self._ensure_tree(report)
-            home, desired = plan_tree(facets, filename, self.config.taxonomy)
+            prefix = self.config.taxonomy.media_prefix(source.media_kind)
+            home, desired = plan_tree(facets, filename, self.config.taxonomy, prefix)
             target = home.parts
         else:
             target = library_folder(_ingest_month(source), self.config.taxonomy).parts
@@ -262,10 +263,13 @@ class Organizer:
         if self._tree_ready:
             return
         taxonomy = self.config.taxonomy
-        for parts in taxonomy.tree_folders():
-            self._folder_id(parts, report)
-        if taxonomy.top_picks_folder:
-            self._folder_id((taxonomy.top_picks_folder,), report)
+        # With media_split on, the same tree exists under Videos/ and Images/.
+        for prefix in taxonomy.media_prefixes():
+            for parts in taxonomy.tree_folders():
+                self._folder_id((*prefix, *parts), report)
+            if taxonomy.top_picks_folder:
+                self._folder_id((*prefix, taxonomy.top_picks_folder), report)
+        # The guide is about the library as a whole, so it stays at the root.
         if taxonomy.guide_folder:
             guide_id = self._folder_id((taxonomy.guide_folder,), report)
             self._ensure_guide(guide_id, report)

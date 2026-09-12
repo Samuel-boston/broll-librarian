@@ -37,6 +37,18 @@
                  class="filter-input" {% if selected.clean %}checked{% endif %}>
           Hide flagged clips
         </label>
+        <div class="flex gap-4 border-t border-line-soft pt-2">
+          <label class="flex cursor-pointer items-center gap-2 text-sm">
+            <input type="checkbox" name="media" value="video" hx-get="/search" hx-trigger="change"
+                   class="filter-input" {% if 'video' in selected.media %}checked{% endif %}>
+            Clips
+          </label>
+          <label class="flex cursor-pointer items-center gap-2 text-sm">
+            <input type="checkbox" name="media" value="image" hx-get="/search" hx-trigger="change"
+                   class="filter-input" {% if 'image' in selected.media %}checked{% endif %}>
+            Photos
+          </label>
+        </div>
       </div>
 
       <div class="grid grid-cols-2 gap-3">

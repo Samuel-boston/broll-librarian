@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from ..config import check_ffmpeg
+from .scanner import media_kind
 
 
 class NotAVideoError(ValueError):
@@ -16,6 +17,7 @@ class NotAVideoError(ValueError):
 
 
 class ProbeResult(BaseModel):
+    media_kind: str = "video"
     duration_s: float
     width: int
     height: int
@@ -84,13 +86,20 @@ def probe(path: Path) -> ProbeResult:
     streams = data.get("streams", [])
     video = next((s for s in streams if s.get("codec_type") == "video"), None)
     if video is None:
-        raise NotAVideoError(f"{path.name} contains no video stream - skipping.")
+        raise NotAVideoError(f"{path.name} contains no image or video stream - skipping.")
 
     fmt = data.get("format", {})
     duration = video.get("duration") or fmt.get("duration")
     fps = nominal_fps(video.get("r_frame_rate"), video.get("avg_frame_rate"))
 
+    # A still decodes as a one-frame video stream, so the extension is what
+    # actually says which it is. Its duration and frame rate are meaningless.
+    kind = media_kind(path) or "video"
+    if kind == "image":
+        duration, fps = 0.0, None
+
     return ProbeResult(
+        media_kind=kind,
         duration_s=float(duration) if duration else 0.0,
         width=int(video.get("width") or 0),
         height=int(video.get("height") or 0),

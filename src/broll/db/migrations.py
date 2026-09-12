@@ -11,7 +11,7 @@ from pathlib import Path
 
 SQL_DIR = Path(__file__).parent
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def _apply_sql_file(conn: sqlite3.Connection, name: str) -> None:
@@ -96,12 +96,24 @@ def _v5_stemmed_keyword_index(conn: sqlite3.Connection) -> None:
     )
 
 
+def _v6_media_kind(conn: sqlite3.Connection) -> None:
+    """Stills live alongside clips, so a source has to say which it is.
+
+    Everything indexed before this migration was a video by definition.
+    """
+    conn.execute(
+        "ALTER TABLE sources ADD COLUMN media_kind TEXT NOT NULL DEFAULT 'video'"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sources_kind ON sources (workspace_id, media_kind)")
+
+
 MIGRATIONS = {
     1: _v1_base_schema,
     2: _v2_drive_shortcuts,
     3: _v3_client_aware_fields,
     4: _v4_job_owner,
     5: _v5_stemmed_keyword_index,
+    6: _v6_media_kind,
 }
 
 

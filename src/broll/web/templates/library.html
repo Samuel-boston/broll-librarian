@@ -84,6 +84,9 @@
     {% if featured_name %}
     <a href="/library?view=featured" class="chip">{{ featured_name }} in shot · {{ quick.featured }}</a>
     {% endif %}
+    {% if quick.photos %}
+    <a href="/library?view=photos" class="chip">Photos · {{ quick.photos }}</a>
+    {% endif %}
     {% if quick.unsorted %}
     <a href="/library?view=unsorted" class="chip">Unsorted · {{ quick.unsorted }}</a>
     {% endif %}

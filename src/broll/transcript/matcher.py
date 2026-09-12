@@ -67,7 +67,8 @@ wants a calm, slow-paced visual, not necessarily a clock. Narration about \
 "growth" rarely wants a chart.
 - Prefer clips whose mood and pace match the tone of the line.
 - Prefer clips long enough to cover the beat, but do not reject a good shot \
-just for being short.
+just for being short. A still photograph can hold any length, but it is a \
+static image on screen, so choose one only when it genuinely suits the line.
 - Give one line of reason per choice, addressed to the editor.
 - If none of the candidates genuinely works, set no_good_match and say in \
 missing_footage what should be shot instead. An honest gap is more useful than \
@@ -263,10 +264,14 @@ def _rerank_prompt(beat: Beat, candidates: list[SearchResult], count: int) -> st
             ) if value
         )
         mood = ", ".join(shot.mood)
+        length = (
+            "still photograph" if result.source.media_kind == "image"
+            else f"{shot.duration_s:.1f}s"
+        )
         lines.append(
             f"{index}. {shot.caption or 'no caption'} "
             f"[{facets}{'; mood: ' + mood if mood else ''}; "
-            f"{shot.duration_s:.1f}s]"
+            f"{length}]"
         )
     return "\n".join(lines)
 

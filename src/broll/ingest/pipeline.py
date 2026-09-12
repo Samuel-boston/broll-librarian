@@ -28,7 +28,7 @@ from .frames import best_frame, save_thumbnail
 from .hashing import content_hash
 from .probe import NotAVideoError, ProbeResult, probe
 from .scanner import DiscoveredFile
-from .shots import detect_shots, primary_index
+from .shots import DetectedShot, detect_shots, primary_index
 
 log = logging.getLogger(__name__)
 
@@ -128,13 +128,17 @@ class IngestPipeline:
             source.id, status="analysing", analysis_version=PROMPT_VERSION, error_message=None
         )
 
-        spans = await asyncio.to_thread(
-            detect_shots,
-            video,
-            meta.duration_s,
-            self.config.ingest.min_shot_length_s,
-            self.config.ingest.min_average_shot_length_s,
-        )
+        if meta.media_kind == "image":
+            # Nothing to detect: a still is one "shot" of no duration.
+            spans = [DetectedShot(index=0, start_s=0.0, end_s=0.0)]
+        else:
+            spans = await asyncio.to_thread(
+                detect_shots,
+                video,
+                meta.duration_s,
+                self.config.ingest.min_shot_length_s,
+                self.config.ingest.min_average_shot_length_s,
+            )
         primary = primary_index(spans)
         work_dir = self.config.temp_dir / f"src-{source.id[:8]}"
 
@@ -169,6 +173,7 @@ class IngestPipeline:
                 duration_s=span.duration_s,
                 width=meta.width,
                 height=meta.height,
+                media_kind=meta.media_kind,
                 fps=meta.fps,
                 shot_index=span.index,
                 shot_count=len(spans),
@@ -261,6 +266,7 @@ class IngestPipeline:
                 origin=discovered.origin,
                 origin_path=discovered.origin_path or str(video),
                 drive_file_id=discovered.drive_file_id,
+                media_kind=meta.media_kind,
                 duration_s=meta.duration_s,
                 width=meta.width,
                 height=meta.height,

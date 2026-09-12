@@ -47,7 +47,11 @@
             <p class="truncate text-sm">
               {% if loop.first %}<span class="tag tag-accent mr-1.5">on timeline</span>{% endif %}
               {{ suggestion.source.original_filename }}
-              <span class="mono text-[11px] text-faint">@{{ '%.1f'|format(suggestion.shot.start_s) }}s · {{ '%.1f'|format(suggestion.shot.duration_s) }}s</span>
+              {% if suggestion.source.media_kind == 'image' %}
+                <span class="tag">photo</span>
+              {% else %}
+                <span class="mono text-[11px] text-faint">@{{ '%.1f'|format(suggestion.shot.start_s) }}s · {{ '%.1f'|format(suggestion.shot.duration_s) }}s</span>
+              {% endif %}
               {% if suggestion.reused %}<span class="tag ml-1">reused</span>{% endif %}
             </p>
             <p class="mt-0.5 text-xs leading-relaxed text-muted">{{ suggestion.reason }}</p>

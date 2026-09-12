@@ -13,6 +13,7 @@ from ..analysis.schema import AnalysisResult
 SourceStatus = Literal["pending", "analysing", "indexed", "failed", "needs_review"]
 ShotStatus = Literal["pending", "indexed", "failed", "needs_review"]
 Origin = Literal["upload", "local", "drive"]
+MediaKind = Literal["video", "image"]
 
 
 class Workspace(BaseModel):
@@ -30,6 +31,7 @@ class Source(BaseModel):
     content_hash: str
     original_filename: str
     origin: Origin
+    media_kind: MediaKind = "video"
     origin_path: str | None = None
     drive_file_id: str | None = None
     drive_web_link: str | None = None

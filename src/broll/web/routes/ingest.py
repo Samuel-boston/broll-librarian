@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
 
-from ...ingest.scanner import VIDEO_SUFFIXES, DiscoveredFile, scan_local
+from ...ingest.scanner import DiscoveredFile, media_kind, scan_local
 from ...jobs.queue import enqueue_files, queue_stats
 from ..app import templates
 
@@ -45,7 +45,7 @@ async def upload(request: Request, files: list[UploadFile] = File(default=[])):
     try:
         for upload_file in files:
             name = Path(upload_file.filename or "clip").name
-            if Path(name).suffix.lower() not in VIDEO_SUFFIXES:
+            if media_kind(name) is None:
                 rejected.append(name)
                 continue
             target = _unique_path(state.config.staging_dir, name)

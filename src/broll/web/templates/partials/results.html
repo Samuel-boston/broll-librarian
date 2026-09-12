@@ -30,7 +30,11 @@
           <span class="absolute left-2.5 top-2.5 rounded-full bg-black/55 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur ring-1 ring-inset ring-white/15">{{ featured_name }}</span>
         {% endif %}
         <div class="absolute right-2.5 top-2.5">{% include "partials/star.html" %}</div>
-        <span class="mono absolute bottom-2.5 right-2.5 rounded bg-black/55 px-1.5 py-0.5 text-[11px] text-white/90 backdrop-blur">{{ '%.1f'|format(shot.duration_s) }}s</span>
+        {% if result.source.media_kind == 'image' %}
+          <span class="absolute bottom-2.5 right-2.5 rounded bg-black/55 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-white/90 backdrop-blur">Photo</span>
+        {% else %}
+          <span class="mono absolute bottom-2.5 right-2.5 rounded bg-black/55 px-1.5 py-0.5 text-[11px] text-white/90 backdrop-blur">{{ '%.1f'|format(shot.duration_s) }}s</span>
+        {% endif %}
         {% if shot.category %}
           <p class="absolute bottom-2.5 left-2.5 max-w-[65%] truncate text-[11px] font-medium text-white/85"
              title="{{ shot.category.replace('/', ' › ') }}">{{ shot.category.split('/')[-1] }}</p>
@@ -66,7 +70,7 @@
           {% endif %}
         </div>
 
-        <p class="mono truncate text-[11px] text-faint">{{ result.source.original_filename }} · @{{ result.timecode }}</p>
+        <p class="mono truncate text-[11px] text-faint">{{ result.source.original_filename }}{% if result.source.media_kind != 'image' %} · @{{ result.timecode }}{% endif %}</p>
 
         <div class="mt-auto flex items-center gap-3 border-t border-line-soft pt-2.5 text-xs">
           {% if result.drive_link %}

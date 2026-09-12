@@ -308,6 +308,7 @@ def plan_tree(
     shots: Sequence[ShotFacets],
     filename: str,
     config: TaxonomyConfig,
+    prefix: tuple[str, ...] = (),
 ) -> tuple[FolderPath, list[ShortcutPlan]]:
     """Where the real file lives, and which shortcuts point at it.
 
@@ -315,20 +316,24 @@ def plan_tree(
     browsing the client's structure will look in first. Shortcuts cover the
     rest: other shots' categories, secondary categories, and Top Picks for a
     starred shot. Nothing is ever shortcut into the folder the file is in.
+
+    ``prefix`` hangs the whole plan under a folder - "Videos" or "Images" when
+    the workspace splits its tree by media.
     """
     leaves = {path for path, _ in config.category_leaves()}
     primary = primary_shot(shots)
     home_category = primary.category if primary and primary.category in leaves else None
     home = (
-        FolderPath(tuple(home_category.split("/")))
+        FolderPath((*prefix, *home_category.split("/")))
         if home_category
-        else FolderPath((config.unsorted_folder,))
+        else FolderPath((*prefix, config.unsorted_folder))
     )
 
     plans: list[ShortcutPlan] = []
     seen: set[tuple[str, str]] = set()
 
     def add(parts, shot: ShotFacets) -> None:
+        parts = (*prefix, *parts)
         name = shortcut_name(filename, shot)
         key = ("/".join(parts), name)
         if key not in seen:
@@ -375,6 +380,13 @@ def render_guide(
         "arrow). Shortcuts take up no space and open the same file.",
         "",
     ]
+    if config.media_split:
+        lines += [
+            f"Video and photographs are kept apart at the top level: {config.video_folder_name} "
+            f"and {config.image_folder_name}. The folders inside each are identical, so the "
+            "same clip and the same photo are filed the same way.",
+            "",
+        ]
     if config.top_picks_folder:
         lines.append(f"{config.top_picks_folder} holds shortcuts to the strongest clips, chosen by hand.")
     lines += [

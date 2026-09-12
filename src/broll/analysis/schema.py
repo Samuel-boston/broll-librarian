@@ -531,6 +531,7 @@ class ShotContext(BaseModel):
     duration_s: float
     width: int
     height: int
+    media_kind: str = "video"   # "video" | "image"
     fps: float | None = None
     shot_index: int = 0
     shot_count: int = 1
@@ -543,6 +544,15 @@ class ShotContext(BaseModel):
     category_options: list[str] = Field(default_factory=list)
 
     def describe(self) -> str:
+        if self.media_kind == "image":
+            return (
+                f"Original filename: {self.source_filename}\n"
+                f"Media: a photograph - one still image, not a shot from a clip\n"
+                f"Resolution: {self.width}x{self.height}\n"
+                "Because it is a still there is no camera movement and no pace: "
+                "set camera_movement to static and pace to still. Everything else "
+                "is judged exactly as it would be for a clip."
+            )
         pos = (
             f"shot {self.shot_index + 1} of {self.shot_count} "
             f"(starts {self.start_s:.1f}s into the file)"

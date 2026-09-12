@@ -23,6 +23,7 @@ def _like_escape(value: str) -> str:
 
 
 class SearchFilters(BaseModel):
+    media_kind: list[str] = Field(default_factory=list)   # video | image
     duration_min_s: float | None = None
     duration_max_s: float | None = None
     shot_type: list[str] = Field(default_factory=list)
@@ -73,11 +74,15 @@ class SearchFilters(BaseModel):
                 )
                 params.extend(values)
 
+        in_clause("src.media_kind", self.media_kind)
+
+        # A photograph has no duration, and can be held on screen for as long as
+        # the edit needs, so a duration filter is about clips only.
         if self.duration_min_s is not None:
-            clauses.append("s.duration_s >= ?")
+            clauses.append("(s.duration_s >= ? OR src.media_kind = 'image')")
             params.append(self.duration_min_s)
         if self.duration_max_s is not None:
-            clauses.append("s.duration_s <= ?")
+            clauses.append("(s.duration_s <= ? OR src.media_kind = 'image')")
             params.append(self.duration_max_s)
 
         in_clause("s.shot_type", self.shot_type)

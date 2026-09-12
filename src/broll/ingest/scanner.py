@@ -14,8 +14,26 @@ from typing import Iterator, Literal
 VIDEO_SUFFIXES = {
     ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".mts", ".m2ts", ".mxf", ".wmv",
 }
+# Stills are footage too: the model already only ever sees extracted frames, so
+# a photograph is the same pipeline with the shot detection removed. HEIC is
+# read through ffmpeg (HEVC in a HEIF container), so no extra dependency.
+IMAGE_SUFFIXES = {
+    ".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".tif", ".tiff", ".avif", ".bmp",
+}
+MEDIA_SUFFIXES = VIDEO_SUFFIXES | IMAGE_SUFFIXES
 
 Origin = Literal["upload", "local", "drive"]
+MediaKind = Literal["video", "image"]
+
+
+def media_kind(name: str | Path) -> MediaKind | None:
+    """'video', 'image', or None for a file this library does not index."""
+    suffix = Path(name).suffix.lower()
+    if suffix in VIDEO_SUFFIXES:
+        return "video"
+    if suffix in IMAGE_SUFFIXES:
+        return "image"
+    return None
 
 
 @dataclass
@@ -36,12 +54,12 @@ class DiscoveredFile:
         }
 
 
-def is_video(path: Path) -> bool:
-    return path.is_file() and path.suffix.lower() in VIDEO_SUFFIXES
+def is_media(path: Path) -> bool:
+    return path.is_file() and media_kind(path) is not None
 
 
 def scan_local(path: Path, recursive: bool = True) -> list[DiscoveredFile]:
-    """Videos at a local path. Files here are never moved, copied or deleted."""
+    """Clips and stills at a local path. Nothing here is moved, copied or deleted."""
     if path.is_file():
         candidates: Iterator[Path] = iter([path])
     else:
@@ -51,7 +69,7 @@ def scan_local(path: Path, recursive: bool = True) -> list[DiscoveredFile]:
             origin="local", path=p.resolve(), filename=p.name, origin_path=str(p.resolve())
         )
         for p in sorted(candidates)
-        if is_video(p)
+        if is_media(p)
     ]
 
 
@@ -73,7 +91,7 @@ def stage_upload(src: Path, staging_dir: Path) -> DiscoveredFile:
 
 
 def scan_drive_folder(client, folder_id: str, recursive: bool = True) -> list[DiscoveredFile]:
-    """Videos already in a Drive folder.
+    """Clips and stills already in a Drive folder.
 
     Nothing here is downloaded: the pipeline fetches bytes only when it reaches
     a file it actually has to analyse.
@@ -94,7 +112,7 @@ def scan_drive_folder(client, folder_id: str, recursive: bool = True) -> list[Di
                 continue
             if entry.is_shortcut:
                 continue  # a shortcut is another view of a file we already saw
-            if Path(entry.name).suffix.lower() not in VIDEO_SUFFIXES:
+            if media_kind(entry.name) is None:
                 continue
             found.append(
                 DiscoveredFile(

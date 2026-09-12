@@ -30,7 +30,7 @@ from .schema import (
     TimeOfDay,
 )
 
-PROMPT_VERSION = "1.2.0"
+PROMPT_VERSION = "1.3.0"
 
 SYSTEM_PROMPT = """\
 You are a video editor's assistant cataloguing B-roll footage. You are shown a \

@@ -61,16 +61,21 @@ def frame_stats(path: Path) -> FrameStats:
     return FrameStats(mean=mean, stddev=stddev)
 
 
-def _extract_one(video: Path, timestamp: float, out_path: Path, max_edge: int) -> bool:
+def _extract_one(
+    video: Path, timestamp: float, out_path: Path, max_edge: int, seek: bool = True
+) -> bool:
     ffmpeg, _ = check_ffmpeg()
     scale = (
         f"scale='if(gt(iw,ih),min({max_edge},iw),-2)':"
         f"'if(gt(iw,ih),-2,min({max_edge},ih))'"
     )
+    # A still has exactly one frame, and seeking - even to 0 - lands past it:
+    # ffmpeg then exits 0 having written nothing. So don't seek into a still.
+    seek_args = ["-ss", f"{max(timestamp, 0):.3f}"] if seek else []
     proc = subprocess.run(
         [
             ffmpeg, "-nostdin", "-loglevel", "error",
-            "-ss", f"{max(timestamp, 0):.3f}", "-i", str(video),
+            *seek_args, "-i", str(video),
             "-frames:v", "1", "-vf", scale, "-q:v", "3", "-y", str(out_path),
         ],
         capture_output=True, text=True,
@@ -98,6 +103,7 @@ def extract_frames(
     duration = duration_s or 0.0
     positions = _positions(count)
     kept: list[Path] = []
+    seek = duration > 0
 
     for index, fraction in enumerate(positions):
         base = start_s + (duration * fraction if duration else 0.0)
@@ -109,7 +115,7 @@ def extract_frames(
             if duration and not (start_s <= timestamp <= start_s + duration):
                 continue
             candidate = out_dir / f"{prefix}_{index:02d}_{attempt}.jpg"
-            if not _extract_one(video, timestamp, candidate, max_edge):
+            if not _extract_one(video, timestamp, candidate, max_edge, seek):
                 continue
             stats = frame_stats(candidate)
             if stats.usable:

@@ -456,7 +456,7 @@ class Store:
         """Every organised shot, newest first - the raw material for browsing."""
         rows = self.conn.execute(
             """SELECT s.id, s.category, s.secondary_categories_json, s.thumbnail_path,
-                      s.top_pick, s.featured_person
+                      s.top_pick, s.featured_person, src.media_kind
                FROM shots s JOIN sources src ON src.id = s.source_id
                WHERE s.workspace_id = ? AND s.status IN ('indexed', 'needs_review')
                ORDER BY src.created_at DESC, s.shot_index""",
@@ -470,6 +470,7 @@ class Store:
                 "has_thumbnail": bool(r["thumbnail_path"]),
                 "top_pick": bool(r["top_pick"]),
                 "featured": bool(r["featured_person"]),
+                "media_kind": r["media_kind"],
             }
             for r in rows
         ]

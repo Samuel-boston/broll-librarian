@@ -107,6 +107,11 @@ taxonomy:
   unsorted_folder: "_Unsorted"
   allow_new_folders: true
   filename_template: "{leaf}_{action}_{emotion}"
+  # Photographs and clips never share a folder: the same tree exists
+  # under both Videos/ and Images/.
+  media_split: true
+  video_folder_name: Videos
+  image_folder_name: Images
   tree:
     - name: "00_START HERE"
       description: "Naming format, folder guide and emotion list."

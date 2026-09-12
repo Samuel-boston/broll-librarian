@@ -48,7 +48,6 @@ app = typer.Typer(
 )
 
 WORKSPACE_ENV = "BROLL_WORKSPACE"
-VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".mts", ".mxf", ".wmv"}
 
 
 def _echo(message: str, err: bool = False) -> None:
@@ -225,6 +224,7 @@ def _single_shot_context(path: Path, meta) -> ShotContext:
         duration_s=meta.duration_s,
         width=meta.width,
         height=meta.height,
+        media_kind=meta.media_kind,
         fps=meta.fps,
         shot_index=0,
         shot_count=1,
