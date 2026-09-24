@@ -363,6 +363,41 @@ broll organise --dry-run          # show what would change
 broll reorganise                  # rebuild the tree from the database
 ```
 
+## Connecting to the Content Ops dashboard
+
+If the client also uses the Content Ops dashboard, the library's Footage index
+(Library > Footage index) can fill by itself. The librarian keeps its working
+index in SQLite and mirrors it into the dashboard's Supabase project, so it
+works the same whether the librarian runs on a Mac or on a server.
+
+One-time setup, on the machine that runs the librarian:
+
+```bash
+broll connect-dashboard
+```
+
+It asks for the dashboard's Supabase **Project URL** and **service_role** key
+(Supabase > Project Settings > API; the key is typed hidden). It checks both,
+saves them, and sends the first sync. The same form is under **Settings >
+Content Ops dashboard**. For a headless server, set `DASHBOARD_SUPABASE_URL`
+and `DASHBOARD_SUPABASE_KEY` in the environment and run `broll connect-dashboard`
+once.
+
+After that nothing else needs running. `broll serve` pushes changes every
+minute (set `dashboard.interval_s` in the workspace config to change it), and
+`broll work` pushes when it finishes a run. Only shots that changed are sent,
+thumbnails are uploaded once, and shots removed from the library are removed
+from the dashboard. Video files are never uploaded: the dashboard holds the
+metadata, a thumbnail and the Drive link.
+
+`broll sync` pushes immediately; `broll sync --force` re-sends everything;
+`broll doctor` reports whether the connection works. If it fails, the message
+says why (wrong key, or the dashboard database is missing its `library_shots`
+table - run the dashboard's `supabase/setup_all.sql`).
+
+The service_role key is stored only in `BROLL_HOME/.env` (owner-only), like the
+provider keys.
+
 ## Google Drive setup (needed from M3)
 
 This is the biggest onboarding hurdle, so it gets a full walkthrough.
@@ -493,6 +528,8 @@ Premiere licence and a synced Drive mount.
 | Command | What it does |
 |---|---|
 | `broll init --name X --provider gemini` | Create a workspace |
+| `broll connect-dashboard` | Connect to the Content Ops dashboard and sync (asks for the key, hidden) |
+| `broll sync` | Push the index to the dashboard now (`--force` re-sends everything) |
 | `broll doctor` | Check ffmpeg, SQLite features, embeddings, credentials |
 | `broll analyse <clip>` | Analyse one clip, print JSON, write nothing |
 | `broll index <path> [--dry-run] [--organise]` | Queue footage and work the queue |

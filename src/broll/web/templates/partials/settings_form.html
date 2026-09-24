@@ -103,6 +103,29 @@
       </p>
     </form>
 
+    <form hx-post="/settings/dashboard" hx-target="#settings" hx-swap="outerHTML" class="card space-y-4 p-6">
+      <h2 class="text-sm font-semibold text-white">Content Ops dashboard</h2>
+      <p class="text-xs leading-relaxed text-faint">
+        Connect once and the dashboard's Library &rarr; Footage index stays current by itself,
+        wherever this app runs. Both values are in Supabase &rarr; Project Settings &rarr; API.
+      </p>
+      <p class="text-sm">
+        {% if dashboard.state == 'ok' %}<span class="text-emerald">Connected.</span> <span class="text-muted">{{ dashboard.message }}</span>
+        {% elif dashboard.state == 'error' %}<span class="text-amber">Problem:</span> <span class="text-muted">{{ dashboard.message }}</span>
+        {% elif dashboard.connected %}<span class="text-muted">Connected. Waiting for the first sync...</span>
+        {% else %}<span class="text-amber">Not connected.</span>{% endif %}
+      </p>
+      <label class="block">
+        <span class="label">Project URL</span>
+        <input name="supabase_url" value="{{ workspace.dashboard.supabase_url or '' }}" placeholder="https://xxxxxxxx.supabase.co" class="input mt-1.5">
+      </label>
+      <label class="block">
+        <span class="label">service_role key {{ '(already saved - leave empty to keep it)' if dashboard.connected else '' }}</span>
+        <input name="service_key" type="password" autocomplete="off" placeholder="paste the service_role key" class="input mt-1.5">
+      </label>
+      <button class="btn">{{ 'Save and sync now' if dashboard.connected else 'Connect' }}</button>
+    </form>
+
     <div class="card space-y-2 p-6 text-sm">
       <h2 class="text-sm font-semibold text-white">Status</h2>
       <p class="text-muted">Drive: <span class="{{ 'text-emerald' if drive_connected else 'text-amber' }}">

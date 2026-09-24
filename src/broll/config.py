@@ -58,6 +58,23 @@ def load_env() -> None:
     load_dotenv(broll_home() / ".env", override=False)
 
 
+def write_env_var(name: str, value: str) -> Path:
+    """Set NAME=value in BROLL_HOME/.env (0600) and in this process."""
+    path = broll_home() / ".env"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = path.read_text().splitlines() if path.exists() else []
+    for index, line in enumerate(lines):
+        if line.split("=", 1)[0].strip() == name:
+            lines[index] = f"{name}={value}"
+            break
+    else:
+        lines.append(f"{name}={value}")
+    path.write_text("\n".join(lines) + "\n")
+    path.chmod(0o600)
+    os.environ[name] = value
+    return path
+
+
 # --------------------------------------------------------------------------
 # Config models
 # --------------------------------------------------------------------------
@@ -260,6 +277,19 @@ class ClientProfile(BaseModel):
     emotions: list[str] = Field(default_factory=list)
 
 
+class DashboardConfig(BaseModel):
+    """Optional link to the Content Ops dashboard's Supabase project.
+
+    The service key is a secret, so it lives in the environment / .env
+    (DASHBOARD_SUPABASE_KEY), never here.
+    """
+
+    enabled: bool = False
+    supabase_url: str | None = None
+    # How often the running app pushes changes, in seconds.
+    interval_s: int = 60
+
+
 class WorkspaceConfig(BaseModel):
     id: str
     name: str
@@ -269,6 +299,7 @@ class WorkspaceConfig(BaseModel):
     taxonomy: TaxonomyConfig = Field(default_factory=TaxonomyConfig)
     ingest: IngestConfig = Field(default_factory=IngestConfig)
     transcript: TranscriptConfig = Field(default_factory=TranscriptConfig)
+    dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
 
     drive_root_folder_id: str | None = None
     drive_root_folder_name: str = "B-Roll"

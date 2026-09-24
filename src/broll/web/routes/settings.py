@@ -15,8 +15,9 @@ from fastapi.responses import HTMLResponse
 
 from ...analysis.embedder import local_embeddings_available
 from ...analysis.schema import VOCABULARIES
-from ...config import PROVIDER_KEY_ENV, broll_home
+from ...config import PROVIDER_KEY_ENV, broll_home, write_env_var
 from ...analysis.providers.registry import VISION_PROVIDERS
+from ...sync.dashboard import is_connected
 from ..app import templates
 
 router = APIRouter()
@@ -91,6 +92,55 @@ async def save_key(request: Request, provider: str = Form(...), api_key: str = F
     )
 
 
+@router.post("/settings/dashboard", response_class=HTMLResponse)
+async def save_dashboard(request: Request, supabase_url: str = Form(""), service_key: str = Form("")):
+    """Connect to the Content Ops dashboard's Supabase and sync straight away."""
+    import asyncio
+
+    from ...sync.dashboard import KEY_ENV, DashboardSync, DashboardSyncError
+
+    state = request.app.state.broll
+    config = state.config
+    url = supabase_url.strip().rstrip("/")
+    key = service_key.strip() or os.environ.get(KEY_ENV, "")
+    if not url or not key:
+        return templates.TemplateResponse(
+            request=request, name="partials/settings_form.html",
+            context=_context(request, message="Both the Project URL and the service_role key are needed."),
+        )
+
+    previous = (config.dashboard.enabled, config.dashboard.supabase_url, os.environ.get(KEY_ENV))
+    config.dashboard.enabled = True
+    config.dashboard.supabase_url = url
+    os.environ[KEY_ENV] = key
+    sync = DashboardSync(config)
+    try:
+        await asyncio.to_thread(sync.check)
+    except DashboardSyncError as exc:
+        config.dashboard.enabled, config.dashboard.supabase_url = previous[0], previous[1]
+        if previous[2] is None:
+            os.environ.pop(KEY_ENV, None)
+        else:
+            os.environ[KEY_ENV] = previous[2]
+        return templates.TemplateResponse(
+            request=request, name="partials/settings_form.html",
+            context=_context(request, message=f"Not connected: {exc}"),
+        )
+
+    config.save()
+    write_env_var(KEY_ENV, key)
+    try:
+        result = await asyncio.to_thread(sync.run)
+        message = f"Connected. {result.summary()}"
+        state.sync_status = {"state": "ok", "message": result.summary(), "at": None}
+    except DashboardSyncError as exc:
+        message = f"Connected, but the first sync failed: {exc}"
+    return templates.TemplateResponse(
+        request=request, name="partials/settings_form.html",
+        context=_context(request, message=message),
+    )
+
+
 @router.post("/settings/vocab", response_class=HTMLResponse)
 async def promote_term(request: Request, field: str = Form(...), term: str = Form(...)):
     state = request.app.state.broll
@@ -118,20 +168,7 @@ async def promote_term(request: Request, field: str = Form(...), term: str = For
 
 
 def _write_env(name: str, value: str) -> Path:
-    path = broll_home() / ".env"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lines = path.read_text().splitlines() if path.exists() else []
-    replaced = False
-    for index, line in enumerate(lines):
-        if line.split("=", 1)[0].strip() == name:
-            lines[index] = f"{name}={value}"
-            replaced = True
-            break
-    if not replaced:
-        lines.append(f"{name}={value}")
-    path.write_text("\n".join(lines) + "\n")
-    path.chmod(0o600)
-    return path
+    return write_env_var(name, value)
 
 
 def _context(request: Request, message: str | None = None) -> dict:
@@ -164,4 +201,5 @@ def _context(request: Request, message: str | None = None) -> dict:
         "candidates": candidates,
         "vocabularies": sorted(VOCABULARIES),
         "env_path": broll_home() / ".env",
+        "dashboard": {**state.sync_status, "connected": is_connected(config)},
     }

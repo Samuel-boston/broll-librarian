@@ -42,6 +42,8 @@ class AppState:
         self.worker_task: asyncio.Task | None = None
         self.worker_store: Store | None = None
         self.drive_organise = None  # shared by the worker and the Top Picks star
+        self.sync_task: asyncio.Task | None = None
+        self.sync_status: dict[str, object] = {"state": "off", "message": "", "at": None}
         # Transcript runs live in memory: a run is cheap to redo, and
         # persisting a whole timeline would be a schema for one screen.
         self.runs: dict[str, object] = {}
@@ -69,7 +71,42 @@ class AppState:
         self.worker = Worker(self.config, self.worker_store, pipeline)
         self.worker_task = asyncio.create_task(self.worker.run(drain=False))
 
+    def start_dashboard_sync(self) -> None:
+        """Keep the dashboard's Footage index current, for as long as the app runs."""
+        if self.sync_task is None:
+            self.sync_task = asyncio.create_task(self._sync_loop())
+
+    async def _sync_loop(self) -> None:
+        from datetime import UTC, datetime
+
+        from ..sync.dashboard import DashboardSync, DashboardSyncError, is_connected
+
+        last_error = None
+        while True:
+            interval = max(15, self.config.dashboard.interval_s)
+            if is_connected(self.config):
+                try:
+                    result = await asyncio.to_thread(DashboardSync(self.config).run)
+                    self.sync_status = {"state": "ok", "message": result.summary(),
+                                        "at": datetime.now(UTC).isoformat(timespec="seconds")}
+                    last_error = None
+                except DashboardSyncError as exc:
+                    self.sync_status = {"state": "error", "message": str(exc),
+                                        "at": datetime.now(UTC).isoformat(timespec="seconds")}
+                    if str(exc) != last_error:  # say it once, not every minute
+                        log.warning("dashboard sync: %s", exc)
+                        last_error = str(exc)
+                except Exception as exc:  # noqa: BLE001 - a sync problem must not stop the app
+                    self.sync_status = {"state": "error", "message": f"{type(exc).__name__}: {exc}",
+                                        "at": datetime.now(UTC).isoformat(timespec="seconds")}
+                    log.warning("dashboard sync failed: %s", exc)
+            else:
+                self.sync_status = {"state": "off", "message": "", "at": None}
+            await asyncio.sleep(interval)
+
     async def stop_worker(self) -> None:
+        if self.sync_task:
+            self.sync_task.cancel()
         if self.worker:
             self.worker.stop()
         if self.worker_task:
@@ -88,6 +125,7 @@ def create_app(config: WorkspaceConfig, run_worker: bool = True) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await state.start_worker()
+        state.start_dashboard_sync()
         try:
             yield
         finally:

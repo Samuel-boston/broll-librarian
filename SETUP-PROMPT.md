@@ -54,6 +54,15 @@ Read "What only you can do" at the bottom first, so you know what is coming.
 >    each one is captioned, tagged, filed into the right Drive folder, and comes
 >    back from a search. Show me the result.
 >
+> 9. If I also use the Content Ops dashboard, connect the two so its Library >
+>    Footage index fills by itself. Ask me for the dashboard's Supabase Project
+>    URL and tell me to run `broll connect-dashboard` in my own terminal, where
+>    it asks for the service_role key with the input hidden - do not ask me to
+>    paste that key into this chat and do not read it. When it prints
+>    "Connected", run `broll doctor` and confirm it says the dashboard is
+>    connected. After that nothing else needs running: the app pushes changes
+>    to the dashboard every minute while it is running.
+>
 > Tell me at each stage what it is doing and what it costs. If something fails,
 > show me the actual error rather than guessing.
 
@@ -68,6 +77,9 @@ Claude cannot do these, by design, and will stop and ask:
 * The final "Allow" on any Google permissions screen.
 * Any bot check or CAPTCHA.
 * Pasting the API key itself - Claude will never handle the value.
+* Typing the dashboard's service_role key into `broll connect-dashboard` (or
+  into Settings > Content Ops dashboard). It is a master key for the dashboard's
+  database.
 
 Everything else - installing, configuring, testing, explaining - it can do.
 

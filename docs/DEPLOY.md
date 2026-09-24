@@ -79,3 +79,11 @@ whenever nothing is being indexed. The things to watch:
   `ingest.concurrency` if it crowds out whatever else lives on the box.
 * Disk for `$BROLL_HOME` - the database and thumbnails, a few MB per hundred
   clips. Staging is transient.
+
+## Connecting a server install to the Content Ops dashboard
+
+Run `broll connect-dashboard` once on the server (or set `DASHBOARD_SUPABASE_URL`
+and `DASHBOARD_SUPABASE_KEY` in the service's environment first). The `broll serve`
+process then pushes the index to the dashboard's Supabase every minute. Outbound
+HTTPS to the Supabase project is all it needs. Use `broll serve`, not a bare
+`broll work --follow`, if the sync should keep running.

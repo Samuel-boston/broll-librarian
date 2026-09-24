@@ -210,6 +210,18 @@ def doctor(
         variables = " or ".join(cfg.PROVIDER_KEY_ENV.get(provider, ()))
         typer.secho(f"[fail] no API key for {provider}: set {variables}", fg=typer.colors.RED)
 
+    from .sync.dashboard import DashboardSync, DashboardSyncError, is_connected
+
+    if is_connected(workspace_config):
+        try:
+            DashboardSync(workspace_config).check()
+            _echo("[ok]   dashboard connected - the Footage index updates automatically")
+        except DashboardSyncError as exc:
+            ok = False
+            typer.secho(f"[fail] dashboard: {exc}", fg=typer.colors.RED)
+    else:
+        _echo("[info] dashboard not connected (optional): run `broll connect-dashboard`")
+
     raise typer.Exit(code=0 if ok else 1)
 
 
@@ -372,6 +384,65 @@ def index(
         store.close()
 
 
+@app.command("connect-dashboard")
+def connect_dashboard(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    url: Optional[str] = typer.Option(None, "--url", help="The dashboard's Supabase Project URL."),
+    key: Optional[str] = typer.Option(
+        None, "--key", help="The service_role key. Leave out to be asked (input is hidden)."),
+) -> None:
+    """Connect this library to the Content Ops dashboard, then sync it.
+
+    Once connected, the running app keeps the dashboard's Footage index current
+    on its own. Nothing else needs to be run.
+    """
+    from .sync.dashboard import KEY_ENV, URL_ENV, DashboardSync, DashboardSyncError
+
+    workspace_config = resolve_workspace(workspace)
+    url = (url or os.environ.get(URL_ENV) or workspace_config.dashboard.supabase_url
+           or typer.prompt("Dashboard Supabase Project URL (https://xxxx.supabase.co)")).strip().rstrip("/")
+    key = (key or os.environ.get(KEY_ENV)
+           or typer.prompt("Dashboard service_role key (hidden)", hide_input=True)).strip()
+
+    workspace_config.dashboard.enabled = True
+    workspace_config.dashboard.supabase_url = url
+    os.environ[KEY_ENV] = key
+    sync = DashboardSync(workspace_config)
+    try:
+        sync.check()
+    except DashboardSyncError as exc:
+        _fail(f"Not connected: {exc}")
+
+    workspace_config.save()
+    cfg.write_env_var(KEY_ENV, key)
+    _echo("Connected. First sync...")
+    try:
+        _echo(sync.run().summary())
+    except DashboardSyncError as exc:
+        _fail(f"Connected, but the first sync failed: {exc}")
+    _echo("From now on the running app keeps the dashboard up to date by itself.")
+
+
+@app.command()
+def sync(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    force: bool = typer.Option(False, "--force", help="Send everything again."),
+    no_prune: bool = typer.Option(False, "--no-prune",
+                                  help="Keep dashboard rows for shots the library no longer has."),
+) -> None:
+    """Push the index to the dashboard now (the running app does this automatically)."""
+    from .sync.dashboard import DashboardSync, DashboardSyncError
+
+    workspace_config = resolve_workspace(workspace)
+    try:
+        result = DashboardSync(workspace_config).run(prune=not no_prune, force=force)
+    except DashboardSyncError as exc:
+        _fail(str(exc))
+    _echo(result.summary())
+    for message in result.errors:
+        typer.secho(f"  {message}", fg=typer.colors.YELLOW)
+
+
 @app.command()
 def work(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
@@ -431,6 +502,19 @@ def _run_worker(workspace_config, store, concurrency: int | None, drain: bool = 
         f"{stats.deduped} deduped, ${stats.cost_usd:.4f} estimated, "
         f"{stats.elapsed_s:.1f}s elapsed"
     )
+    _sync_dashboard_quietly(workspace_config)
+
+
+def _sync_dashboard_quietly(workspace_config) -> None:
+    """Push the index to the dashboard when connected. A failure never fails the run."""
+    from .sync.dashboard import DashboardSync, DashboardSyncError, is_connected
+
+    if not is_connected(workspace_config):
+        return
+    try:
+        _echo(DashboardSync(workspace_config).run().summary())
+    except DashboardSyncError as exc:
+        typer.secho(f"  Dashboard sync failed: {exc}", fg=typer.colors.YELLOW)
 
 
 def _load_embedder(workspace_config, required: bool = False):
