@@ -24,6 +24,12 @@ HEIC is read through ffmpeg, so there is nothing extra to install.
 
 ---
 
+**Setting it up for a client?** [SETUP-PROMPT.md](SETUP-PROMPT.md) is a prompt
+to hand to their Claude, which does the install and the Google setup with them.
+[docs/DEPLOY.md](docs/DEPLOY.md) covers running it on a server.
+
+---
+
 ## Status
 
 | Milestone | Scope | State |
