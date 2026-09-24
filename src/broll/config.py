@@ -221,6 +221,10 @@ class IngestConfig(BaseModel):
     min_average_shot_length_s: float = 2.0
     concurrency: int = 4
     drive_concurrency: int = 2
+    # Cap on vision requests per minute, 0 for no cap. Free Gemini keys allow
+    # about 5 a minute; without a cap the workers are answered with 429s and
+    # 503s that look like the model failing.
+    requests_per_minute: float = 0.0
     # Send a shot to the review queue when the model's own confidence is below
     # this. Clean footage comes back at 0.95+, so anything under this really is
     # the model hedging - and a wrong caption is worse than a minute of review.

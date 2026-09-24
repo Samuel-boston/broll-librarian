@@ -18,7 +18,8 @@ from ..db.models import Job
 from ..db.store import Store
 from ..ingest.pipeline import IngestPipeline, IngestResult
 from ..ingest.scanner import DiscoveredFile
-from .queue import KIND_INDEX_SOURCE, MAX_ATTEMPTS, backoff_delay
+from ..analysis.providers.base import TransientProviderError, classify_error
+from .queue import KIND_INDEX_SOURCE, backoff_delay, max_attempts
 
 log = logging.getLogger(__name__)
 
@@ -107,11 +108,17 @@ class Worker:
                 self.store.release_job(job.id, "worker stopped mid-job")
                 raise
             except Exception as exc:  # noqa: BLE001 - the queue decides what is fatal
-                self._handle_failure(job, f"{type(exc).__name__}: {exc}")
+                self._handle_failure(
+                    job, f"{type(exc).__name__}: {exc}",
+                    transient=isinstance(exc, TransientProviderError),
+                )
                 return
 
             if result.error and result.status == "failed":
-                self._handle_failure(job, result.error)
+                self._handle_failure(
+                    job, result.error,
+                    transient=classify_error(result.error) is TransientProviderError,
+                )
                 return
 
             self.store.finish_job(job.id, "done", cost=result.cost_usd)
@@ -139,13 +146,14 @@ class Worker:
             overwrite_corrections=bool(payload.get("overwrite_corrections")),
         )
 
-    def _handle_failure(self, job: Job, error: str) -> None:
-        if job.attempts < MAX_ATTEMPTS:
-            delay = backoff_delay(job.attempts)
+    def _handle_failure(self, job: Job, error: str, transient: bool = False) -> None:
+        limit = max_attempts(transient)
+        if job.attempts < limit:
+            delay = backoff_delay(job.attempts, transient)
             self.store.retry_job(job.id, error, delay)
             self.stats.retried += 1
-            log.warning("job %s failed (attempt %d), retrying in %.0fs: %s",
-                        job.id[:8], job.attempts, delay, error)
+            log.warning("job %s failed (attempt %d of %d), retrying in %.0fs: %s",
+                        job.id[:8], job.attempts, limit, delay, error)
             self._notify("retrying", job, None)
             return
         self.store.finish_job(job.id, "failed", error=error)

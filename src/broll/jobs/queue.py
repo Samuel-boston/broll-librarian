@@ -8,6 +8,7 @@ indexed.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 
 from ..db.models import Job
@@ -17,8 +18,13 @@ from ..ingest.scanner import DiscoveredFile
 KIND_INDEX_SOURCE = "index_source"
 KIND_REEMBED = "reembed_shot"
 
+# A file the model cannot read is worth three tries. A model that answers 503
+# is worth waiting out: the spike lasts minutes, and the old budget - three
+# attempts, 5s then 10s apart - gave up on it inside twenty seconds.
 MAX_ATTEMPTS = 3
+MAX_TRANSIENT_ATTEMPTS = 8
 BACKOFF_BASE_S = 5.0
+TRANSIENT_BACKOFF_BASE_S = 20.0
 BACKOFF_CAP_S = 900.0
 
 
@@ -71,8 +77,15 @@ def _pending_paths(store: Store) -> set[str]:
     return {(r["p"] or r["f"]) for r in rows if (r["p"] or r["f"])}
 
 
-def backoff_delay(attempts: int) -> float:
-    return min(BACKOFF_BASE_S * (2 ** max(0, attempts - 1)), BACKOFF_CAP_S)
+def max_attempts(transient: bool) -> int:
+    return MAX_TRANSIENT_ATTEMPTS if transient else MAX_ATTEMPTS
+
+
+def backoff_delay(attempts: int, transient: bool = False) -> float:
+    """Exponential, with jitter so parallel workers do not retry in lockstep."""
+    base = TRANSIENT_BACKOFF_BASE_S if transient else BACKOFF_BASE_S
+    delay = min(base * (2 ** max(0, attempts - 1)), BACKOFF_CAP_S)
+    return delay * random.uniform(0.8, 1.2)
 
 
 def queue_stats(store: Store) -> QueueStats:

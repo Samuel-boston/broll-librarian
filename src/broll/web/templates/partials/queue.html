@@ -21,6 +21,11 @@
       <dt class="text-muted">Cost so far</dt><dd class="mono text-right">${{ '%.4f'|format(cost_so_far) }}</dd>
       <dt class="text-muted">Est. remaining</dt><dd class="mono text-right">${{ '%.4f'|format(cost_remaining) }}</dd>
     </dl>
+    {% if stats.failed %}
+    <button class="btn btn-sm mt-4 w-full" hx-post="/ingest/retry" hx-target="#queue" hx-swap="outerHTML">
+      Retry {{ stats.failed }} failed job(s)
+    </button>
+    {% endif %}
   </div>
 
   <div class="card overflow-hidden">

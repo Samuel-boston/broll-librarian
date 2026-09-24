@@ -43,6 +43,14 @@
                value="{{ workspace.ingest.concurrency }}" class="input mt-1.5">
       </label>
       <label class="block">
+        <span class="label">Requests per minute</span>
+        <input name="requests_per_minute" type="number" step="1" min="0"
+               value="{{ workspace.ingest.requests_per_minute }}" class="input mt-1.5">
+        <span class="mt-1.5 block text-[11px] text-faint">
+          0 = no cap. A free Gemini key allows about 5 a minute.
+        </span>
+      </label>
+      <label class="block">
         <span class="label">Review below confidence</span>
         <input name="review_below_confidence" type="number" step="0.05" min="0" max="1"
                value="{{ workspace.ingest.review_below_confidence }}" class="input mt-1.5">

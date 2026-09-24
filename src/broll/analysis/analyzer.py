@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from ..config import WorkspaceConfig
 from ..ingest.frames import extract_frames, extract_still
+from .limiter import RateLimiter
 from .prompt import PROMPT_VERSION, render_client_context
 from .providers.base import ProviderError, TransientProviderError, VisionProvider
 from .providers.registry import get_vision_provider
@@ -89,6 +90,7 @@ class Analyzer:
     def __init__(self, config: WorkspaceConfig, provider: VisionProvider | None = None):
         self.config = config
         self.provider = provider or get_vision_provider(config)
+        self.limiter = RateLimiter(config.ingest.requests_per_minute)
 
         self.new_folders: list[str] = []
         self._load_tree()
@@ -213,6 +215,9 @@ class Analyzer:
 
         for attempt in (1, 2):
             try:
+                waited = await self.limiter.acquire()
+                if waited > 1:
+                    log.debug("held %.1fs for the request cap", waited)
                 result = await self.provider.analyse(frames, context, retry_error)
             except ValidationError as exc:
                 retry_error = _validation_summary(exc)

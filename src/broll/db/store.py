@@ -633,6 +633,47 @@ class Store:
             (error, f"+{int(delay_s)} seconds", self.workspace_id, job_id),
         )
 
+    def requeue_failed_jobs(self) -> int:
+        """Put failed jobs back in the queue with a fresh attempt budget."""
+        cursor = self.conn.execute(
+            """UPDATE jobs SET status = 'queued', attempts = 0, not_before = NULL
+               WHERE workspace_id = ? AND status = 'failed'""",
+            (self.workspace_id,),
+        )
+        return cursor.rowcount
+
+    def clear_library(self) -> dict[str, int]:
+        """Delete every source, shot, job and vector in this workspace.
+
+        Local only: nothing in Drive is touched, so files already filed there
+        stay exactly where they are.
+        """
+        counts = {
+            "sources": self.conn.execute(
+                "SELECT COUNT(*) FROM sources WHERE workspace_id = ?", (self.workspace_id,)
+            ).fetchone()[0],
+            "shots": self.conn.execute(
+                "SELECT COUNT(*) FROM shots WHERE workspace_id = ?", (self.workspace_id,)
+            ).fetchone()[0],
+            "jobs": self.conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE workspace_id = ?", (self.workspace_id,)
+            ).fetchone()[0],
+        }
+        for table in ("shot_tags", "drive_shortcuts", "vocabulary_candidates",
+                      "jobs", "shots", "sources"):
+            if table == "shot_tags":
+                self.conn.execute(
+                    """DELETE FROM shot_tags WHERE shot_id IN
+                       (SELECT id FROM shots WHERE workspace_id = ?)""",
+                    (self.workspace_id,),
+                )
+                continue
+            self.conn.execute(f"DELETE FROM {table} WHERE workspace_id = ?", (self.workspace_id,))
+        counts["vectors"] = self.vectors.count()
+        self.vectors.rebuild()
+        self.conn.commit()
+        return counts
+
     def reset_stale_jobs(self) -> int:
         """Requeue jobs left 'running' by a worker that is no longer alive.
 

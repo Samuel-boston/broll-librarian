@@ -41,6 +41,7 @@ async def save_settings(
     max_folders_per_level: int = Form(40),
     words_per_minute: int = Form(150),
     concurrency: int = Form(4),
+    requests_per_minute: float = Form(0.0),
     review_below_confidence: float = Form(0.7),
 ):
     state = request.app.state.broll
@@ -54,6 +55,7 @@ async def save_settings(
     config.taxonomy.max_folders_per_level = max(1, max_folders_per_level)
     config.transcript.words_per_minute = max(30, words_per_minute)
     config.ingest.concurrency = max(1, concurrency)
+    config.ingest.requests_per_minute = max(0.0, requests_per_minute)
     config.ingest.review_below_confidence = min(1.0, max(0.0, review_below_confidence))
     config.save()
 

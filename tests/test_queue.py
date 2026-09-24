@@ -12,7 +12,7 @@ import pytest
 
 from broll.ingest.pipeline import IngestPipeline
 from broll.ingest.scanner import scan_local
-from broll.jobs.queue import backoff_delay, enqueue_files, queue_stats
+from broll.jobs.queue import backoff_delay, enqueue_files, max_attempts, queue_stats
 from broll.jobs.worker import Worker
 from tests.conftest import CLIP_DIR
 
@@ -156,7 +156,17 @@ def test_failed_jobs_retry_with_backoff_then_give_up(store, workspace, monkeypat
     "attempts,expected", [(1, 5.0), (2, 10.0), (3, 20.0), (12, 900.0)]
 )
 def test_backoff_is_exponential_and_capped(attempts, expected):
-    assert backoff_delay(attempts) == expected
+    # Jittered by +/-20% so parallel workers do not all retry on the same tick.
+    assert 0.8 * expected <= backoff_delay(attempts) <= 1.2 * expected
+
+
+@pytest.mark.parametrize(
+    "attempts,expected", [(1, 20.0), (2, 40.0), (3, 80.0), (12, 900.0)]
+)
+def test_a_busy_model_is_waited_out_for_far_longer(attempts, expected):
+    """503s last minutes; the old budget gave up inside twenty seconds."""
+    assert 0.8 * expected <= backoff_delay(attempts, transient=True) <= 1.2 * expected
+    assert max_attempts(transient=True) > max_attempts(transient=False)
 
 
 def test_a_source_left_mid_ingest_resumes_rather_than_deduping(store, workspace):

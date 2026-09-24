@@ -1152,5 +1152,74 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
     )
 
 
+@app.command()
+def retry(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    wait: bool = typer.Option(True, "--wait/--no-wait"),
+    concurrency: Optional[int] = typer.Option(None, "--concurrency", "-c"),
+) -> None:
+    """Put failed jobs back in the queue - e.g. after a run of provider 503s."""
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        requeued = store.requeue_failed_jobs()
+        if not requeued:
+            _echo("No failed jobs to retry.")
+            return
+        _echo(f"Requeued {requeued} job(s).")
+    finally:
+        store.close()
+
+    if not wait:
+        return
+    try:
+        check_credentials(workspace_config)
+    except Exception as exc:
+        _fail(str(exc))
+    store = Store.for_config(workspace_config)
+    try:
+        _run_worker(workspace_config, store, concurrency, drain=True)
+    finally:
+        store.close()
+
+
+@app.command()
+def reset(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    yes: bool = typer.Option(False, "--yes", help="Required: this cannot be undone."),
+) -> None:
+    """Empty the local library: every source, shot, job, vector and thumbnail.
+
+    Drive is not touched. Files already filed there stay where they are, so
+    clear them by hand first if you want a blank Drive too.
+    """
+    workspace_config = resolve_workspace(workspace)
+    if not yes:
+        _fail("This deletes the whole local index for this workspace. Re-run with --yes.")
+
+    store = Store.for_config(workspace_config)
+    try:
+        counts = store.clear_library()
+    finally:
+        store.close()
+
+    thumbnails = 0
+    for thumbnail in workspace_config.thumbnails_dir.glob("*.jpg"):
+        thumbnail.unlink(missing_ok=True)
+        thumbnails += 1
+    staged = 0
+    for staged_file in workspace_config.staging_dir.glob("*"):
+        if staged_file.is_file():
+            staged_file.unlink(missing_ok=True)
+            staged += 1
+
+    _echo(
+        f"Cleared {counts['sources']} source(s), {counts['shots']} shot(s), "
+        f"{counts['jobs']} job(s), {counts['vectors']} vector(s), "
+        f"{thumbnails} thumbnail(s), {staged} staged file(s)."
+    )
+    _echo("Drive was not touched.")
+
+
 if __name__ == "__main__":
     app()

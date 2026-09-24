@@ -25,6 +25,22 @@ async def ingest_page(request: Request):
     return templates.TemplateResponse(request=request, name="ingest.html", context=context)
 
 
+@router.post("/ingest/retry", response_class=HTMLResponse)
+async def retry_failed(request: Request):
+    """Requeue everything that failed - usually a run of provider 503s."""
+    state = request.app.state.broll
+    store = state.store()
+    try:
+        requeued = store.requeue_failed_jobs()
+        context = _queue_context(request, store, state)
+        context["message"] = (
+            f"Requeued {requeued} failed job(s)." if requeued else "Nothing had failed."
+        )
+    finally:
+        store.close()
+    return templates.TemplateResponse(request=request, name="partials/queue.html", context=context)
+
+
 @router.get("/ingest/queue", response_class=HTMLResponse)
 async def queue_partial(request: Request):
     """Polled by HTMX every couple of seconds while anything is outstanding."""
