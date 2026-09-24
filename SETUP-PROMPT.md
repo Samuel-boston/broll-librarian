@@ -35,10 +35,14 @@ Read "What only you can do" at the bottom first, so you know what is coming.
 > 3. Walk me through creating a Gemini API key in that project. Do not read,
 >    copy, or type the key yourself - tell me where to paste it once the app is
 >    running (Settings, API keys) and let me handle the value.
-> 4. Walk me through creating an OAuth client (Desktop app) for Google Drive
->    access, and publishing the consent screen to Production rather than
->    leaving it in Testing - in Testing mode the Drive login expires every 7
->    days. Tell me where to put the client ID and secret.
+> 4. Walk me through the Google Drive setup in README.md ("Google Drive setup"),
+>    which uses Google Auth Platform: the consent screen, adding me as a test
+>    user, adding the full drive scope, and creating a Desktop app OAuth client.
+>    Leave the app in Testing - publishing it to Production triggers Google's
+>    verification review for that scope. Tell me where to put the client ID and
+>    secret. Warn me that in Testing mode the Drive login has to be redone every
+>    7 days, unless my Google account is on a Workspace domain, in which case
+>    tell me how to set the audience to Internal instead, which has no expiry.
 > 5. Create the workspace with `broll init`, then start the app with
 >    `broll serve` and open it in the browser for me.
 > 6. Run `broll drive login` and hand me the consent screen to approve.

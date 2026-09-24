@@ -1,0 +1,448 @@
+<title>B-Roll Librarian Setup</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root {
+    color-scheme: light;
+    --paper: #fbfaf7;
+    --raised: #ffffff;
+    --ink: #16191c;
+    --muted: #5d6572;
+    --faint: #8b93a0;
+    --line: #e4e2dc;
+    --accent: #0f6e64;
+    --accent-soft: #e6f1ef;
+    --warn: #9c5518;
+    --warn-soft: #fbf0e4;
+    --stop: #9b2c3f;
+    --stop-soft: #fbeaed;
+    --measure: 40rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --paper: #101315;
+      --raised: #171b1e;
+      --ink: #e9ebe8;
+      --muted: #9aa3ad;
+      --faint: #6f7883;
+      --line: #262b30;
+      --accent: #5fc9bb;
+      --accent-soft: #10312d;
+      --warn: #e0a163;
+      --warn-soft: #2c2114;
+      --stop: #e8899a;
+      --stop-soft: #2d161b;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper: #101315;
+    --raised: #171b1e;
+    --ink: #e9ebe8;
+    --muted: #9aa3ad;
+    --faint: #6f7883;
+    --line: #262b30;
+    --accent: #5fc9bb;
+    --accent-soft: #10312d;
+    --warn: #e0a163;
+    --warn-soft: #2c2114;
+    --stop: #e8899a;
+    --stop-soft: #2d161b;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    padding: 0 20px;
+  }
+  .page { max-width: var(--measure); margin: 0 auto; padding-block: 56px 96px; }
+
+  h1, h2, h3 { font-family: "Fraunces", Georgia, "Times New Roman", serif; font-weight: 600; text-wrap: balance; }
+  h1 { font-size: clamp(2rem, 6vw, 2.9rem); line-height: 1.1; letter-spacing: -0.015em; margin: 0; }
+  h2 { font-size: 1.5rem; line-height: 1.2; margin: 0; }
+  h3 { font-size: 1.05rem; font-family: "IBM Plex Sans", sans-serif; font-weight: 600; margin: 0 0 6px; }
+  p { margin: 0 0 14px; }
+  a { color: var(--accent); text-underline-offset: 3px; }
+  strong { font-weight: 600; }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; }
+  li { margin-bottom: 7px; }
+  li::marker { color: var(--faint); }
+
+  .lede { font-size: 1.12rem; color: var(--muted); margin-top: 18px; }
+  .eyebrow {
+    font-size: 0.7rem; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 10px;
+  }
+  header.masthead { border-bottom: 2px solid var(--ink); padding-bottom: 28px; }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 22px;
+    font-family: "IBM Plex Mono", monospace; font-size: 0.78rem; color: var(--faint);
+  }
+
+  section.step { margin-top: 52px; }
+  .step-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 8px; }
+  .step-num {
+    font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; font-weight: 500;
+    color: var(--accent); border: 1px solid var(--accent); border-radius: 999px;
+    padding: 2px 9px; flex-shrink: 0;
+  }
+  .step-note { color: var(--muted); margin: 0 0 18px; }
+
+  .panel { background: var(--raised); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; }
+  .panel + .panel { margin-top: 14px; }
+
+  .callout { border-left: 3px solid var(--warn); background: var(--warn-soft); padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 18px 0; }
+  .callout.stop { border-left-color: var(--stop); background: var(--stop-soft); }
+  .callout.good { border-left-color: var(--accent); background: var(--accent-soft); }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout-label {
+    font-size: 0.7rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--warn); display: block; margin-bottom: 5px;
+  }
+  .callout.stop .callout-label { color: var(--stop); }
+  .callout.good .callout-label { color: var(--accent); }
+
+  code, kbd { font-family: "IBM Plex Mono", monospace; font-size: 0.87em; }
+  code.inline { background: var(--accent-soft); color: var(--accent); padding: 1px 5px; border-radius: 4px; }
+  kbd {
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px;
+    padding: 1px 6px; background: var(--raised); font-size: 0.8em; white-space: nowrap;
+  }
+
+  .block { position: relative; margin: 16px 0; }
+  .block pre {
+    margin: 0; background: var(--raised); border: 1px solid var(--line); border-radius: 10px;
+    padding: 18px 20px; overflow-x: auto; font-family: "IBM Plex Mono", monospace;
+    font-size: 0.82rem; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+  }
+  .block.prompt pre { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+  .copy {
+    position: absolute; top: 10px; right: 10px; font: inherit; font-size: 0.72rem; font-weight: 600;
+    background: var(--paper); color: var(--muted); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 10px; cursor: pointer;
+  }
+  .copy:hover { color: var(--ink); border-color: var(--faint); }
+  .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .facts { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 18px 0; }
+  .fact { background: var(--raised); padding: 13px 18px; display: flex; flex-wrap: wrap; gap: 4px 16px; justify-content: space-between; }
+  .fact dt { color: var(--muted); margin: 0; }
+  .fact dd { margin: 0; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  .hosts { list-style: none; padding: 0; margin: 18px 0; display: grid; gap: 10px; }
+  .hosts li { background: var(--raised); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin: 0; }
+  .hosts .name { font-weight: 600; }
+  .hosts .why { color: var(--muted); font-size: 0.93rem; }
+  .verdict { font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
+  .verdict.no { color: var(--stop); }
+  .verdict.yes { color: var(--accent); }
+
+  .console-step { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 18px; }
+  .console-step:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+  .where { font-family: "IBM Plex Mono", monospace; font-size: 0.78rem; color: var(--muted); word-break: break-all; margin-bottom: 8px; display: block; }
+
+  footer { margin-top: 64px; padding-top: 22px; border-top: 1px solid var(--line); color: var(--faint); font-size: 0.88rem; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">Setup guide</p>
+    <h1>B-Roll Librarian</h1>
+    <p class="lede">
+      Your footage, watched and described clip by clip, filed into your own Drive folders, and
+      searchable in plain English — "Adam meditating at sunrise" finds the shot, not a folder to
+      dig through. This page gets it running on your own account.
+    </p>
+    <div class="meta">
+      <span>About 30 minutes</span>
+      <span>Most of it done by Claude</span>
+      <span>Your Google account, your bill</span>
+    </div>
+  </header>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">Before</span>
+      <h2>What you need in front of you</h2>
+    </div>
+    <ul>
+      <li>A Google account — the one whose Drive holds the footage.</li>
+      <li>A card, for the Google API billing. Expect a few pounds in total, not a subscription.</li>
+      <li>Claude Code on your computer, with the Claude in Chrome extension connected.</li>
+      <li>Somewhere to run it. Read the next step before you pick.</li>
+    </ul>
+  </section>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">01</span>
+      <h2>Where it runs</h2>
+    </div>
+    <p class="step-note">Decide this first, because it changes nothing else but can't be undone cheaply.</p>
+
+    <div class="callout stop">
+      <span class="callout-label">Vercel will not work</span>
+      <p>
+        Vercel runs short-lived functions with no permanent disk. This app is the opposite: a process
+        that stays awake, keeps a database of everything it has watched, and shells out to ffmpeg to
+        read your video. There is no configuration that makes it fit — it needs a server, not a
+        function host.
+      </p>
+    </div>
+
+    <ul class="hosts">
+      <li>
+        <div class="name">A small VPS <span class="verdict yes">best</span></div>
+        <div class="why">Hetzner, DigitalOcean, Linode. £4–6 a month buys more than enough. Full control, nothing to work around.</div>
+      </li>
+      <li>
+        <div class="name">Railway, Render or Fly.io <span class="verdict yes">works</span></div>
+        <div class="why">Fine, as long as you attach a persistent volume and let it run as a long-lived service rather than a serverless function.</div>
+      </li>
+      <li>
+        <div class="name">A Mac that stays on <span class="verdict yes">free</span></div>
+        <div class="why">A studio machine or spare laptop. Costs nothing, and it is exactly how it was built and tested. The catch: indexing only happens while that machine is awake.</div>
+      </li>
+      <li>
+        <div class="name">Vercel, Netlify, shared web hosting <span class="verdict no">no</span></div>
+        <div class="why">No persistent disk, no always-on process, no ffmpeg.</div>
+      </li>
+    </ul>
+
+    <p>
+      What the box needs: Python 3.11 or newer, ffmpeg, about 2&nbsp;GB of memory, and a disk that
+      keeps its contents. Your footage is never stored there — it is read, described, uploaded to
+      your Drive, and deleted.
+    </p>
+  </section>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">02</span>
+      <h2>Hand this to Claude</h2>
+    </div>
+    <p class="step-note">
+      Open Claude Code, make sure the Chrome extension is connected, and paste the whole block.
+      Replace the two bracketed lines first.
+    </p>
+
+    <div class="block prompt">
+      <button class="copy" type="button" data-copy="prompt">Copy</button>
+      <pre id="prompt">I want to set up the B-Roll Librarian. The code is at [GITHUB LINK].
+It will run on [WHERE — e.g. "this Mac", or "a fresh Ubuntu VPS at 1.2.3.4"].
+
+Read the repository's README.md, SETUP-PROMPT.md and docs/DEPLOY.md first,
+then set it up for me end to end.
+
+Use the Claude in Chrome extension for anything that happens in a browser,
+and do as much as you can without me. Drive the browser yourself to open the
+right Google Cloud pages, fill in the non-sensitive forms, and read back what
+is on screen. Stop and hand it to me whenever a step needs my password, a
+two-factor code, card details, accepting terms, or the final "Allow" on a
+permissions screen. If Google shows a bot check, hand that to me too rather
+than retrying.
+
+Work in this order and check each step before moving on:
+
+1. Clone the repository, create a virtualenv, and install it with the
+   gemini, drive, shots, embeddings-local and web extras. Install ffmpeg if
+   it is missing. Run `broll doctor` and show me the result.
+2. Open the Google Cloud pages I need, in order, and tell me exactly what to
+   click: create a project, enable the Gemini API and the Google Drive API on
+   it, and link billing. Explain why billing is needed before I pay anything.
+3. Walk me through creating a Gemini API key in that project. Do not read,
+   copy or type the key yourself — tell me where to paste it and let me
+   handle the value.
+4. Walk me through the Drive setup exactly as the README describes it, using
+   Google Auth Platform: consent screen, me as a test user, the full drive
+   scope, and a Desktop app OAuth client. Leave the app in Testing — do not
+   publish it to Production. Tell me where to put the client ID and secret.
+5. Create the workspace, start the app, and open it in my browser.
+6. Run `broll drive login` and hand me the consent screen to approve.
+7. Ask me about my library: my name, what I do, who is in front of camera,
+   and the folder structure I want my footage organised into. Write that into
+   the workspace config the way examples/adam-kunder.yaml does, and show me
+   what you changed before saving it.
+8. Test it with three or four files — at least one video and one photo.
+   Confirm each one is described, tagged, filed into the right Drive folder,
+   and comes back from a search. Show me the results.
+9. Set it up to restart on its own if the machine reboots.
+
+Tell me what each step costs. If something fails, show me the actual error
+rather than guessing.</pre>
+    </div>
+
+    <div class="callout good">
+      <span class="callout-label">What this gets you</span>
+      <p>
+        Claude does the install, the configuration, your folder structure, the first test run and the
+        restart-on-boot setup. It walks you through the Google pages but cannot click them for you —
+        that part is Step 3.
+      </p>
+    </div>
+  </section>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">03</span>
+      <h2>The part only you can do</h2>
+    </div>
+    <p class="step-note">
+      Google blocks automation on these pages, so Claude opens them and reads them out — you click.
+      Do them in this order. Keep the tab open; you will come back to it.
+    </p>
+
+    <div class="panel">
+      <div class="console-step">
+        <h3>A. Create a project</h3>
+        <span class="where">console.cloud.google.com/projectcreate</span>
+        <p>Name it something you will recognise, e.g. <code class="inline">broll-librarian</code>. Everything else hangs off this project.</p>
+      </div>
+
+      <div class="console-step">
+        <h3>B. Turn on the two APIs</h3>
+        <span class="where">console.cloud.google.com/apis/library</span>
+        <p>
+          Search for <strong>Generative Language API</strong> and press Enable. Then search for
+          <strong>Google Drive API</strong> and press Enable. Make sure your new project is selected
+          in the bar at the top — it is the single most common mistake here.
+        </p>
+      </div>
+
+      <div class="console-step">
+        <h3>C. Link billing</h3>
+        <span class="where">console.cloud.google.com/billing</span>
+        <p>
+          Add a billing account if you do not have one, then link it to the project. This is the step
+          that matters most: without it you are on the free tier, which allows
+          <strong>20 requests a day</strong> and is refused outright when Google is busy. A library of
+          a few hundred files is impossible on it.
+        </p>
+      </div>
+
+      <div class="console-step">
+        <h3>D. Create the API key</h3>
+        <span class="where">aistudio.google.com/apikey</span>
+        <p>
+          Create an API key <strong>in the project you just made</strong>, not a new one. Copy it
+          somewhere safe for a minute — you paste it into the app in Step 4, and it is never shown
+          again.
+        </p>
+      </div>
+
+      <div class="console-step">
+        <h3>E. Set up Drive access</h3>
+        <span class="where">console.cloud.google.com/auth/overview</span>
+        <p>Four short screens, in this order:</p>
+        <ol>
+          <li><strong>Get started</strong> — app name, your email, audience <strong>External</strong>, your email again as contact.</li>
+          <li><strong>Audience</strong> → under Test users, add your own Google address.</li>
+          <li><strong>Data access</strong> → Add scopes → paste <code class="inline">https://www.googleapis.com/auth/drive</code>, tick it, Update, Save.</li>
+          <li><strong>Clients</strong> → Create client → application type <strong>Desktop app</strong> → Create. Copy the client ID and client secret.</li>
+        </ol>
+      </div>
+
+      <div class="console-step">
+        <h3>F. Approve the app once</h3>
+        <p>
+          When Claude runs the Drive login, a Google screen appears saying the app is unverified. That
+          is expected — it is your own app, on your own project, used only by you. Click
+          <kbd>Advanced</kbd> → <kbd>Go to (app name)</kbd> → <kbd>Allow</kbd>.
+        </p>
+      </div>
+    </div>
+
+    <div class="callout">
+      <span class="callout-label">Leave it in Testing</span>
+      <p>
+        Do not press "Publish app". Publishing sends the app into Google's verification review,
+        because reading your whole Drive is a restricted permission. Staying in Testing is what keeps
+        this a five-minute job instead of a six-week one.
+      </p>
+      <p>
+        The trade-off: a Testing app's Drive login expires every 7 days. When filing to Drive stops,
+        re-run <code class="inline">broll drive login</code>. If your email is on a Google Workspace
+        domain rather than gmail.com, set the audience to <strong>Internal</strong> at step E1 instead
+        and the expiry goes away.
+      </p>
+    </div>
+  </section>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">04</span>
+      <h2>Finish inside the app</h2>
+    </div>
+    <p class="step-note">Claude will have it open in your browser by now.</p>
+    <ol>
+      <li><strong>Settings → API keys</strong> — choose gemini, paste your key, Save. It is written to a private file on the server, never to the database.</li>
+      <li><strong>Settings → Workspace</strong> — set <strong>Requests per minute</strong> to <code class="inline">0</code> and <strong>Worker concurrency</strong> to <code class="inline">4</code>. Those are throttles for unpaid keys.</li>
+      <li><strong>Upload</strong> — drag in a handful of clips and photos. Watch the queue on the right.</li>
+      <li><strong>Library</strong> — check the descriptions and the folders they landed in, then search for something you know is there.</li>
+    </ol>
+    <p>
+      Then go and look in Drive. Your footage is in your own folder tree, renamed so the filename says
+      what the shot is, with videos and photographs kept apart.
+    </p>
+  </section>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">Cost</span>
+      <h2>What you actually pay</h2>
+    </div>
+    <dl class="facts">
+      <div class="fact"><dt>Watching one video shot</dt><dd>~0.3p</dd></div>
+      <div class="fact"><dt>Watching one photograph</dt><dd>~0.1–0.3p</dd></div>
+      <div class="fact"><dt>A 500-file library, one-off</dt><dd>~£2</dd></div>
+      <div class="fact"><dt>Searching, browsing, exports</dt><dd>free — runs on your own machine</dd></div>
+      <div class="fact"><dt>Server, if you rent one</dt><dd>£4–6 / month</dd></div>
+      <div class="fact"><dt>Drive storage</dt><dd>your existing Google plan</dd></div>
+    </dl>
+    <div class="callout good">
+      <span class="callout-label">One more reason to link billing</span>
+      <p>
+        On the free tier, Google may use what you send for product improvement, including human
+        review. On a paid key it does not. Your footage stops being training data.
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <p>
+      Anything unclear, or a step that does not match what you see on screen, send a screenshot —
+      Google moves these pages around and the guide gets corrected.
+    </p>
+  </footer>
+</div>
+
+<script>
+  document.querySelectorAll(".copy").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var source = document.getElementById(button.dataset.copy);
+      var text = source.textContent;
+      var done = function () {
+        button.textContent = "Copied";
+        setTimeout(function () { button.textContent = "Copy"; }, 1800);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () { select(source); });
+      } else {
+        select(source);
+      }
+    });
+  });
+
+  function select(node) {
+    var range = document.createRange();
+    range.selectNodeContents(node);
+    var selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+</script>
