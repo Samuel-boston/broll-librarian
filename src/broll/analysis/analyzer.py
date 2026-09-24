@@ -17,7 +17,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from ..config import WorkspaceConfig
-from ..ingest.frames import extract_frames
+from ..ingest.frames import extract_frames, extract_still
 from .prompt import PROMPT_VERSION, render_client_context
 from .providers.base import ProviderError, TransientProviderError, VisionProvider
 from .providers.registry import get_vision_provider
@@ -140,13 +140,18 @@ class Analyzer:
     def extract(self, video: Path, context: ShotContext, work_dir: Path) -> list[Path]:
         # A photograph has one frame, and sending it three times would only
         # triple the bill. ffmpeg does the decode either way, HEIC included.
-        count = 1 if context.media_kind == "image" else self.config.ingest.frames_per_shot
+        if context.media_kind == "image":
+            return extract_still(
+                video, work_dir,
+                max_edge=self.config.ingest.frame_max_edge,
+                prefix=f"shot{context.shot_index:03d}",
+            )
         return extract_frames(
             video,
             work_dir,
             start_s=context.start_s,
             duration_s=context.duration_s,
-            count=count,
+            count=self.config.ingest.frames_per_shot,
             max_edge=self.config.ingest.frame_max_edge,
             prefix=f"shot{context.shot_index:03d}",
         )

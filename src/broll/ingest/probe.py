@@ -68,6 +68,18 @@ def nominal_fps(r_frame_rate: str | None, avg_frame_rate: str | None) -> float |
     return snap_fps(_parse_fps(avg_frame_rate) or declared)
 
 
+def _tile_grid(data: dict) -> tuple[int, int] | None:
+    """(width, height) of a tiled image, from ffprobe's stream groups."""
+    for group in data.get("stream_groups") or []:
+        if group.get("type") != "Tile Grid":
+            continue
+        for component in group.get("components") or []:
+            width, height = component.get("width"), component.get("height")
+            if width and height:
+                return int(width), int(height)
+    return None
+
+
 def probe(path: Path) -> ProbeResult:
     _, ffprobe = check_ffmpeg()
     if not path.exists():
@@ -75,7 +87,7 @@ def probe(path: Path) -> ProbeResult:
     proc = subprocess.run(
         [
             ffprobe, "-v", "error", "-print_format", "json",
-            "-show_format", "-show_streams", str(path),
+            "-show_format", "-show_streams", "-show_stream_groups", str(path),
         ],
         capture_output=True, text=True,
     )
@@ -95,14 +107,20 @@ def probe(path: Path) -> ProbeResult:
     # A still decodes as a one-frame video stream, so the extension is what
     # actually says which it is. Its duration and frame rate are meaningless.
     kind = media_kind(path) or "video"
+    width, height = int(video.get("width") or 0), int(video.get("height") or 0)
     if kind == "image":
         duration, fps = 0.0, None
+        # An iPhone photo is stored as a grid of 512x512 tiles, so the first
+        # stream is one tile, not the picture. The tile grid knows the real size.
+        grid = _tile_grid(data)
+        if grid:
+            width, height = grid
 
     return ProbeResult(
         media_kind=kind,
         duration_s=float(duration) if duration else 0.0,
-        width=int(video.get("width") or 0),
-        height=int(video.get("height") or 0),
+        width=width,
+        height=height,
         fps=fps,
         codec=video.get("codec_name"),
         filesize_bytes=int(fmt.get("size") or path.stat().st_size),

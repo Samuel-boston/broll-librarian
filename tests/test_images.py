@@ -200,3 +200,39 @@ def test_a_still_fills_its_beat_rather_than_leaving_a_gap(workspace):
     assert item.gap_frames == 0
     assert item.end_frame - item.start_frame == item.sequence_out_frame - item.sequence_in_frame
     assert not any("left as a gap" in w for w in timeline.warnings)
+
+
+def test_a_tiled_heic_reports_the_whole_picture_not_one_tile():
+    """An iPhone HEIC is 48 tiles of 512x512; stream 0 is a tile, not the photo."""
+    from broll.ingest.probe import _tile_grid
+
+    probed = {
+        "stream_groups": [{
+            "type": "Tile Grid",
+            "components": [{"nb_tiles": 48, "coded_width": 4096, "coded_height": 3072,
+                            "width": 4032, "height": 3024}],
+        }],
+    }
+    assert _tile_grid(probed) == (4032, 3024)
+    assert _tile_grid({"streams": [{"width": 512}]}) is None
+
+
+def test_extract_still_scales_without_a_video_filter(tmp_path, monkeypatch):
+    """-vf is refused on a tiled HEIC, so the still path must not pass one."""
+    from broll.ingest import frames as frames_module
+
+    source = _photo(tmp_path / "big.jpg", size=(2400, 1600))
+    seen: list[list[str]] = []
+    real_run = frames_module.subprocess.run
+
+    def spy(command, *args, **kwargs):
+        seen.append(command)
+        return real_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(frames_module.subprocess, "run", spy)
+    out = frames_module.extract_still(source, tmp_path / "work", max_edge=768)
+
+    assert len(out) == 1
+    assert max(Image.open(out[0]).size) == 768
+    assert not any("-vf" in command for command in seen)
+    assert not list((tmp_path / "work").glob("*_full.jpg")), "the full-size decode is temporary"

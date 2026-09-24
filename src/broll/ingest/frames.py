@@ -8,6 +8,7 @@ or a blur) are rejected and resampled from a nearby timestamp.
 
 from __future__ import annotations
 
+import logging
 import statistics
 import subprocess
 from dataclasses import dataclass
@@ -16,6 +17,8 @@ from pathlib import Path
 from PIL import Image
 
 from ..config import check_ffmpeg
+
+log = logging.getLogger(__name__)
 
 DEFAULT_POSITIONS = (0.2, 0.5, 0.8)
 # Retry offsets, as a fraction of shot duration, when a sample is rejected.
@@ -81,6 +84,43 @@ def _extract_one(
         capture_output=True, text=True,
     )
     return proc.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0
+
+
+def extract_still(
+    image: Path, out_dir: Path, max_edge: int = 768, prefix: str = "still"
+) -> list[Path]:
+    """The one frame of a photograph, downscaled.
+
+    An iPhone HEIC is stored as a grid of 512x512 tiles - 99 streams for one
+    photo - which ffmpeg stitches with an implicit complex filtergraph. A -vf
+    scale on top of that is refused ("Simple and complex filtering cannot be
+    used together"), and the extraction produced nothing at all. So decode
+    first, at full size, and let Pillow do the scaling.
+    """
+    ffmpeg, _ = check_ffmpeg()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    full = out_dir / f"{prefix}_full.jpg"
+    proc = subprocess.run(
+        [ffmpeg, "-nostdin", "-loglevel", "error", "-i", str(image),
+         "-frames:v", "1", "-q:v", "2", "-y", str(full)],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0 or not full.exists() or full.stat().st_size == 0:
+        log.warning("could not decode %s: %s", image.name, proc.stderr.strip()[:200])
+        return []
+
+    frame = out_dir / f"{prefix}_00.jpg"
+    try:
+        with Image.open(full) as img:
+            img = img.convert("RGB")
+            img.thumbnail((max_edge, max_edge))
+            img.save(frame, quality=88)
+    except OSError as exc:
+        log.warning("could not scale %s: %s", image.name, exc)
+        return []
+    finally:
+        full.unlink(missing_ok=True)
+    return [frame]
 
 
 def extract_frames(
