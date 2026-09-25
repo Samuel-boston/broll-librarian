@@ -2,6 +2,13 @@
 {% set active = 'library' %}
 {% block title %}Library{% endblock %}
 {% block content %}
+<div class="mb-3 flex justify-end">
+  <button type="button" class="text-xs text-faint transition hover:text-rose"
+          hx-post="/library/delete-all" hx-swap="none"
+          hx-prompt="Delete EVERYTHING in this library: every clip, its tags and thumbnails. Files in Google Drive are not touched. This cannot be undone.&#10;&#10;Type DELETE to confirm.">
+    Delete all…
+  </button>
+</div>
 <form action="/search" method="get" class="mb-8 flex gap-3">
   <div class="relative flex-1">
     <svg class="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2" width="16" height="16"

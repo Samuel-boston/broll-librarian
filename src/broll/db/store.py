@@ -642,6 +642,65 @@ class Store:
         )
         return cursor.rowcount
 
+    def cancel_job(self, job_id: str) -> Job | None:
+        """Take one waiting job out of the queue. Returns it, or None if it isn't waiting.
+
+        Only a queued job (including one waiting out a retry delay) can be cancelled. A job a
+        worker has already started runs to the end: stopping it half way would leave a
+        half-indexed file.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                """UPDATE jobs SET status = 'cancelled', finished_at = datetime('now'),
+                       last_error = 'Removed from the queue'
+                   WHERE workspace_id = ? AND id = ? AND status = 'queued'""",
+                (self.workspace_id, job_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+        return self.get_job(job_id)
+
+    def cancel_queued_jobs(self) -> list[Job]:
+        """Take every waiting job out of the queue. Jobs already running are left to finish."""
+        with self.transaction() as conn:
+            rows = conn.execute(
+                "SELECT id FROM jobs WHERE workspace_id = ? AND status = 'queued'",
+                (self.workspace_id,),
+            ).fetchall()
+            conn.execute(
+                """UPDATE jobs SET status = 'cancelled', finished_at = datetime('now'),
+                       last_error = 'Removed from the queue'
+                   WHERE workspace_id = ? AND status = 'queued'""",
+                (self.workspace_id,),
+            )
+        return [j for j in (self.get_job(r["id"]) for r in rows) if j is not None]
+
+    def delete_source(self, source_id: str) -> dict[str, Any] | None:
+        """Remove one file from the library: its shots, tags, vectors and shortcut records.
+
+        Local only: nothing in Drive is touched. Returns what was removed (the source, and the ids
+        and thumbnail paths of its shots, by id) so the caller can clean up files and the dashboard, or
+        None if there was no such file.
+        """
+        source = self.get_source(source_id)
+        if source is None:
+            return None
+        shots = self.conn.execute(
+            "SELECT id, thumbnail_path FROM shots WHERE workspace_id = ? AND source_id = ?",
+            (self.workspace_id, source_id),
+        ).fetchall()
+        with self.transaction() as conn:
+            for shot in shots:
+                self.vectors.delete(shot["id"])
+            self.forget_shortcuts_for_source(source_id)
+            # shots and shot_tags go with it (ON DELETE CASCADE); the search index follows its trigger.
+            conn.execute("DELETE FROM sources WHERE workspace_id = ? AND id = ?", (self.workspace_id, source_id))
+        return {
+            "source": source,
+            "shot_ids": [r["id"] for r in shots],
+            "thumbnails": {r["id"]: r["thumbnail_path"] for r in shots},
+        }
+
     def clear_library(self) -> dict[str, int]:
         """Delete every source, shot, job and vector in this workspace.
 

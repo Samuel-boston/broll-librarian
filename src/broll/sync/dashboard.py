@@ -287,6 +287,33 @@ class DashboardSync:
             self._save_state({"url": url, "shots": sent, "thumbs": sorted(thumbs)})
         return result
 
+    def remove(self, shot_ids: list[str] | None = None) -> int:
+        """Take shots off the dashboard now, instead of waiting for the next sync.
+
+        `shot_ids=None` means everything this library has sent. Only shots this library sent are
+        touched. Returns how many were removed; 0 when the dashboard isn't connected.
+        """
+        creds = credentials(self.config)
+        if creds is None:
+            return 0
+        url, key = creds
+        state = self._load_state(url)
+        sent: dict[str, str] = state["shots"]
+        thumbs: set[str] = set(state["thumbs"])
+        ids = list(sent) if shot_ids is None else [sid for sid in shot_ids if sid in sent]
+        if not ids:
+            return 0
+        try:
+            with self._http() as http:
+                self._remove(http, url, key, ids)
+        except httpx.HTTPError as exc:
+            raise DashboardSyncError(f"Couldn't remove them from the dashboard: {exc}") from exc
+        for sid in ids:
+            sent.pop(sid, None)
+            thumbs.discard(sid)
+        self._save_state({"url": url, "shots": sent, "thumbs": sorted(thumbs)})
+        return len(ids)
+
     # -- helpers ------------------------------------------------------------
 
     def _thumbnail_file(self, row: Any) -> Path | None:

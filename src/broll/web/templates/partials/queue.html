@@ -26,6 +26,12 @@
       Retry {{ stats.failed }} failed job(s)
     </button>
     {% endif %}
+    {% if stats.queued %}
+    <button class="btn btn-sm mt-2 w-full" hx-post="/ingest/clear" hx-target="#queue" hx-swap="outerHTML"
+            hx-confirm="Remove all {{ stats.queued }} waiting file(s) from the queue?{% if stats.running %} The {{ stats.running }} being indexed now will finish.{% endif %}">
+      Clear the queue ({{ stats.queued }} waiting)
+    </button>
+    {% endif %}
   </div>
 
   <div class="card overflow-hidden">
@@ -36,9 +42,15 @@
           {% if job.status == 'done' %}bg-[#4ade9b]
           {% elif job.status == 'running' %}bg-[#8b8cff] animate-pulse
           {% elif job.status == 'failed' %}bg-[#f47b93]
+          {% elif job.status == 'cancelled' %}bg-[#4a5160] opacity-50
           {% else %}bg-[#39414f]{% endif %}"></span>
         <span class="min-w-0 flex-1 truncate" title="{{ job.filename }}">{{ job.filename or job.id[:8] }}</span>
         <span class="text-xs text-faint">{{ job.status }}{% if job.attempts > 1 %} ·{{ job.attempts }}x{% endif %}</span>
+        {% if job.status == 'queued' %}
+        <button type="button" title="Remove from the queue" aria-label="Remove {{ job.filename or 'this file' }} from the queue"
+                class="grid h-5 w-5 shrink-0 place-items-center rounded text-faint transition hover:bg-white/10 hover:text-rose"
+                hx-post="/ingest/jobs/{{ job.id }}/cancel" hx-target="#queue" hx-swap="outerHTML">×</button>
+        {% endif %}
       </li>
       {% if job.last_error and job.status == 'failed' %}
       <li class="px-4 pb-2.5 text-xs text-rose">{{ job.last_error }}</li>

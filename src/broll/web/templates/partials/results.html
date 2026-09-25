@@ -80,7 +80,12 @@
           {% else %}
             <span class="text-faint">Not in Drive yet</span>
           {% endif %}
-          {% if result.score %}<span class="mono ml-auto text-[11px] text-faint/70">{{ '%.4f'|format(result.score) }}</span>{% endif %}
+          <span class="ml-auto flex items-center gap-3">
+            {% if result.score %}<span class="mono text-[11px] text-faint/70">{{ '%.4f'|format(result.score) }}</span>{% endif %}
+            <button type="button" class="text-faint transition hover:text-rose"
+                    hx-post="/sources/{{ result.source.id }}/delete" hx-target="closest article" hx-swap="outerHTML"
+                    hx-confirm="Delete {{ result.source.original_filename }} from the library?&#10;&#10;This removes the file and every shot from it from this library. Nothing in Google Drive is deleted.">Delete</button>
+          </span>
         </div>
       </div>
     </article>

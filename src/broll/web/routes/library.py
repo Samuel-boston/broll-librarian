@@ -7,9 +7,12 @@ not six arbitrary thumbnails.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+import json
 
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse, Response
+
+from ...library_admin import clear_library, remove_source, running_jobs
 from ...search.browse import children, folder_label, summarise_folders
 from ...search.filters import SearchFilters
 from ...search.query import SearchEngine
@@ -117,3 +120,49 @@ async def library(
     finally:
         store.close()
     return templates.TemplateResponse(request=request, name="library.html", context=context)
+
+
+def _alert(text: str) -> Response:
+    """Nothing on the page changes; the browser shows the message."""
+    return Response(status_code=200, headers={"HX-Reswap": "none", "HX-Trigger": json.dumps({"broll-alert": text})})
+
+
+@router.post("/sources/{source_id}/delete", response_class=HTMLResponse)
+async def delete_source(request: Request, source_id: str):
+    """Remove one file, and every shot from it, from the library. Drive is not touched."""
+    state = request.app.state.broll
+    store = state.store()
+    try:
+        result = remove_source(state.config, store, source_id)
+    finally:
+        store.close()
+    if result is None:
+        raise HTTPException(status_code=404, detail="That file is no longer in the library.")
+    headers = {}
+    if result.dashboard_error:
+        headers["HX-Trigger"] = json.dumps({"broll-alert": f"Removed, but the dashboard wasn't updated: {result.dashboard_error}"})
+    # The card is swapped for nothing, so it disappears.
+    return HTMLResponse("", headers=headers)
+
+
+@router.post("/library/delete-all")
+async def delete_everything(request: Request):
+    """Empty the whole library. The browser asks for the word DELETE first; Drive is not touched."""
+    if request.headers.get("hx-prompt", "").strip() != "DELETE":
+        return _alert("Nothing was deleted. You have to type DELETE exactly.")
+    state = request.app.state.broll
+    store = state.store()
+    try:
+        if running_jobs(store):
+            return _alert("A file is being indexed right now. Let it finish, or clear the queue first, then try again.")
+        result = clear_library(state.config, store)
+    finally:
+        store.close()
+    note = f" The dashboard wasn't updated: {result.dashboard_error}" if result.dashboard_error else ""
+    return Response(
+        status_code=200,
+        headers={
+            "HX-Redirect": "/library",
+            "HX-Trigger": json.dumps({"broll-alert": f"Deleted {result.sources} file(s) and {result.shots} shot(s) from the library. Drive was not touched.{note}"}),
+        },
+    )

@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse
 
 from ...ingest.scanner import DiscoveredFile, media_kind, scan_local
 from ...jobs.queue import enqueue_files, queue_stats
+from ...library_admin import cancel_job, clear_queue
 from ..app import templates
 
 router = APIRouter()
@@ -36,6 +37,42 @@ async def retry_failed(request: Request):
         context["message"] = (
             f"Requeued {requeued} failed job(s)." if requeued else "Nothing had failed."
         )
+    finally:
+        store.close()
+    return templates.TemplateResponse(request=request, name="partials/queue.html", context=context)
+
+
+@router.post("/ingest/jobs/{job_id}/cancel", response_class=HTMLResponse)
+async def cancel_one(request: Request, job_id: str):
+    """Take one waiting file out of the queue."""
+    state = request.app.state.broll
+    store = state.store()
+    try:
+        result = cancel_job(state.config, store, job_id)
+        context = _queue_context(request, store, state)
+        if result.cancelled:
+            context["message"] = f"Removed {result.names[0]} from the queue."
+        elif result.still_running:
+            context["error"] = "That one is already being indexed, so it will finish. Only waiting files can be removed."
+        else:
+            context["message"] = "That file was already out of the queue."
+    finally:
+        store.close()
+    return templates.TemplateResponse(request=request, name="partials/queue.html", context=context)
+
+
+@router.post("/ingest/clear", response_class=HTMLResponse)
+async def clear_the_queue(request: Request):
+    """Empty the queue of everything still waiting. Files already being indexed finish."""
+    state = request.app.state.broll
+    store = state.store()
+    try:
+        result = clear_queue(state.config, store)
+        context = _queue_context(request, store, state)
+        parts = [f"Removed {result.cancelled} file(s) from the queue." if result.cancelled else "Nothing was waiting."]
+        if result.still_running:
+            parts.append(f"{result.still_running} already being indexed will finish.")
+        context["message"] = " ".join(parts)
     finally:
         store.close()
     return templates.TemplateResponse(request=request, name="partials/queue.html", context=context)
@@ -118,7 +155,7 @@ def _queue_context(request: Request, store, state) -> dict:
         """SELECT id, kind, status, attempts, last_error, cost_estimate_usd,
                   json_extract(payload_json, '$.filename') AS filename,
                   created_at, started_at, finished_at
-           FROM jobs WHERE workspace_id = ?
+           FROM jobs WHERE workspace_id = ? AND status != 'cancelled'
            ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
                     created_at DESC
            LIMIT 40""",

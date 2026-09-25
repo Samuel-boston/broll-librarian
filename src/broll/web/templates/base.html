@@ -200,5 +200,12 @@
   <main class="mx-auto max-w-7xl px-6 py-8">
     {% block content %}{% endblock %}
   </main>
+  <script>
+    // Server-sent messages (HX-Trigger: {"broll-alert": "..."}) for actions that don't change the page.
+    document.body.addEventListener('broll-alert', e => {
+      const text = typeof e.detail === 'string' ? e.detail : (e.detail && e.detail.value);
+      if (text) alert(text);
+    });
+  </script>
 </body>
 </html>

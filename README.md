@@ -523,6 +523,14 @@ mixed-frame-rate sequence and a clip too short for its beat. **Manual gate not
 yet run:** importing a real export into Premiere with media linked needs a
 Premiere licence and a synced Drive mount.
 
+## Removing things
+
+Every removal is local: **nothing in Google Drive is ever deleted**, and the shortcuts the organiser made stay where they are. If the library is connected to the dashboard, what you remove is taken off its Footage index too.
+
+* **One clip:** the *Delete* link on its card (Library or Search) removes the file and every shot from it, after a confirmation.
+* **Everything:** *Delete all…* at the top of the Library. You have to type `DELETE`. It is refused while a file is being indexed.
+* **The queue:** on the Upload screen, the **×** beside a waiting file removes it, and *Clear the queue* removes everything still waiting. A file already being indexed is left to finish. Uploads that were removed from the queue also lose their staged copy; a folder indexed in place is never touched.
+
 ## Command reference
 
 | Command | What it does |
@@ -547,6 +555,9 @@ Premiere licence and a synced Drive mount.
 | `broll costs [--project N]` | Measured spend, and a projection |
 | `broll reanalyse [--stale/--all]` | Re-run analysis after a prompt change |
 | `broll serve` | The web UI plus the ingest worker, one process |
+| `broll remove <source-id> --yes` | Remove one file, and all its shots, from the library |
+| `broll cancel <job-id>` / `broll cancel --all` | Take one waiting file, or the whole queue, out of the queue |
+| `broll reset --yes` | Empty the whole library (refused while a file is being indexed) |
 
 Every screen in the UI has a CLI equivalent, deliberately: the CLI is the real
 interface and the UI is a client of it.

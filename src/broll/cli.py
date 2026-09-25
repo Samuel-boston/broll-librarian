@@ -1281,28 +1281,71 @@ def reset(
     if not yes:
         _fail("This deletes the whole local index for this workspace. Re-run with --yes.")
 
+    from .library_admin import clear_library, running_jobs
+
     store = Store.for_config(workspace_config)
     try:
-        counts = store.clear_library()
+        if running_jobs(store):
+            _fail("A file is being indexed right now. Let it finish (or stop the app), then try again.")
+        result = clear_library(workspace_config, store)
     finally:
         store.close()
 
-    thumbnails = 0
-    for thumbnail in workspace_config.thumbnails_dir.glob("*.jpg"):
-        thumbnail.unlink(missing_ok=True)
-        thumbnails += 1
-    staged = 0
-    for staged_file in workspace_config.staging_dir.glob("*"):
-        if staged_file.is_file():
-            staged_file.unlink(missing_ok=True)
-            staged += 1
-
     _echo(
-        f"Cleared {counts['sources']} source(s), {counts['shots']} shot(s), "
-        f"{counts['jobs']} job(s), {counts['vectors']} vector(s), "
-        f"{thumbnails} thumbnail(s), {staged} staged file(s)."
+        f"Cleared {result.sources} source(s), {result.shots} shot(s), "
+        f"{result.jobs} job(s), {result.thumbnails} thumbnail(s), {result.staged} staged file(s)."
     )
+    if result.dashboard_removed:
+        _echo(f"Removed {result.dashboard_removed} shot(s) from the dashboard.")
+    if result.dashboard_error:
+        typer.secho(f"The dashboard was not updated: {result.dashboard_error}", fg=typer.colors.YELLOW)
     _echo("Drive was not touched.")
+
+
+@app.command()
+def remove(
+    source_id: str = typer.Argument(..., help="The file's id (see `broll show`)."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    yes: bool = typer.Option(False, "--yes", help="Required: this cannot be undone."),
+) -> None:
+    """Remove one file, and all its shots, from the library. Drive is not touched."""
+    from .library_admin import remove_source
+
+    workspace_config = resolve_workspace(workspace)
+    if not yes:
+        _fail("This removes the file and its shots from the library. Re-run with --yes.")
+    store = Store.for_config(workspace_config)
+    try:
+        result = remove_source(workspace_config, store, source_id)
+    finally:
+        store.close()
+    if result is None:
+        _fail(f"No file with id {source_id!r} in this workspace.")
+    _echo(f"Removed {result.filename} ({result.shots} shot(s)). Drive was not touched.")
+    if result.dashboard_error:
+        typer.secho(f"The dashboard was not updated: {result.dashboard_error}", fg=typer.colors.YELLOW)
+
+
+@app.command()
+def cancel(
+    job_id: Optional[str] = typer.Argument(None, help="The job's id. Leave out with --all."),
+    all_waiting: bool = typer.Option(False, "--all", help="Clear the whole queue."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+) -> None:
+    """Take one job, or every waiting job, out of the queue. A job already running finishes."""
+    from .library_admin import cancel_job, clear_queue
+
+    workspace_config = resolve_workspace(workspace)
+    if not job_id and not all_waiting:
+        _fail("Give a job id, or --all to clear the queue.")
+    store = Store.for_config(workspace_config)
+    try:
+        result = clear_queue(workspace_config, store) if all_waiting else cancel_job(workspace_config, store, job_id)
+    finally:
+        store.close()
+    _echo(f"Removed {result.cancelled} job(s) from the queue.")
+    if result.still_running:
+        _echo(f"{result.still_running} job(s) already running will finish.")
 
 
 if __name__ == "__main__":
