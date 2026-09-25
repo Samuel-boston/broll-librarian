@@ -60,6 +60,8 @@ def load_env() -> None:
 
 def write_env_var(name: str, value: str) -> Path:
     """Set NAME=value in BROLL_HOME/.env (0600) and in this process."""
+    if any(c in value for c in "\r\n\x00") or any(c in name for c in "\r\n=\x00 "):
+        raise ValueError("Values can't contain line breaks.")
     path = broll_home() / ".env"
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = path.read_text().splitlines() if path.exists() else []
@@ -69,8 +71,13 @@ def write_env_var(name: str, value: str) -> Path:
             break
     else:
         lines.append(f"{name}={value}")
-    path.write_text("\n".join(lines) + "\n")
-    path.chmod(0o600)
+    # Written owner-only from the start and swapped in whole, so a crash can't truncate the
+    # file that holds every key, and it is never readable by others, even for a moment.
+    tmp = path.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    os.replace(tmp, path)
     os.environ[name] = value
     return path
 

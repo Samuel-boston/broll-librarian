@@ -513,7 +513,7 @@ def _sync_dashboard_quietly(workspace_config) -> None:
         return
     try:
         _echo(DashboardSync(workspace_config).run().summary())
-    except DashboardSyncError as exc:
+    except Exception as exc:  # noqa: BLE001 - syncing is a courtesy; it must never fail a finished run
         typer.secho(f"  Dashboard sync failed: {exc}", fg=typer.colors.YELLOW)
 
 

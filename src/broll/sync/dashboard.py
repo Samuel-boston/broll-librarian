@@ -37,6 +37,12 @@ KEY_ENV = "DASHBOARD_SUPABASE_KEY"
 BUCKET = "library-thumbs"
 TABLE = "library_shots"
 CHUNK = 200
+# Delete filters go in the URL, so they are sent in small batches to stay well under gateway limits.
+DELETE_CHUNK = 50
+# A prune that would remove more than this share of what was sent is refused without --force: it means
+# the local index was reset or rebuilt, not that a hundred clips were deleted.
+PRUNE_LIMIT_SHARE = 0.3
+PRUNE_LIMIT_MIN = 20
 
 # The columns the dashboard's library_shots table (migration 030) is fed from.
 SHOT_SQL = """
@@ -152,16 +158,22 @@ class DashboardSync:
     # -- state --------------------------------------------------------------
 
     def _load_state(self, url: str) -> dict[str, Any]:
+        fresh = {"url": url, "shots": {}, "thumbs": []}
         try:
             state = json.loads(self.state_path.read_text())
         except (OSError, ValueError):
-            return {"url": url, "shots": {}, "thumbs": []}
-        if state.get("url") != url:  # pointed at a different dashboard: start over
-            return {"url": url, "shots": {}, "thumbs": []}
+            return fresh
+        # Anything that isn't the shape we wrote (or a different dashboard) starts over.
+        if (not isinstance(state, dict) or state.get("url") != url
+                or not isinstance(state.get("shots"), dict) or not isinstance(state.get("thumbs"), list)):
+            return fresh
         return state
 
     def _save_state(self, state: dict[str, Any]) -> None:
-        self.state_path.write_text(json.dumps(state))
+        # Write to a temp file and swap it in, so a crash or a second process never sees half a file.
+        tmp = self.state_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state))
+        os.replace(tmp, self.state_path)
 
     # -- connection ---------------------------------------------------------
 
@@ -188,6 +200,15 @@ class DashboardSync:
     # -- sync ---------------------------------------------------------------
 
     def run(self, prune: bool = True, force: bool = False) -> SyncResult:
+        try:
+            return self._run(prune=prune, force=force)
+        except DashboardSyncError:
+            raise
+        except (httpx.HTTPError, OSError) as exc:
+            # A dropped connection or an unreadable file is "try again later", never a crash.
+            raise DashboardSyncError(f"Couldn't finish syncing to the dashboard: {exc}") from exc
+
+    def _run(self, prune: bool, force: bool) -> SyncResult:
         result = SyncResult()
         creds = credentials(self.config)
         if creds is None:
@@ -208,53 +229,62 @@ class DashboardSync:
 
         changed: list[dict[str, Any]] = []
         current: dict[str, str] = {}
-        with self._http() as http:
-            for row in rows:
-                thumb_file = self._thumbnail_file(row)
-                thumb_path = f"{row['id']}.jpg" if thumb_file else None
-                record = _record(row, thumb_path)
-                digest = _fingerprint(record)
-                current[row["id"]] = digest
+        try:
+            with self._http() as http:
+                for row in rows:
+                    thumb_file = self._thumbnail_file(row)
+                    thumb_path = f"{row['id']}.jpg" if thumb_file else None
+                    record = _record(row, thumb_path)
+                    digest = _fingerprint(record)
+                    current[row["id"]] = digest
 
-                if thumb_file and row["id"] not in thumbs:
-                    try:
-                        self._upload_thumb(http, url, key, thumb_path, thumb_file)
-                        thumbs.add(row["id"])
-                        result.thumbnails += 1
-                    except DashboardSyncError as exc:
-                        result.errors.append(str(exc))
-                        record["thumb_path"] = None
-                        digest = _fingerprint(record)
-                        current[row["id"]] = digest
-                if sent.get(row["id"]) != digest:
-                    record["synced_at"] = datetime.now(UTC).isoformat()
-                    changed.append(record)
+                    if thumb_file and row["id"] not in thumbs:
+                        try:
+                            self._upload_thumb(http, url, key, thumb_path, thumb_file)
+                            thumbs.add(row["id"])
+                            result.thumbnails += 1
+                        except (DashboardSyncError, httpx.HTTPError, OSError) as exc:
+                            result.errors.append(str(exc))
+                            record["thumb_path"] = None
+                            digest = _fingerprint(record)
+                            current[row["id"]] = digest
+                    if sent.get(row["id"]) != digest:
+                        record["synced_at"] = datetime.now(UTC).isoformat()
+                        changed.append(record)
 
-            for i in range(0, len(changed), CHUNK):
-                chunk = changed[i:i + CHUNK]
-                r = http.post(
-                    f"{url}/rest/v1/{TABLE}", params={"on_conflict": "id"}, json=chunk,
-                    headers=_headers(key, **{"Prefer": "resolution=merge-duplicates,return=minimal",
-                                             "Content-Type": "application/json"}),
-                )
-                if r.status_code >= 400:
-                    self._save_state({"url": url, "shots": {k: v for k, v in sent.items()},
-                                      "thumbs": sorted(thumbs)})
-                    raise _friendly(r)
-                for rec in chunk:
-                    sent[rec["id"]] = current[rec["id"]]
-                result.upserted += len(chunk)
+                for i in range(0, len(changed), CHUNK):
+                    chunk = changed[i:i + CHUNK]
+                    r = http.post(
+                        f"{url}/rest/v1/{TABLE}", params={"on_conflict": "id"}, json=chunk,
+                        headers=_headers(key, **{"Prefer": "resolution=merge-duplicates,return=minimal",
+                                                 "Content-Type": "application/json"}),
+                    )
+                    if r.status_code >= 400:
+                        raise _friendly(r)
+                    for rec in chunk:
+                        sent[rec["id"]] = current[rec["id"]]
+                    result.upserted += len(chunk)
+                    self._save_state({"url": url, "shots": sent, "thumbs": sorted(thumbs)})
 
-            stale = [sid for sid in sent if sid not in current]
-            # Never wipe the dashboard because the local index came back empty.
-            if prune and stale and rows:
-                self._remove(http, url, key, stale)
-                for sid in stale:
-                    sent.pop(sid, None)
-                    thumbs.discard(sid)
-                result.removed = len(stale)
-
-        self._save_state({"url": url, "shots": sent, "thumbs": sorted(thumbs)})
+                stale = [sid for sid in sent if sid not in current]
+                if prune and stale and rows:
+                    limit = max(PRUNE_LIMIT_MIN, int(len(sent) * PRUNE_LIMIT_SHARE))
+                    if len(stale) > limit and not force:
+                        # Almost everything vanished at once: the local index was reset or rebuilt.
+                        # Deleting that much from the dashboard is not what anyone wants by accident.
+                        result.errors.append(
+                            f"Not removing {len(stale)} of {len(sent)} shots from the dashboard: that looks like a reset. "
+                            "Run `broll sync --force` if it is really what you want."
+                        )
+                    else:
+                        self._remove(http, url, key, stale)
+                        for sid in stale:
+                            sent.pop(sid, None)
+                            thumbs.discard(sid)
+                        result.removed = len(stale)
+        finally:
+            # Whatever happened, keep what already went across so the next run doesn't redo it.
+            self._save_state({"url": url, "shots": sent, "thumbs": sorted(thumbs)})
         return result
 
     # -- helpers ------------------------------------------------------------
@@ -276,16 +306,18 @@ class DashboardSync:
 
     @staticmethod
     def _remove(http: httpx.Client, url: str, key: str, ids: list[str]) -> None:
-        for i in range(0, len(ids), CHUNK):
-            chunk = ids[i:i + CHUNK]
+        for i in range(0, len(ids), DELETE_CHUNK):
+            chunk = ids[i:i + DELETE_CHUNK]
             quoted = ",".join(f'"{sid}"' for sid in chunk)
             r = http.delete(f"{url}/rest/v1/{TABLE}", params={"id": f"in.({quoted})"},
                             headers=_headers(key))
             if r.status_code >= 400:
                 raise _friendly(r)
-            http.request("DELETE", f"{url}/storage/v1/object/{BUCKET}",
-                         json={"prefixes": [f"{sid}.jpg" for sid in chunk]},
-                         headers=_headers(key, **{"Content-Type": "application/json"}))
+            gone = http.request("DELETE", f"{url}/storage/v1/object/{BUCKET}",
+                                json={"prefixes": [f"{sid}.jpg" for sid in chunk]},
+                                headers=_headers(key, **{"Content-Type": "application/json"}))
+            if gone.status_code >= 400:  # the rows are gone; a leftover thumbnail file is harmless, but say so
+                log.warning("dashboard thumbnails not removed (%s): %s", gone.status_code, gone.text[:120])
 
 
 class _Borrowed:

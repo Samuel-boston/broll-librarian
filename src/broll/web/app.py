@@ -134,6 +134,24 @@ def create_app(config: WorkspaceConfig, run_worker: bool = True) -> FastAPI:
     app = FastAPI(title=f"B-Roll Librarian - {config.name}", lifespan=lifespan)
     app.state.broll = state
 
+    @app.middleware("http")
+    async def same_origin_only(request, call_next):
+        """The app has no login, so a web page you happen to visit must not be able to drive it.
+
+        A browser always says where a cross-site form post came from (Origin, or Referer as a
+        fallback); if that isn't this app's own address, the request is refused. Requests with
+        neither header (curl, the CLI, tests) are not browser cross-site posts and pass.
+        """
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            from urllib.parse import urlparse
+
+            source = request.headers.get("origin") or request.headers.get("referer")
+            if source and urlparse(source).netloc != request.headers.get("host", ""):
+                from fastapi.responses import PlainTextResponse
+
+                return PlainTextResponse("Cross-site request refused.", status_code=403)
+        return await call_next(request)
+
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     app.mount(

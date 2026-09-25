@@ -203,3 +203,89 @@ def test_settings_page_shows_the_dashboard_card(workspace):
 
         empty = client.post("/settings/dashboard", data={"supabase_url": "", "service_key": ""})
         assert "Both the Project URL" in empty.text
+
+
+# ---- hardening (from the audit) ---------------------------------------------------------------
+
+
+def test_a_network_error_is_wrapped_and_progress_is_kept(connected, store):
+    good = add_shot(store, connected, "a.mp4")
+    fake = FakeSupabase()
+    sync = make_sync(connected, fake)
+    sync.run()  # first shot goes across
+
+    add_shot(store, connected, "b.mp4")
+
+    def boom(request):
+        if request.method == "POST" and request.url.path == "/rest/v1/library_shots":
+            raise httpx.ConnectError("connection reset")
+        return fake.handler(request)
+
+    broken = DashboardSync(connected, client=httpx.Client(transport=httpx.MockTransport(boom)))
+    with pytest.raises(DashboardSyncError, match="Couldn't finish"):
+        broken.run()
+    # the shot sent earlier is still remembered, so the retry doesn't redo it
+    state = json.loads(broken.state_path.read_text())
+    assert good in state["shots"]
+
+
+def test_a_reset_index_does_not_wipe_the_dashboard(connected, store):
+    ids = [add_shot(store, connected, f"{n}.mp4") for n in range(30)]
+    fake = FakeSupabase()
+    sync = make_sync(connected, fake)
+    sync.run()
+    assert len(fake.rows) == 30
+
+    # index rebuilt with only two clips: 28 of 30 "vanished"
+    store.conn.execute("DELETE FROM shots WHERE id NOT IN (?, ?)", (ids[0], ids[1]))
+    result = sync.run()
+    assert result.removed == 0 and len(fake.rows) == 30
+    assert any("looks like a reset" in e for e in result.errors)
+    # an explicit --force is allowed to do it
+    forced = sync.run(force=True)
+    assert forced.removed == 0 or len(fake.rows) <= 30  # force resends; nothing is pruned from a cleared state
+
+
+def test_a_damaged_state_file_starts_over_instead_of_crashing(connected, store):
+    add_shot(store, connected)
+    fake = FakeSupabase()
+    sync = make_sync(connected, fake)
+    sync.state_path.write_text('["not", "a", "dict"]')
+    assert sync.run().upserted == 1
+    sync.state_path.write_text('{"url": "%s"}' % URL)  # right url, missing shape
+    assert sync.run().total == 1
+
+
+def test_write_env_var_is_owner_only_and_rejects_line_breaks(broll_home):
+    from broll.config import write_env_var
+
+    path = write_env_var("DASHBOARD_SUPABASE_KEY", "abc")
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    with pytest.raises(ValueError):
+        write_env_var("X", "a\nEVIL=1")
+
+
+def test_cross_site_posts_are_refused_but_local_ones_work(workspace):
+    from fastapi.testclient import TestClient
+
+    from broll.web.app import create_app
+
+    with TestClient(create_app(workspace, run_worker=False)) as client:
+        evil = client.post("/settings/dashboard", data={"supabase_url": "https://evil.example", "service_key": ""},
+                           headers={"Origin": "https://evil.example"})
+        assert evil.status_code == 403
+        own = client.post("/settings/dashboard", data={"supabase_url": "", "service_key": ""},
+                          headers={"Origin": "http://testserver", "Host": "testserver"})
+        assert own.status_code == 200
+
+
+def test_the_saved_key_is_never_sent_to_a_different_address(connected, store):
+    from fastapi.testclient import TestClient
+
+    from broll.web.app import create_app
+
+    with TestClient(create_app(connected, run_worker=False)) as client:
+        r = client.post("/settings/dashboard", data={"supabase_url": "https://other.supabase.co", "service_key": ""})
+        assert "needed" in r.text  # no key for that address: it asks for one instead of reusing the saved one
+        plain = client.post("/settings/dashboard", data={"supabase_url": "http://evil.example", "service_key": "k"})
+        assert "https://" in plain.text

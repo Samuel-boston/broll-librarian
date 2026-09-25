@@ -102,7 +102,19 @@ async def save_dashboard(request: Request, supabase_url: str = Form(""), service
     state = request.app.state.broll
     config = state.config
     url = supabase_url.strip().rstrip("/")
-    key = service_key.strip() or os.environ.get(KEY_ENV, "")
+    stored_url = (config.dashboard.supabase_url or "").rstrip("/")
+    # The saved key is only ever reused for the address it was saved with. A different address
+    # needs the key typed again, so the saved one can't be sent somewhere new.
+    key = service_key.strip() or (os.environ.get(KEY_ENV, "") if url == stored_url else "")
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    local = parsed.hostname in ("localhost", "127.0.0.1")
+    if url and not (parsed.scheme == "https" or (parsed.scheme == "http" and local)):
+        return templates.TemplateResponse(
+            request=request, name="partials/settings_form.html",
+            context=_context(request, message="The Project URL must start with https://."),
+        )
     if not url or not key:
         return templates.TemplateResponse(
             request=request, name="partials/settings_form.html",
