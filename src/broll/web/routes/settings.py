@@ -19,6 +19,7 @@ from ...config import PROVIDER_KEY_ENV, broll_home, write_env_var
 from ...analysis.providers.registry import VISION_PROVIDERS
 from ...sync.dashboard import is_connected
 from ..app import templates
+from .drive_connect import redirect_uri
 
 router = APIRouter()
 
@@ -153,6 +154,27 @@ async def save_dashboard(request: Request, supabase_url: str = Form(""), service
     )
 
 
+@router.post("/settings/google-client", response_class=HTMLResponse)
+async def save_google_client(request: Request, client_id: str = Form(""), client_secret: str = Form("")):
+    """Save the Google OAuth client used for Connect Google Drive. The secret is never shown again."""
+    from ...drive.auth import CLIENT_ID_ENV, CLIENT_SECRET_ENV
+
+    cid, secret = client_id.strip(), client_secret.strip()
+    if not (cid or secret):
+        message = "Nothing changed."
+    elif not (cid and secret) and not (os.environ.get(CLIENT_ID_ENV) and os.environ.get(CLIENT_SECRET_ENV)):
+        message = "Both the client ID and the client secret are needed."
+    else:
+        if cid:
+            write_env_var(CLIENT_ID_ENV, cid)
+        if secret:
+            write_env_var(CLIENT_SECRET_ENV, secret)
+        message = "Google client saved. Now press Connect Google Drive."
+    return templates.TemplateResponse(
+        request=request, name="partials/settings_form.html", context=_context(request, message=message)
+    )
+
+
 @router.post("/settings/vocab", response_class=HTMLResponse)
 async def promote_term(request: Request, field: str = Form(...), term: str = Form(...)):
     state = request.app.state.broll
@@ -207,6 +229,8 @@ def _context(request: Request, message: str | None = None) -> dict:
         "keys": keys,
         "key_env": {n: (PROVIDER_KEY_ENV.get(n) or ("-",))[0] for n in VISION_PROVIDERS},
         "drive_connected": config.drive_token_path.exists(),
+        "google_client": bool(os.environ.get("GOOGLE_OAUTH_CLIENT_ID") and os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")),
+        "drive_redirect": redirect_uri(request),
         "embeddings_local": local_embeddings_available(),
         "vector_backend": vector_backend,
         "vectors": vectors,

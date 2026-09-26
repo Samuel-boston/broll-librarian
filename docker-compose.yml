@@ -1,0 +1,54 @@
+# B-Roll Librarian, hosted. Start it with:   docker compose up -d --build
+#
+# Then pick ONE way for people to reach it (see docs/HOSTING.md):
+#   Your own domain with HTTPS and a shared password (recommended, no upload size limit):
+#       docker compose --profile caddy up -d
+#   Cloudflare Tunnel + Access (email login, but Cloudflare caps uploads at 100 MB):
+#       docker compose --profile tunnel up -d
+#
+# Everything the library needs is kept in the "broll-data" volume: the index, thumbnails, backups and
+# the keys saved from the Settings page. Footage is never kept on the server.
+
+services:
+  librarian:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BROLL_HOME: /data
+    volumes:
+      - broll-data:/data
+    # Reachable from the server itself only; the tunnel or Caddy is the way in from outside.
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - librarian
+    profiles: ["tunnel"]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      BROLL_DOMAIN: ${BROLL_DOMAIN:-}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - librarian
+    profiles: ["caddy"]
+
+volumes:
+  broll-data:
+  caddy-data:

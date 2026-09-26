@@ -126,11 +126,37 @@
       <button class="btn">{{ 'Save and sync now' if dashboard.connected else 'Connect' }}</button>
     </form>
 
+    <form hx-post="/settings/google-client" hx-target="#settings" hx-swap="outerHTML" class="card space-y-4 p-6">
+      <h2 class="text-sm font-semibold text-white">Google Drive</h2>
+      <p class="text-sm">
+        {% if drive_connected %}<span class="text-emerald">Connected.</span>
+        {% else %}<span class="text-amber">Not connected.</span>{% endif %}
+      </p>
+      <p class="text-xs leading-relaxed text-faint">
+        Sign in with the Google account that owns the Drive folder. Uses a Google Cloud OAuth client of type
+        <em>Web application</em> with <code class="mono">{{ drive_redirect }}</code> added as an authorised redirect URI.
+      </p>
+      <label class="block">
+        <span class="label">OAuth client ID {{ '(saved)' if google_client else '' }}</span>
+        <input name="client_id" autocomplete="off" placeholder="{{ 'leave empty to keep it' if google_client else 'xxxx.apps.googleusercontent.com' }}" class="input mt-1.5">
+      </label>
+      <label class="block">
+        <span class="label">OAuth client secret {{ '(saved)' if google_client else '' }}</span>
+        <input name="client_secret" type="password" autocomplete="off" placeholder="{{ 'leave empty to keep it' if google_client else 'paste the client secret' }}" class="input mt-1.5">
+      </label>
+      <div class="flex flex-wrap items-center gap-3">
+        <button class="btn">Save client</button>
+        {% if google_client %}
+        <a href="/drive/connect" class="btn btn-primary">{{ 'Sign in with Google again' if drive_connected else 'Connect Google Drive' }}</a>
+        {% endif %}
+      </div>
+    </form>
+
     <div class="card space-y-2 p-6 text-sm">
       <h2 class="text-sm font-semibold text-white">Status</h2>
       <p class="text-muted">Drive: <span class="{{ 'text-emerald' if drive_connected else 'text-amber' }}">
-        {{ 'connected' if drive_connected else 'not connected - run broll drive login' }}</span></p>
-      <p class="text-muted">Embeddings: <span class="text-white">{{ 'local (sentence-transformers)' if embeddings_local else 'provider fallback' }}</span></p>
+        {{ 'connected' if drive_connected else 'not connected - use Connect Google Drive above' }}</span></p>
+      <p class="text-muted">Embeddings: <span class="text-white">{% if workspace.embedder.kind != 'local' %}{{ workspace.embedder.kind }} API{% elif embeddings_local %}local (sentence-transformers){% else %}provider fallback{% endif %}</span></p>
       <p class="text-muted">Vector index: <span class="text-white">{{ vectors }} vector(s), {{ vector_backend }} backend</span></p>
     </div>
 

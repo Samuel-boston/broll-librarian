@@ -1,0 +1,19 @@
+#cloud-config
+# Paste this into "Cloud config" when creating an Ubuntu 24.04 server (Hetzner: Create server >
+# Cloud config). It installs Docker, downloads the librarian and starts it, listening on the server's
+# own loopback address only. Nothing is reachable from the internet until you start Caddy or the tunnel
+# (docs/HOSTING.md), which is why the firewall opens the web ports but nothing else runs on them yet.
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - git
+  - ufw
+runcmd:
+  - ufw allow OpenSSH
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+  - systemctl enable --now docker
+  - git clone https://github.com/Samuel-boston/broll-librarian.git /opt/broll-librarian
+  - cd /opt/broll-librarian && docker compose up -d --build

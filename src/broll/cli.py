@@ -19,7 +19,7 @@ import typer
 from . import config as cfg
 from .analysis.analyzer import Analyzer
 from .analysis.prompt import PROMPT_VERSION
-from .analysis.embedder import get_embedder
+from .analysis.embedder import PROVIDER_EMBEDDING_MODELS, get_embedder
 from .analysis.providers.registry import VISION_PROVIDERS, check_credentials
 from .analysis.schema import VOCABULARIES, ShotContext, find_oov
 from .db.models import Shot, Source, Workspace
@@ -95,6 +95,12 @@ def init(
     provider: str = typer.Option("gemini", "--provider", "-p", help=f"One of {', '.join(VISION_PROVIDERS)}."),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Provider model override."),
     drive_folder: Optional[str] = typer.Option(None, "--drive-folder", help="Existing Drive root folder ID."),
+    embedder: str = typer.Option(
+        "local", "--embedder",
+        help="Where search embeddings come from: local (free, needs ~2GB of RAM and the "
+             "embeddings-local extra), or gemini / openai (an API call per shot; small servers).",
+    ),
+    hosted: bool = typer.Option(False, "--hosted", help="Settings for a server: daily database backups on."),
 ) -> None:
     """Create a workspace: its config, its database, and a registry entry."""
     cfg.load_env()
@@ -111,6 +117,14 @@ def init(
     workspace_config.provider.vision = provider
     workspace_config.provider.vision_model = model
     workspace_config.drive_root_folder_id = drive_folder
+    if embedder not in ("local", *PROVIDER_EMBEDDING_MODELS):
+        _fail(f"Unknown embedder {embedder!r}. Choose local, gemini or openai.")
+    if embedder != "local":
+        # The vector table's size is fixed when it is created, so set it now, not later.
+        workspace_config.embedder.kind = embedder
+        workspace_config.embedder.model, workspace_config.embedder.dimensions = PROVIDER_EMBEDDING_MODELS[embedder]
+    if hosted:
+        workspace_config.backup.enabled = True
     workspace_config.save()
 
     Store.for_config(workspace_config).close()  # creates and migrates library.db
@@ -747,6 +761,25 @@ def drive_logout(workspace: Optional[str] = typer.Option(None, "--workspace", "-
     _echo("Token removed." if logout(workspace_config) else "No token stored.")
 
 
+@drive_app.command("import")
+def drive_import(
+    file: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True,
+                                help="A Drive login made elsewhere: another drive_token.json, or a JSON file with "
+                                     "client_id, client_secret and refresh_token."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+) -> None:
+    """Use a Drive login made on another machine (for a server with no browser)."""
+    from .drive.auth import DriveAuthError, import_token
+
+    workspace_config = resolve_workspace(workspace)
+    try:
+        data = json.loads(file.read_text())
+        import_token(workspace_config, data)
+    except (ValueError, DriveAuthError) as exc:
+        _fail(f"Could not use that file: {exc}")
+    _echo(f"Connected. Token stored at {workspace_config.drive_token_path}")
+
+
 @drive_app.command("status")
 def drive_status(workspace: Optional[str] = typer.Option(None, "--workspace", "-w")) -> None:
     """Show the Drive connection and root folder."""
@@ -1300,6 +1333,27 @@ def reset(
     if result.dashboard_error:
         typer.secho(f"The dashboard was not updated: {result.dashboard_error}", fg=typer.colors.YELLOW)
     _echo("Drive was not touched.")
+
+
+@app.command()
+def backup(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    keep: Optional[int] = typer.Option(None, "--keep", help="How many copies to keep (default 7)."),
+    list_only: bool = typer.Option(False, "--list", help="Show the copies that exist instead of making one."),
+) -> None:
+    """Copy the library database into BROLL_HOME/workspaces/<id>/backups (a hosted install does this daily)."""
+    from .backup import backup_database, list_backups
+
+    workspace_config = resolve_workspace(workspace)
+    if list_only:
+        found = list_backups(workspace_config)
+        for path in found:
+            _echo(f"{path.name}  {path.stat().st_size / 1e6:.1f} MB")
+        if not found:
+            _echo("No backups yet.")
+        return
+    target = backup_database(workspace_config, keep)
+    _echo(f"Backed up to {target}")
 
 
 @app.command()

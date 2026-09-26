@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from datetime import UTC, datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -29,6 +31,8 @@ TEMPLATE_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+# Lets the layout show a Sign out button only when the shared-password gate is on.
+templates.env.globals["access_enabled"] = lambda: bool(os.environ.get("BROLL_ACCESS_PASSWORD"))
 
 
 class AppState:
@@ -43,6 +47,7 @@ class AppState:
         self.worker_store: Store | None = None
         self.drive_organise = None  # shared by the worker and the Top Picks star
         self.sync_task: asyncio.Task | None = None
+        self.backup_task: asyncio.Task | None = None
         self.sync_status: dict[str, object] = {"state": "off", "message": "", "at": None}
         # Transcript runs live in memory: a run is cheap to redo, and
         # persisting a whole timeline would be a schema for one screen.
@@ -76,6 +81,27 @@ class AppState:
         if self.sync_task is None:
             self.sync_task = asyncio.create_task(self._sync_loop())
 
+    def start_backups(self) -> None:
+        """A hosted install keeps a few recent copies of the database. Off unless asked for."""
+        from ..backup import backups_enabled
+
+        if self.backup_task is None and backups_enabled(self.config):
+            self.backup_task = asyncio.create_task(self._backup_loop())
+
+    async def _backup_loop(self) -> None:
+        from ..backup import backup_database, list_backups
+
+        interval = max(1, self.config.backup.interval_h) * 3600
+        while True:
+            try:
+                recent = list_backups(self.config)
+                fresh = recent and (datetime.now(UTC).timestamp() - recent[0].stat().st_mtime) < interval
+                if not fresh:
+                    await asyncio.to_thread(backup_database, self.config)
+            except Exception as exc:  # noqa: BLE001 - a backup problem must not stop the app
+                log.warning("database backup failed: %s", exc)
+            await asyncio.sleep(3600)
+
     async def _sync_loop(self) -> None:
         from datetime import UTC, datetime
 
@@ -107,6 +133,8 @@ class AppState:
     async def stop_worker(self) -> None:
         if self.sync_task:
             self.sync_task.cancel()
+        if self.backup_task:
+            self.backup_task.cancel()
         if self.worker:
             self.worker.stop()
         if self.worker_task:
@@ -126,6 +154,7 @@ def create_app(config: WorkspaceConfig, run_worker: bool = True) -> FastAPI:
     async def lifespan(app: FastAPI):
         await state.start_worker()
         state.start_dashboard_sync()
+        state.start_backups()
         try:
             yield
         finally:
@@ -152,6 +181,10 @@ def create_app(config: WorkspaceConfig, run_worker: bool = True) -> FastAPI:
                 return PlainTextResponse("Cross-site request refused.", status_code=403)
         return await call_next(request)
 
+    from . import access
+
+    access.install(app)  # /healthz, and the optional shared-password login
+
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     app.mount(
@@ -160,7 +193,7 @@ def create_app(config: WorkspaceConfig, run_worker: bool = True) -> FastAPI:
         name="thumbnails",
     )
 
-    from .routes import ingest, library, review, search, settings, transcript
+    from .routes import drive_connect, ingest, library, review, search, settings, transcript
 
     app.include_router(library.router)
     app.include_router(search.router)
@@ -168,6 +201,7 @@ def create_app(config: WorkspaceConfig, run_worker: bool = True) -> FastAPI:
     app.include_router(transcript.router)
     app.include_router(review.router)
     app.include_router(settings.router)
+    app.include_router(drive_connect.router)
 
     @app.exception_handler(404)
     async def not_found(request: Request, exc):  # noqa: ANN001

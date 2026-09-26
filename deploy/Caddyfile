@@ -1,0 +1,11 @@
+# HTTPS for your own domain, with a certificate fetched and renewed automatically.
+# Point the domain's DNS at this server, set BROLL_DOMAIN in .env, and set BROLL_ACCESS_PASSWORD too:
+# without Cloudflare Access in front, the shared password is the only lock.
+{$BROLL_DOMAIN} {
+    request_body {
+        max_size 20GB
+    }
+    reverse_proxy librarian:8000 {
+        flush_interval -1
+    }
+}

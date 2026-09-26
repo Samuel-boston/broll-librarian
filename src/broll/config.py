@@ -284,6 +284,14 @@ class ClientProfile(BaseModel):
     emotions: list[str] = Field(default_factory=list)
 
 
+class BackupConfig(BaseModel):
+    """Daily copies of the library database, kept next to it. Turned on by hosted installs."""
+
+    enabled: bool = False
+    keep: int = 7
+    interval_h: int = 24
+
+
 class DashboardConfig(BaseModel):
     """Optional link to the Content Ops dashboard's Supabase project.
 
@@ -307,6 +315,7 @@ class WorkspaceConfig(BaseModel):
     ingest: IngestConfig = Field(default_factory=IngestConfig)
     transcript: TranscriptConfig = Field(default_factory=TranscriptConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
+    backup: BackupConfig = Field(default_factory=BackupConfig)
 
     drive_root_folder_id: str | None = None
     drive_root_folder_name: str = "B-Roll"

@@ -1,5 +1,7 @@
 # Running this on a server
 
+> Setting it up for a team? [docs/HOSTING.md](HOSTING.md) is the shorter route: a Docker setup with a password, HTTPS and Connect Google Drive from the browser. This page is for managing the server by hand.
+
 ## What it needs
 
 This is a long-running application with local state, not a set of serverless

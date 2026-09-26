@@ -68,6 +68,49 @@ def client_config() -> dict:
     }
 
 
+def web_client_config(redirect_uri: str) -> dict:
+    """The same OAuth client, as a "Web application" client, for signing in through the hosted app.
+
+    A server can't open a browser window on itself, so the hosted app sends the person to Google and
+    Google sends them back to `redirect_uri`, which must be registered on the client in Google Cloud.
+    """
+    base = client_config()
+    inner = base.get("installed") or base.get("web") or {}
+    if not (inner.get("client_id") and inner.get("client_secret")):
+        raise DriveAuthError("The Google OAuth client is missing its id or secret.")
+    return {
+        "web": {
+            "client_id": inner["client_id"],
+            "client_secret": inner["client_secret"],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [redirect_uri],
+        }
+    }
+
+
+def save_credentials(config: WorkspaceConfig, credentials) -> None:
+    _save(config, credentials)
+
+
+def import_token(config: WorkspaceConfig, data: dict) -> None:
+    """Store a login made elsewhere (for example on a laptop): client id, client secret and refresh token."""
+    missing = [k for k in ("client_id", "client_secret", "refresh_token") if not data.get(k)]
+    if missing:
+        raise DriveAuthError(f"That login is missing {', '.join(missing)}.")
+    payload = {
+        "type": "authorized_user",
+        "client_id": data["client_id"],
+        "client_secret": data["client_secret"],
+        "refresh_token": data["refresh_token"],
+        "token_uri": data.get("token_uri") or "https://oauth2.googleapis.com/token",
+        "scopes": SCOPES,
+    }
+    config.ensure_dirs()
+    config.drive_token_path.write_text(json.dumps(payload))
+    config.drive_token_path.chmod(0o600)
+
+
 def load_credentials(config: WorkspaceConfig):
     """Return stored credentials, refreshing them if needed, else None."""
     Request, Credentials, _ = _require_libraries()

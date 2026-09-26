@@ -523,6 +523,11 @@ mixed-frame-rate sequence and a clip too short for its beat. **Manual gate not
 yet run:** importing a real export into Premiere with media linked needs a
 Premiere licence and a synced Drive mount.
 
+## Hosting it for a team
+
+To run it on a small server that everyone shares, with a password, HTTPS, daily database copies and a
+Connect Google Drive button, see [docs/HOSTING.md](docs/HOSTING.md). It costs about $8 to $9 a month.
+
 ## Removing things
 
 Every removal is local: **nothing in Google Drive is ever deleted**, and the shortcuts the organiser made stay where they are. If the library is connected to the dashboard, what you remove is taken off its Footage index too.

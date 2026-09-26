@@ -195,6 +195,9 @@
         {% endfor %}
       </nav>
       <span class="chip ml-auto hidden py-1 text-xs sm:inline-flex">{{ workspace.name }}</span>
+      {% if access_enabled() %}
+      <form method="post" action="/logout"><button class="text-xs text-faint transition hover:text-white" type="submit">Sign out</button></form>
+      {% endif %}
     </div>
   </header>
   <main class="mx-auto max-w-7xl px-6 py-8">
