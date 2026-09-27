@@ -526,7 +526,7 @@ Premiere licence and a synced Drive mount.
 ## Hosting it for a team
 
 To run it on a small server that everyone shares, with a password, HTTPS, daily database copies and a
-Connect Google Drive button, see [docs/HOSTING.md](docs/HOSTING.md). It costs about $8 to $9 a month.
+Connect Google Drive button, see [docs/HOSTING.md](docs/HOSTING.md). It costs about $8 to $9 a month. The Docker setup itself (image build, the app, Caddy's HTTPS, the login and an upload) has been run end to end; only the real server and a real Google sign-in have not.
 
 ## Removing things
 

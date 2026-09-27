@@ -61,28 +61,19 @@ Without cloud config: install Docker and Docker Compose, then
 Add a DNS **A record** for a name such as `library.example.com` pointing at the server's IP address. If it
 is on Cloudflare, set it to **DNS only** (grey cloud), not proxied, or the 100 MB cap applies.
 
-### 3. Settings
-
-On the server:
+### 3. Set it up and start it
 
 ```bash
 cd /opt/broll-librarian
-cp deploy/env.hosted.example .env
-nano .env
+./deploy/setup.sh
 ```
 
-Fill in `BROLL_PUBLIC_URL` (for example `https://library.example.com`), `BROLL_DOMAIN` (the same name without
-`https://`), and `BROLL_ACCESS_PASSWORD`. The Gemini key and the Google details can go here or be typed into
-the app's Settings page later.
+It asks for the domain, the team password (or generates one), and the Gemini and Google details — any of
+which can be left empty and added later in Settings — then writes `.env` and starts the app. Open the
+address in a browser: it asks for the password, then shows the library.
 
-### 4. Start it
-
-```bash
-docker compose --profile caddy up -d --build
-```
-
-Open the address in a browser. It asks for the password, then shows the library. The first start creates
-the library, so give it a minute.
+To do it by hand instead: `cp deploy/env.hosted.example .env`, edit it, then
+`docker compose --profile caddy up -d --build`.
 
 ### 5. Connect the pieces in Settings
 
