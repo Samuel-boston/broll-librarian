@@ -79,9 +79,17 @@ class Worker:
 
         while not self._stop.is_set():
             # Take the machine-wide slot before claiming, so a job waiting for
-            # its turn stays "queued" instead of looking like it is running.
+            # its turn stays "queued" instead of looking like it is running. The
+            # wait is in short steps so a stop is noticed, and a worker told to
+            # stop while it waited never claims another job.
             if self.gate is not None:
-                await self.gate.acquire()
+                try:
+                    await asyncio.wait_for(self.gate.acquire(), timeout=poll_interval)
+                except asyncio.TimeoutError:
+                    continue
+                if self._stop.is_set():
+                    self.gate.release()
+                    break
             job = self.store.claim_job()
             if job is None:
                 if self.gate is not None:

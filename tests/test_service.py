@@ -189,6 +189,25 @@ async def test_one_gate_holds_every_client_to_one_file_at_a_time(broll_home):
     assert SlowPipeline.most == 1, "two clients' workers must share the one slot"
 
 
+async def test_a_worker_told_to_stop_while_waiting_its_turn_claims_nothing(workspace, store):
+    import asyncio
+
+    from broll.jobs.queue import queue_stats
+    from broll.jobs.worker import Worker
+
+    for n in range(2):
+        store.enqueue("index_source", {"filename": f"clip{n}.mp4", "origin": "local"})
+    gate = asyncio.Semaphore(1)
+    await gate.acquire()                      # another client's file holds the slot
+    worker = Worker(workspace, store, SlowPipeline(), gate=gate, idle_poll_s=0.05)
+    running = asyncio.create_task(worker.run(drain=False))
+    await asyncio.sleep(0.2)
+    worker.stop()
+    await asyncio.wait_for(running, timeout=2)
+    gate.release()
+    assert queue_stats(store).queued == 2, "a stopping worker must not start another file"
+
+
 def test_a_lazy_server_does_not_load_the_model_at_start(workspace, monkeypatch):
     from fastapi.testclient import TestClient
 
