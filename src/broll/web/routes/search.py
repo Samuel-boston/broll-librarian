@@ -20,7 +20,7 @@ from ...analysis.schema import (
 from ...ingest.pipeline import drive_organise_callable
 from ...search.filters import SearchFilters
 from ...search.query import SearchEngine
-from ..app import templates
+from ..app import client_state, templates
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -79,7 +79,7 @@ async def search_page(
     exact: bool = False,
     limit: int = 48,
 ):
-    state = request.app.state.broll
+    state = client_state(request)
     config = state.config
     store = state.store()
     try:
@@ -140,7 +140,7 @@ async def search_page(
 @router.post("/shots/{shot_id}/top-pick", response_class=HTMLResponse)
 async def toggle_top_pick(request: Request, shot_id: str):
     """Star or unstar a shot, and update the Top Picks shortcut in Drive."""
-    state = request.app.state.broll
+    state = client_state(request)
     store = state.store()
     try:
         shot = store.get_shot(shot_id)

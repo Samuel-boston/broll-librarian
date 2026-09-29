@@ -10,14 +10,14 @@ from fastapi.responses import HTMLResponse
 from ...ingest.scanner import DiscoveredFile, media_kind, scan_local
 from ...jobs.queue import enqueue_files, queue_stats
 from ...library_admin import cancel_job, clear_queue
-from ..app import templates
+from ..app import client_state, templates
 
 router = APIRouter()
 
 
 @router.get("/ingest", response_class=HTMLResponse)
 async def ingest_page(request: Request):
-    state = request.app.state.broll
+    state = client_state(request)
     store = state.store()
     try:
         context = _queue_context(request, store, state)
@@ -29,7 +29,7 @@ async def ingest_page(request: Request):
 @router.post("/ingest/retry", response_class=HTMLResponse)
 async def retry_failed(request: Request):
     """Requeue everything that failed - usually a run of provider 503s."""
-    state = request.app.state.broll
+    state = client_state(request)
     store = state.store()
     try:
         requeued = store.requeue_failed_jobs()
@@ -45,7 +45,7 @@ async def retry_failed(request: Request):
 @router.post("/ingest/jobs/{job_id}/cancel", response_class=HTMLResponse)
 async def cancel_one(request: Request, job_id: str):
     """Take one waiting file out of the queue."""
-    state = request.app.state.broll
+    state = client_state(request)
     store = state.store()
     try:
         result = cancel_job(state.config, store, job_id)
@@ -64,7 +64,7 @@ async def cancel_one(request: Request, job_id: str):
 @router.post("/ingest/clear", response_class=HTMLResponse)
 async def clear_the_queue(request: Request):
     """Empty the queue of everything still waiting. Files already being indexed finish."""
-    state = request.app.state.broll
+    state = client_state(request)
     store = state.store()
     try:
         result = clear_queue(state.config, store)
@@ -81,7 +81,7 @@ async def clear_the_queue(request: Request):
 @router.get("/ingest/queue", response_class=HTMLResponse)
 async def queue_partial(request: Request):
     """Polled by HTMX every couple of seconds while anything is outstanding."""
-    state = request.app.state.broll
+    state = client_state(request)
     store = state.store()
     try:
         context = _queue_context(request, store, state)
@@ -92,7 +92,7 @@ async def queue_partial(request: Request):
 
 @router.post("/ingest/upload", response_class=HTMLResponse)
 async def upload(request: Request, files: list[UploadFile] = File(default=[])):
-    state = request.app.state.broll
+    state = client_state(request)
     store = state.store()
     accepted, rejected = [], []
     try:
@@ -122,7 +122,7 @@ async def upload(request: Request, files: list[UploadFile] = File(default=[])):
 @router.post("/ingest/path", response_class=HTMLResponse)
 async def ingest_path(request: Request, path: str = Form(...)):
     """Point the tool at a local folder. Files there are never moved or deleted."""
-    state = request.app.state.broll
+    state = client_state(request)
     store = state.store()
     try:
         target = Path(path).expanduser()

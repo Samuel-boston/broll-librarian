@@ -861,19 +861,40 @@ def serve(
                                 help="Run the ingest worker inside the web process."),
     reload: bool = typer.Option(False, "--reload"),
 ) -> None:
-    """Serve the web UI (and, by default, the ingest worker) on one process."""
-    workspace_config = resolve_workspace(workspace)
+    """Serve the web UI (and, by default, the ingest worker) on one process.
+
+    With no --workspace, every client library is served from this one process
+    and you switch between them in the header.
+    """
+    cfg.load_env()
     try:
         import uvicorn
     except ImportError:
         _fail("The web UI needs the extra: pip install 'broll-librarian[web]'")
 
-    from .web.app import create_app
+    from .web.app import create_studio_app
 
-    _echo(f"Serving {workspace_config.name!r} on http://{host}:{port}")
+    if workspace or os.environ.get(WORKSPACE_ENV):
+        configs = [resolve_workspace(workspace)]
+    else:
+        registry = Registry()
+        try:
+            entries = registry.list()
+        finally:
+            registry.close()
+        if not entries:
+            _fail('No workspaces yet. Run: broll init --name "My Library"')
+        configs = [cfg.load_workspace_config(entry.id) for entry in entries]
+
+    if len(configs) == 1:
+        _echo(f"Serving {configs[0].name!r} on http://{host}:{port}")
+    else:
+        _echo(f"Serving {len(configs)} client libraries on http://{host}:{port}")
+        for config in configs:
+            _echo(f"  {config.name}  ({config.id})")
     if not worker:
         _echo("Worker disabled - run `broll work --follow` separately.")
-    uvicorn.run(create_app(workspace_config, run_worker=worker),
+    uvicorn.run(create_studio_app(configs, run_worker=worker),
                 host=host, port=port, reload=reload)
 
 

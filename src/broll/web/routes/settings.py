@@ -18,7 +18,7 @@ from ...analysis.schema import VOCABULARIES
 from ...config import PROVIDER_KEY_ENV, broll_home, write_env_var
 from ...analysis.providers.registry import VISION_PROVIDERS
 from ...sync.dashboard import is_connected
-from ..app import templates
+from ..app import client_state, templates
 from .drive_connect import redirect_uri
 
 router = APIRouter()
@@ -46,7 +46,7 @@ async def save_settings(
     requests_per_minute: float = Form(0.0),
     review_below_confidence: float = Form(0.7),
 ):
-    state = request.app.state.broll
+    state = client_state(request)
     config = state.config
     if provider in VISION_PROVIDERS:
         config.provider.vision = provider
@@ -100,7 +100,7 @@ async def save_dashboard(request: Request, supabase_url: str = Form(""), service
 
     from ...sync.dashboard import KEY_ENV, DashboardSync, DashboardSyncError
 
-    state = request.app.state.broll
+    state = client_state(request)
     config = state.config
     url = supabase_url.strip().rstrip("/")
     stored_url = (config.dashboard.supabase_url or "").rstrip("/")
@@ -177,7 +177,7 @@ async def save_google_client(request: Request, client_id: str = Form(""), client
 
 @router.post("/settings/vocab", response_class=HTMLResponse)
 async def promote_term(request: Request, field: str = Form(...), term: str = Form(...)):
-    state = request.app.state.broll
+    state = client_state(request)
     if field not in VOCABULARIES:
         return templates.TemplateResponse(
             request=request, name="partials/settings_form.html",
@@ -206,7 +206,7 @@ def _write_env(name: str, value: str) -> Path:
 
 
 def _context(request: Request, message: str | None = None) -> dict:
-    state = request.app.state.broll
+    state = client_state(request)
     config = state.config
     store = state.store()
     try:

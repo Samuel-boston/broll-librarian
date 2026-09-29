@@ -10,7 +10,7 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from ...review import ENUM_OPTIONS, CorrectionError, apply_correction, review_queue
-from ..app import templates
+from ..app import client_state, templates
 
 router = APIRouter()
 
@@ -29,7 +29,7 @@ def _categories(config) -> list[str]:
 
 @router.get("/review", response_class=HTMLResponse)
 async def review_page(request: Request):
-    state = request.app.state.broll
+    state = client_state(request)
     store = state.store()
     try:
         context = {
@@ -47,7 +47,7 @@ async def review_page(request: Request):
 
 @router.post("/review/{shot_id}", response_class=HTMLResponse)
 async def save_correction(request: Request, shot_id: str, status: str = Form("indexed")):
-    state = request.app.state.broll
+    state = client_state(request)
     form = await request.form()
     # getlist()[-1]: a checkbox posts a hidden "false" then, if ticked, "true".
     updates = {field: form.getlist(field)[-1] for field in EDITABLE if field in form}

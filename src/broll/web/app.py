@@ -57,15 +57,20 @@ class AppState:
         """A fresh connection per request. SQLite connections are cheap."""
         return Store.for_config(self.config)
 
-    async def start_worker(self) -> None:
+    async def start_worker(self, embedder=None) -> None:
+        # The embedding model is ~400 MB resident, so a studio serving eight
+        # clients loads it once and hands the same one to every client.
+        if embedder is not None:
+            self.embedder = embedder
         if not self.run_worker:
             return
-        try:
-            self.embedder = get_embedder(self.config)
-            await asyncio.to_thread(self.embedder.warm_up)
-        except Exception as exc:  # keyword search still works without embeddings
-            log.warning("embeddings unavailable: %s", exc)
-            self.embedder = None
+        if self.embedder is None:
+            try:
+                self.embedder = get_embedder(self.config)
+                await asyncio.to_thread(self.embedder.warm_up)
+            except Exception as exc:  # keyword search still works without embeddings
+                log.warning("embeddings unavailable: %s", exc)
+                self.embedder = None
 
         self.worker_store = self.store()
         self.drive_organise = drive_organise_callable(self.config)
@@ -146,22 +151,113 @@ class AppState:
             self.worker_store.close()
 
 
+class Studio:
+    """Every client library this server serves, and which one a request means.
+
+    One process, one embedding model, one worker per client. A client is a
+    workspace: its own database, its own Drive tree, its own folder structure.
+    """
+
+    def __init__(self, configs: list[WorkspaceConfig], run_worker: bool = True):
+        if not configs:
+            raise ValueError("A studio needs at least one client library.")
+        self.order = [config.id for config in configs]
+        self.clients: dict[str, AppState] = {
+            config.id: AppState(config, run_worker=run_worker) for config in configs
+        }
+        self.embedder = None
+
+    @property
+    def default_id(self) -> str:
+        return self.order[0]
+
+    def state(self, client_id: str | None) -> AppState:
+        """The runtime for this client, or the default when the id is unknown."""
+        return self.clients.get(client_id or "", self.clients[self.default_id])
+
+    def summaries(self) -> list[dict[str, str]]:
+        return [
+            {"id": cid, "name": self.clients[cid].config.name} for cid in self.order
+        ]
+
+    async def start(self) -> None:
+        first = self.clients[self.default_id]
+        if first.run_worker:
+            try:
+                self.embedder = get_embedder(first.config)
+                await asyncio.to_thread(self.embedder.warm_up)
+            except Exception as exc:  # keyword search still works without embeddings
+                log.warning("embeddings unavailable: %s", exc)
+                self.embedder = None
+        for state in self.clients.values():
+            shared = self.embedder if state.config.embedder == first.config.embedder else None
+            await state.start_worker(embedder=shared)
+            state.start_dashboard_sync()
+            state.start_backups()
+
+    async def stop(self) -> None:
+        for state in self.clients.values():
+            await state.stop_worker()
+
+
+def client_state(request: Request) -> AppState:
+    """The client library this request is about.
+
+    Resolved once per request by the middleware below, from ?client= or the
+    cookie that remembers the last one used.
+    """
+    return request.app.state.studio.state(getattr(request.state, "client_id", None))
+
+
+CLIENT_COOKIE = "broll_client"
+
+
 def create_app(config: WorkspaceConfig, run_worker: bool = True) -> FastAPI:
-    config.ensure_dirs()
-    state = AppState(config, run_worker=run_worker)
+    """One client library. The same app as a studio of one."""
+    return create_studio_app([config], run_worker=run_worker)
+
+
+def create_studio_app(configs: list[WorkspaceConfig], run_worker: bool = True) -> FastAPI:
+    for config in configs:
+        config.ensure_dirs()
+    studio = Studio(configs, run_worker=run_worker)
+    config = configs[0]
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        await state.start_worker()
-        state.start_dashboard_sync()
-        state.start_backups()
+        await studio.start()
         try:
             yield
         finally:
-            await state.stop_worker()
+            await studio.stop()
 
-    app = FastAPI(title=f"B-Roll Librarian - {config.name}", lifespan=lifespan)
-    app.state.broll = state
+    title = (
+        f"B-Roll Librarian - {config.name}" if len(configs) == 1
+        else f"B-Roll Librarian - {len(configs)} clients"
+    )
+    app = FastAPI(title=title, lifespan=lifespan)
+    app.state.studio = studio
+    # Kept so anything holding the old handle still reaches a working client.
+    app.state.broll = studio.clients[studio.default_id]
+
+    @app.middleware("http")
+    async def pick_client(request: Request, call_next):
+        """Which client's library this request is about.
+
+        ?client= wins and is remembered in a cookie, so every link and form on
+        the page after it stays inside that client.
+        """
+        chosen = request.query_params.get("client") or request.cookies.get(CLIENT_COOKIE)
+        if chosen not in studio.clients:
+            chosen = studio.default_id
+        request.state.client_id = chosen
+        request.state.client = studio.clients[chosen].config
+        request.state.clients = studio.summaries()
+        response = await call_next(request)
+        if request.query_params.get("client") in studio.clients:
+            response.set_cookie(CLIENT_COOKIE, chosen, max_age=60 * 60 * 24 * 365,
+                                httponly=True, samesite="lax")
+        return response
 
     @app.middleware("http")
     async def same_origin_only(request, call_next):
@@ -187,13 +283,27 @@ def create_app(config: WorkspaceConfig, run_worker: bool = True) -> FastAPI:
 
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-    app.mount(
-        "/thumbnails",
-        StaticFiles(directory=str(config.thumbnails_dir)),
-        name="thumbnails",
-    )
+    @app.get("/thumbnails/{name}")
+    async def thumbnail(request: Request, name: str):
+        """Thumbnails live per client, so the active client is looked in first.
 
-    from .routes import drive_connect, ingest, library, review, search, settings, transcript
+        Shot ids are unique across clients, so a thumbnail referenced while
+        another client is active still resolves rather than 404ing.
+        """
+        from fastapi.responses import FileResponse, Response
+
+        if "/" in name or "\\" in name or name.startswith("."):
+            return Response(status_code=404)
+        active = client_state(request).config
+        for candidate in (active, *(s.config for s in studio.clients.values())):
+            path = candidate.thumbnails_dir / name
+            if path.is_file():
+                return FileResponse(path, headers={"Cache-Control": "public, max-age=86400"})
+        return Response(status_code=404)
+
+    from .routes import (
+        api, drive_connect, ingest, library, review, search, settings, transcript,
+    )
 
     app.include_router(library.router)
     app.include_router(search.router)
@@ -202,9 +312,16 @@ def create_app(config: WorkspaceConfig, run_worker: bool = True) -> FastAPI:
     app.include_router(review.router)
     app.include_router(settings.router)
     app.include_router(drive_connect.router)
+    app.include_router(api.router)
 
     @app.exception_handler(404)
     async def not_found(request: Request, exc):  # noqa: ANN001
+        # An agent calling the API needs the reason, not a page of HTML.
+        if request.url.path.startswith("/api/"):
+            from fastapi.responses import JSONResponse
+
+            detail = getattr(exc, "detail", "Not found.")
+            return JSONResponse({"detail": detail}, status_code=404)
         return HTMLResponse(
             templates.get_template("404.html").render({"request": request}), status_code=404
         )

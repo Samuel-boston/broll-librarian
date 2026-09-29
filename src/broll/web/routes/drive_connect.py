@@ -20,6 +20,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 
 from ...drive.auth import SCOPES, DriveAuthError, save_credentials, web_client_config
+from ..app import client_state
 
 router = APIRouter()
 
@@ -49,7 +50,7 @@ def _back(message: str) -> RedirectResponse:
 
 @router.get("/drive/connect")
 async def drive_connect(request: Request):
-    state = request.app.state.broll
+    state = client_state(request)
     uri = redirect_uri(request)
     try:
         flow = new_flow(uri)
@@ -67,7 +68,7 @@ async def drive_connect(request: Request):
 
 @router.get("/drive/callback")
 async def drive_callback(request: Request, code: str = "", state: str = "", error: str = ""):
-    app_state = request.app.state.broll
+    app_state = client_state(request)
     if error:
         return _back("Google Drive was not connected: " + ("you declined access." if error == "access_denied" else error))
     pending = app_state.__dict__.setdefault("oauth_pending", {})

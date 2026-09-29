@@ -194,7 +194,20 @@
         <a href="{{ href }}" class="nav-link {% if active == key %}is-active{% endif %}">{{ label }}</a>
         {% endfor %}
       </nav>
+      {% set clients = request.state.clients if request.state is defined else none %}
+      {% if clients and clients|length > 1 %}
+      <label class="ml-auto flex items-center gap-2">
+        <span class="hidden text-[11px] uppercase tracking-wider text-faint sm:inline">Client</span>
+        <select class="select w-auto py-1.5 text-xs" aria-label="Which client's library"
+                onchange="location.href = '/library?client=' + encodeURIComponent(this.value)">
+          {% for entry in clients %}
+          <option value="{{ entry.id }}" {% if entry.id == request.state.client.id %}selected{% endif %}>{{ entry.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% else %}
       <span class="chip ml-auto hidden py-1 text-xs sm:inline-flex">{{ workspace.name }}</span>
+      {% endif %}
       {% if access_enabled() %}
       <form method="post" action="/logout"><button class="text-xs text-faint transition hover:text-white" type="submit">Sign out</button></form>
       {% endif %}

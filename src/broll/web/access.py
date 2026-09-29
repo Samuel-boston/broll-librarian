@@ -165,6 +165,10 @@ def install(app) -> None:
         pw = password()
         if pw is None or request.url.path in PUBLIC_PATHS:
             return await call_next(request)
+        # The JSON API carries its own auth (BROLL_API_TOKEN, or loopback only),
+        # and an agent cannot follow a redirect to a login form.
+        if request.url.path.startswith("/api/"):
+            return await call_next(request)
         if valid_token(pw, request.cookies.get(COOKIE)):
             return await call_next(request)
         if request.headers.get("hx-request"):

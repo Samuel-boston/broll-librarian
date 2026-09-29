@@ -14,7 +14,7 @@ from ...transcript.exporters import csv_export, edl, fcp7xml
 from ...transcript.exporters.base import Timeline, build_timeline
 from ...transcript.matcher import BeatMatch, TranscriptMatcher
 from ...transcript.parser import parse_and_segment
-from ..app import templates
+from ..app import client_state, templates
 
 router = APIRouter()
 
@@ -39,7 +39,7 @@ class TranscriptRun:
 
 @router.get("/transcript", response_class=HTMLResponse)
 async def transcript_page(request: Request):
-    state = request.app.state.broll
+    state = client_state(request)
     return templates.TemplateResponse(
         request=request,
         name="transcript.html",
@@ -55,7 +55,7 @@ async def match_transcript(
     rerank: bool = Form(default=True),
     upload: UploadFile | None = File(default=None),
 ):
-    state = request.app.state.broll
+    state = client_state(request)
     if upload is not None and upload.filename:
         text = (await upload.read()).decode("utf-8", errors="replace")
         filename = upload.filename
@@ -94,7 +94,7 @@ async def match_transcript(
 @router.post("/transcript/{run_id}/swap", response_class=HTMLResponse)
 async def swap_suggestion(request: Request, run_id: str, beat: int = Form(...),
                           shot_id: str = Form(...)):
-    state = request.app.state.broll
+    state = client_state(request)
     run = _get_run(state, run_id)
     match = next((m for m in run.matches if m.beat.index == beat), None)
     if match is None or not match.choose(shot_id):
@@ -108,7 +108,7 @@ async def swap_suggestion(request: Request, run_id: str, beat: int = Form(...),
 
 @router.get("/transcript/{run_id}/export/{fmt}")
 async def export(request: Request, run_id: str, fmt: str):
-    state = request.app.state.broll
+    state = client_state(request)
     run = _get_run(state, run_id)
     if fmt not in EXPORT_TYPES:
         raise HTTPException(status_code=404, detail=f"Unknown format {fmt!r}.")

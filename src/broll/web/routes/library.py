@@ -16,7 +16,7 @@ from ...library_admin import clear_library, remove_source, running_jobs
 from ...search.browse import children, folder_label, summarise_folders
 from ...search.filters import SearchFilters
 from ...search.query import SearchEngine
-from ..app import templates
+from ..app import client_state, templates
 
 router = APIRouter()
 
@@ -39,7 +39,7 @@ async def library(
     view: str = "",
     offset: int = 0,
 ):
-    state = request.app.state.broll
+    state = client_state(request)
     config = state.config
     taxonomy = config.taxonomy
     featured_name = (config.client.featured_person or "").split()[0] or None \
@@ -130,7 +130,7 @@ def _alert(text: str) -> Response:
 @router.post("/sources/{source_id}/delete", response_class=HTMLResponse)
 async def delete_source(request: Request, source_id: str):
     """Remove one file, and every shot from it, from the library. Drive is not touched."""
-    state = request.app.state.broll
+    state = client_state(request)
     store = state.store()
     try:
         result = remove_source(state.config, store, source_id)
@@ -150,7 +150,7 @@ async def delete_everything(request: Request):
     """Empty the whole library. The browser asks for the word DELETE first; Drive is not touched."""
     if request.headers.get("hx-prompt", "").strip() != "DELETE":
         return _alert("Nothing was deleted. You have to type DELETE exactly.")
-    state = request.app.state.broll
+    state = client_state(request)
     store = state.store()
     try:
         if running_jobs(store):
