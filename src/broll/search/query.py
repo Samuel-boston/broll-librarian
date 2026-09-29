@@ -111,6 +111,10 @@ class SearchResult:
     vector_rank: int | None = None
     matched: list[str] = field(default_factory=list)
     similarity: float | None = None
+    # Set by an annotated rank-only search: "match" would pass the strict
+    # relevance gate, "near" is a near miss, "weak" is neither.
+    relevance: str | None = None
+    coverage: float | None = None
 
     @property
     def timecode(self) -> str:
@@ -356,7 +360,7 @@ class SearchEngine:
         tokens: list[str],
         keyword_hits: set[str],
         query_vector: list[float] | None,
-    ) -> tuple[set[str], set[str], dict[str, float]]:
+    ) -> tuple[set[str], set[str], dict[str, float], dict[str, float]]:
         """Which candidates are genuinely about the query - and which nearly were.
 
         Kept: most of what was asked for is literally in it; or a good part is
@@ -391,7 +395,7 @@ class SearchEngine:
                 # Close, but not close enough. When even the best match is
                 # irrelevant, "near the best" means nothing - hence the floor.
                 near.add(sid)
-        return keep, near, sims
+        return keep, near, sims, coverage
 
     # -- fusion -------------------------------------------------------------
 
@@ -404,6 +408,7 @@ class SearchEngine:
         person_filter: bool = True,
         rank_only: bool = False,
         correct: bool = True,
+        annotate: bool = False,
     ) -> list[SearchResult]:
         """Search.
 
@@ -412,10 +417,14 @@ class SearchEngine:
         the relevance gate and returns the top of the ranking whatever it is -
         for the transcript matcher, whose reranker judges relevance itself and
         needs candidates even for narration as abstract as "most of us start
-        the day already behind". ``person_filter=False`` still takes the
-        client's name out of the query but does not require them in shot -
-        narration says "Adam" over footage with no Adam in it. ``correct=False``
-        searches for exactly what was typed ("search instead for...")."""
+        the day already behind". ``annotate`` (with ``rank_only``) still drops
+        nothing, but labels each result with what the gate would have said, so
+        an agent choosing for itself knows whether anything was really about
+        the line - and can fall back rather than force a clip. ``person_filter=False``
+        still takes the client's name out of the query but does not require them
+        in shot - narration says "Adam" over footage with no Adam in it.
+        ``correct=False`` searches for exactly what was typed ("search instead
+        for...")."""
         filters = filters or SearchFilters()
         self.hidden_count = 0
         self.corrections = []
@@ -451,11 +460,21 @@ class SearchEngine:
             vector_rank[shot_id] = rank
 
         sims: dict[str, float] = {}
-        if scores and not rank_only:
-            keep, near, sims = self._relevant(list(scores), tokens, set(keyword_rank), query_vector)
-            shown = keep if strict else keep | near
-            self.hidden_count = len(near) if strict else 0
-            scores = {sid: value for sid, value in scores.items() if sid in shown}
+        coverage: dict[str, float] = {}
+        labels: dict[str, str] = {}
+        if scores and (not rank_only or annotate):
+            keep, near, sims, coverage = self._relevant(
+                list(scores), tokens, set(keyword_rank), query_vector
+            )
+            if rank_only:
+                labels = {
+                    sid: "match" if sid in keep else "near" if sid in near else "weak"
+                    for sid in scores
+                }
+            else:
+                shown = keep if strict else keep | near
+                self.hidden_count = len(near) if strict else 0
+                scores = {sid: value for sid, value in scores.items() if sid in shown}
 
         ordered = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]
         results: list[SearchResult] = []
@@ -478,6 +497,8 @@ class SearchEngine:
                     vector_rank=vector_rank.get(shot_id),
                     matched=matched,
                     similarity=sims.get(shot_id),
+                    relevance=labels.get(shot_id),
+                    coverage=coverage.get(shot_id, 0.0) if labels else None,
                 )
             )
         return results

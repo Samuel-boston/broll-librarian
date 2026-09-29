@@ -52,6 +52,10 @@ class SearchFilters(BaseModel):
     added_after: str | None = None
     added_before: str | None = None
     status: list[str] = Field(default_factory=lambda: ["indexed", "needs_review"])
+    # Shots the caller must not be offered: used already in this video, or too
+    # recently in another. Applied as SQL on both sides of the search, so a long
+    # usage history never pushes the real candidates out of the top of the list.
+    exclude_shot_ids: list[str] = Field(default_factory=list)
 
     def is_empty(self) -> bool:
         return not self.predicates()[0]
@@ -151,5 +155,10 @@ class SearchFilters(BaseModel):
         if self.added_before:
             clauses.append("src.created_at <= ?")
             params.append(self.added_before)
+
+        if self.exclude_shot_ids:
+            ids = sorted(set(self.exclude_shot_ids))
+            clauses.append(f"s.id NOT IN ({', '.join('?' for _ in ids)})")
+            params.extend(ids)
 
         return clauses, params

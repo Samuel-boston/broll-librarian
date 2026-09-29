@@ -68,6 +68,21 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+def canonical_time(value: str | datetime | None = None) -> str:
+    """A timestamp as stored: UTC, to the second, ISO 8601 with its offset.
+
+    Usage dates are compared as strings in SQL, so every one is written in the
+    same form; a caller's "2026-09-29T10:00:00+01:00" and a bare date both
+    become UTC before they reach the table. A value with no zone is read as UTC.
+    """
+    if value is None:
+        return _now()
+    when = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).strip())
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return when.astimezone(UTC).isoformat(timespec="seconds")
+
+
 def connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), timeout=30.0, isolation_level=None)
@@ -580,6 +595,124 @@ class Store:
             (self.workspace_id, source_id),
         )
 
+    # -- where shots have been used -----------------------------------------
+
+    def record_usage(
+        self,
+        shot_ids: Iterable[str],
+        project: str,
+        used_at: str | None = None,
+        beats: Mapping[str, str] | None = None,
+        replace: bool = False,
+    ) -> dict[str, Any]:
+        """Remember that these shots are cut into `project` (one video).
+
+        One row per shot per video, so choosing the same shot again for the
+        same video moves its date and beat instead of counting it twice.
+        `replace` makes this the video's whole list: an editor who re-chooses
+        B-roll sends every shot the video now uses, and the ones it dropped stop
+        counting against the client's next videos.
+
+        Returns {"recorded": [...], "unknown": [...], "released": n}. Ids that
+        are not shots in this library are reported, never stored.
+        """
+        wanted = list(dict.fromkeys(s for s in shot_ids if s))
+        when = canonical_time(used_at)
+        beats = beats or {}
+        known: set[str] = set()
+        if wanted:
+            placeholders = ", ".join("?" for _ in wanted)
+            known = {
+                r["id"] for r in self.conn.execute(
+                    f"SELECT id FROM shots WHERE workspace_id = ? AND id IN ({placeholders})",
+                    (self.workspace_id, *wanted),
+                )
+            }
+        recorded = [s for s in wanted if s in known]
+        released = 0
+        with self.transaction() as conn:
+            if replace:
+                keep = ", ".join("?" for _ in recorded)
+                released = conn.execute(
+                    "DELETE FROM shot_usage WHERE workspace_id = ? AND project = ?"
+                    + (f" AND shot_id NOT IN ({keep})" if recorded else ""),
+                    (self.workspace_id, project, *recorded),
+                ).rowcount
+            for shot_id in recorded:
+                conn.execute(
+                    """INSERT INTO shot_usage (workspace_id, shot_id, project, beat, used_at)
+                       VALUES (?, ?, ?, ?, ?)
+                       ON CONFLICT (workspace_id, shot_id, project) DO UPDATE SET
+                           beat = excluded.beat, used_at = excluded.used_at""",
+                    (self.workspace_id, shot_id, project, beats.get(shot_id), when),
+                )
+        return {
+            "recorded": recorded,
+            "unknown": [s for s in wanted if s not in known],
+            "released": released,
+        }
+
+    def shots_used_in_project(self, project: str, except_beat: str | None = None) -> set[str]:
+        """Shots a video already uses - except those on `except_beat`.
+
+        The exception is what lets an editor re-run B-roll for a video: a beat
+        still sees the shot it already has, while every other beat is kept from
+        repeating it. A shot recorded without a beat counts for every beat,
+        because nothing says where it sits.
+        """
+        sql = "SELECT shot_id FROM shot_usage WHERE workspace_id = ? AND project = ?"
+        params: list[Any] = [self.workspace_id, project]
+        if except_beat is not None:
+            sql += " AND (beat IS NULL OR beat != ?)"
+            params.append(except_beat)
+        return {r["shot_id"] for r in self.conn.execute(sql, params)}
+
+    def shots_used_since(self, since: str, other_than_project: str | None = None) -> set[str]:
+        """Shots cut into any video since `since` - other than `other_than_project`.
+
+        A video's own earlier choices never count against it here: re-running
+        B-roll for a video must not hide the shots it is already built on.
+        """
+        sql = "SELECT DISTINCT shot_id FROM shot_usage WHERE workspace_id = ? AND used_at >= ?"
+        params: list[Any] = [self.workspace_id, canonical_time(since)]
+        if other_than_project:
+            sql += " AND project != ?"
+            params.append(other_than_project)
+        return {r["shot_id"] for r in self.conn.execute(sql, params)}
+
+    def usage_for(self, shot_ids: Iterable[str]) -> dict[str, list[dict[str, Any]]]:
+        """Every video each of these shots is cut into, most recent first."""
+        ids = list(dict.fromkeys(shot_ids))
+        if not ids:
+            return {}
+        placeholders = ", ".join("?" for _ in ids)
+        out: dict[str, list[dict[str, Any]]] = {}
+        for row in self.conn.execute(
+            f"""SELECT shot_id, project, beat, used_at FROM shot_usage
+                WHERE workspace_id = ? AND shot_id IN ({placeholders})
+                ORDER BY used_at DESC, project""",
+            (self.workspace_id, *ids),
+        ):
+            out.setdefault(row["shot_id"], []).append(
+                {"project": row["project"], "beat": row["beat"], "used_at": row["used_at"]}
+            )
+        return out
+
+    def list_usage(
+        self, project: str | None = None, shot_id: str | None = None, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT shot_id, project, beat, used_at FROM shot_usage WHERE workspace_id = ?"
+        params: list[Any] = [self.workspace_id]
+        if project:
+            sql += " AND project = ?"
+            params.append(project)
+        if shot_id:
+            sql += " AND shot_id = ?"
+            params.append(shot_id)
+        sql += " ORDER BY used_at DESC, project, shot_id LIMIT ?"
+        params.append(max(1, limit))
+        return [dict(r) for r in self.conn.execute(sql, params)]
+
     # -- jobs ---------------------------------------------------------------
 
     def enqueue(self, kind: str, payload: Mapping[str, Any] | None = None) -> Job:
@@ -719,7 +852,7 @@ class Store:
             ).fetchone()[0],
         }
         for table in ("shot_tags", "drive_shortcuts", "vocabulary_candidates",
-                      "jobs", "shots", "sources"):
+                      "shot_usage", "jobs", "shots", "sources"):
             if table == "shot_tags":
                 self.conn.execute(
                     """DELETE FROM shot_tags WHERE shot_id IN
@@ -780,6 +913,29 @@ class Store:
             (self.workspace_id,),
         ).fetchall()
         return {r["status"]: r["n"] for r in rows}
+
+    def recent_jobs(self, limit: int = 40) -> list[dict[str, Any]]:
+        """Running first, then waiting, then the latest finished - a queue panel's rows."""
+        rows = self.conn.execute(
+            """SELECT id, status, attempts, last_error, cost_estimate_usd,
+                      json_extract(payload_json, '$.filename') AS filename,
+                      created_at, started_at, finished_at, not_before
+               FROM jobs WHERE workspace_id = ? AND status != 'cancelled'
+               ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
+                        created_at DESC
+               LIMIT ?""",
+            (self.workspace_id, max(1, limit)),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def waiting_errors(self) -> list[str]:
+        """The last error of every job waiting to be retried."""
+        rows = self.conn.execute(
+            "SELECT last_error FROM jobs WHERE workspace_id = ? AND status = 'queued'"
+            " AND last_error IS NOT NULL AND last_error != ''",
+            (self.workspace_id,),
+        ).fetchall()
+        return [r["last_error"] for r in rows]
 
     def total_cost(self) -> float:
         row = self.conn.execute(

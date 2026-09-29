@@ -23,7 +23,7 @@ from .analysis.prompt import PROMPT_VERSION
 from .analysis.embedder import PROVIDER_EMBEDDING_MODELS, get_embedder
 from .analysis.providers.registry import VISION_PROVIDERS, check_credentials
 from .analysis.schema import VOCABULARIES, ShotContext, find_oov
-from .db.models import Shot, Source, Workspace
+from .db.models import Shot, Source
 from .db.store import Registry, Store, new_id
 from .ingest.frames import best_frame, save_thumbnail
 from .ingest.hashing import content_hash
@@ -126,19 +126,12 @@ def init(
         workspace_config.embedder.model, workspace_config.embedder.dimensions = PROVIDER_EMBEDDING_MODELS[embedder]
     if hosted:
         workspace_config.backup.enabled = True
-    workspace_config.save()
+    from .clients import register
 
-    Store.for_config(workspace_config).close()  # creates and migrates library.db
-    registry.create(
-        Workspace(
-            id=ws_id,
-            name=name,
-            provider=provider,
-            db_path=str(workspace_config.db_path),
-            drive_root_folder_id=drive_folder,
-        )
-    )
-    registry.close()
+    try:
+        register(workspace_config, registry)
+    finally:
+        registry.close()
 
     _echo(f"Created workspace {ws_id!r}")
     _echo(f"  config: {workspace_config.config_path}")

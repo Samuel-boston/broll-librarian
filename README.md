@@ -107,6 +107,7 @@ is a client of it.
     library.db                    # this workspace's metadata
     thumbnails/                   # 640px JPEGs for the search UI
     tmp/, staging/                # working files, safe to delete
+    tmp/fetched/, tmp/trims/      # /api/fetch downloads (a 20 GB cache) and cuts
     drive_token.json              # OAuth token (M3)
 ```
 
@@ -504,16 +505,51 @@ only loopback is served.
 | Endpoint | What it does |
 |---|---|
 | `GET /api/clients` | Every library, its size, its folder tree |
+| `POST /api/clients` | `{name, id?}`: the client's library, created (empty) if it has none. Idempotent |
+| `GET /api/health` | Is it usable, client by client: worker, key present, Drive connected, quota. Booleans, never secrets |
 | `GET /api/status?client=` | Queue and index state |
+| `GET /api/queue?client=` | The files waiting, running and recently finished, by name |
 | `GET /api/search?q=&client=` | Search one client, or `all_clients=true` |
 | `GET /api/clip/{shot_id}` | One shot in full, from any client |
-| `POST /api/shortlist` | Candidates per line of script. Costs nothing |
+| `POST /api/shortlist` | Candidates per line of script, or per beat of a storyboard. Costs nothing |
 | `POST /api/suggest` | The model's pick per line, with a reason. One request per line |
-| `POST /api/ingest` | Queue files or folders for a client |
+| `POST /api/fetch` | A local file for a chosen shot, optionally cut down to the shot |
+| `POST /api/usage` / `GET /api/usage` | Which videos use which shots |
+| `POST /api/ingest` | Queue files or folders on this machine for a client |
+| `POST /api/upload?client=` | Queue files sent in the request (multipart), e.g. a drop proxied by another app |
 
 `/api/shortlist` is the one that matters: it does the mechanical half of B-roll
-selection - segment the script, search each line, drop what is already used -
-and hands the judgement to whatever is reading it.
+selection - segment the script (or take the caller's own `beats`, each with
+one query per idea), search each line, drop what is already used - and hands
+the judgement to whatever is reading it. Every candidate carries a verdict,
+`relevance`: `match` (it is about the line), `near` or `weak`, and each beat a
+`reason` when nothing matches - "the library is empty" is a normal answer, and
+the right response to it is the beat's fallback, never the least bad clip.
+
+**Never twice in a video, not every video.** Once an agent has chosen,
+`POST /api/usage {client, project, shot_ids, beats?, replace?}` records which
+video used which shots (`replace: true` makes it the video's whole list, so a
+dropped shot is released). A later shortlist or search passes
+`exclude_used_in_project` (not in this video - a beat still sees its own shot)
+and `exclude_used_within_days` (not in the client's other recent videos; a
+video's own choices never count against it).
+
+**Getting the file.** `POST /api/fetch {shot_id, dest_dir?, trim?, handles_s?,
+copy?}` returns a path on this machine: the file it was indexed from if it is
+still there and unchanged (content hash), else the Drive for Desktop copy
+(`drive_local_mount_path`), else a Drive download (cached in the workspace's
+`tmp/fetched`, capped at 20 GB). With `trim: true` only the shot plus handles
+is cut out - a stream copy when a keyframe sits within a second of the
+in-point, otherwise an H.264 re-encode at CRF 12 that keeps the source's bit
+depth - and the answer says where the shot sits in the new file (`in_s`,
+`out_s`, `offset_s`), measured on the timeline ffmpeg seeks on. Without a Drive
+login, a shot that only exists in Drive fails with a message that says what
+was tried and how to connect.
+
+**Every client has a library**, even one with no footage yet: `POST /api/clients`
+creates it (idempotently, matching an existing library by name), serves it at
+once, and gives it the provider, embedder and rate cap of the server's first
+library, since they share one key.
 
 ## Transcript matching
 

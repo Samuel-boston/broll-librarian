@@ -209,6 +209,23 @@ class Studio:
             state.start_dashboard_sync()
             state.start_backups()
 
+    async def add_client(self, config: WorkspaceConfig) -> AppState:
+        """Serve a library created while the server is running, straight away:
+        its worker, drop folder and dashboard sync start as they would at boot."""
+        if config.id in self.clients:
+            return self.clients[config.id]
+        config.ensure_dirs()
+        first = self.clients[self.default_id]
+        state = AppState(config, run_worker=first.run_worker)
+        self.clients[config.id] = state
+        self.order.append(config.id)
+        shared = self.embedder if config.embedder == first.config.embedder else None
+        await state.start_worker(embedder=shared)
+        state.start_watching()
+        state.start_dashboard_sync()
+        state.start_backups()
+        return state
+
     async def stop(self) -> None:
         for state in self.clients.values():
             await state.stop_worker()

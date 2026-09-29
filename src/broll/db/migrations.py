@@ -11,7 +11,7 @@ from pathlib import Path
 
 SQL_DIR = Path(__file__).parent
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def _apply_sql_file(conn: sqlite3.Connection, name: str) -> None:
@@ -107,6 +107,30 @@ def _v6_media_kind(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sources_kind ON sources (workspace_id, media_kind)")
 
 
+def _v7_shot_usage(conn: sqlite3.Connection) -> None:
+    """Which videos each shot has been cut into.
+
+    An editing agent choosing B-roll needs this to keep a shot from repeating
+    inside one video, and from turning up in every video a client makes that
+    month. One row per shot per video; the beat is optional and lets a video's
+    own shots stay on offer to the beat that already has them.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS shot_usage (
+            workspace_id  TEXT NOT NULL,
+            shot_id       TEXT NOT NULL REFERENCES shots(id) ON DELETE CASCADE,
+            project       TEXT NOT NULL,
+            beat          TEXT,
+            used_at       TEXT NOT NULL,
+            PRIMARY KEY (workspace_id, shot_id, project)
+        );
+        CREATE INDEX IF NOT EXISTS idx_shot_usage_project ON shot_usage (workspace_id, project);
+        CREATE INDEX IF NOT EXISTS idx_shot_usage_when ON shot_usage (workspace_id, used_at);
+        """
+    )
+
+
 MIGRATIONS = {
     1: _v1_base_schema,
     2: _v2_drive_shortcuts,
@@ -114,6 +138,7 @@ MIGRATIONS = {
     4: _v4_job_owner,
     5: _v5_stemmed_keyword_index,
     6: _v6_media_kind,
+    7: _v7_shot_usage,
 }
 
 
