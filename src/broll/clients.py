@@ -56,8 +56,10 @@ def find_library(registry: Registry, name: str, workspace_id: str | None = None)
     asking for a client whose library was made by hand under another id, never
     makes a second library for the same client.
     """
-    if workspace_id:
+    if workspace_id and registry.get(workspace_id) is not None:
         return registry.get(workspace_id)
+    # A suggested id that is new still matches the client's existing library by
+    # name: an app that proposes an id from its own slug must not get a second one.
     wanted = _normalised(name)
     for workspace in registry.list():
         if _normalised(display_name(workspace)) == wanted:

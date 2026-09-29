@@ -305,6 +305,14 @@ def test_a_new_library_shares_the_server_s_key_settings_but_not_its_client(api, 
     assert made.taxonomy.tree == [], "the folder tree is the new client's own"
 
 
+def test_an_app_that_suggests_its_own_id_still_gets_the_existing_library(api):
+    """The Editing Joe app sends an id made from its client slug; Adam's library is 'adam'."""
+    found = api.post("/api/clients", json={"name": "Adam Kunder", "id": "adam-kunder"}).json()
+    assert found == {"id": "adam", "name": "Adam Kunder", "created": False}
+    made = api.post("/api/clients", json={"name": "Knversion", "id": "knv"}).json()
+    assert made == {"id": "knv", "name": "Knversion", "created": True}
+
+
 def test_a_client_id_has_to_be_a_slug(api):
     response = api.post("/api/clients", json={"name": "X", "id": "Not A Slug"})
     assert response.status_code == 422
