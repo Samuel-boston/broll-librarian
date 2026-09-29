@@ -892,6 +892,78 @@ def serve(
                 host=host, port=port, reload=reload)
 
 
+service_app = typer.Typer(
+    no_args_is_help=True,
+    help="Keep `broll serve` running on this Mac (a launchd agent that starts at login).",
+)
+app.add_typer(service_app, name="service")
+
+
+def _print_service(report, as_json: bool) -> None:
+    if as_json:
+        _echo(json.dumps(report.__dict__, indent=2))
+        return
+    _echo(f"agent:     {report.plist} ({'installed' if report.installed else 'not installed'})")
+    _echo(f"running:   {'yes' if report.loaded else 'no'}" + (f" (pid {report.pid})" if report.pid else ""))
+    _echo(f"log:       {report.log}")
+    for message in report.messages:
+        typer.secho(f"  {message}", fg=typer.colors.YELLOW)
+
+
+@service_app.command("install")
+def service_install(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port"),
+    inbox: str = typer.Option("~/Broll Inbox", "--inbox",
+                              help="BROLL_INBOX: every client watches <inbox>/<client id>."),
+    start: bool = typer.Option(True, "--start/--no-start", help="Start it now, or at the next login."),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Install the agent and start it. A server already on the port is left alone."""
+    from . import service
+
+    try:
+        report = service.install(host=host, port=port, inbox=inbox, start=start)
+    except RuntimeError as exc:
+        _fail(str(exc))
+    if report.started:
+        report.messages.insert(0, f"Started: http://{host}:{port} (restarts on its own, and at every login).")
+    _print_service(report, as_json)
+    if not (report.started or report.port_busy or not start):
+        raise typer.Exit(code=1)
+
+
+@service_app.command("uninstall")
+def service_uninstall(as_json: bool = typer.Option(False, "--json")) -> None:
+    """Stop the agent and remove it. The library itself is not touched."""
+    from . import service
+
+    try:
+        report = service.uninstall()
+    except RuntimeError as exc:
+        _fail(str(exc))
+    _print_service(report, as_json)
+
+
+@service_app.command("status")
+def service_status(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Whether the agent is installed and running, and whether the library answers."""
+    from . import service
+
+    try:
+        report = service.status(host=host, port=port)
+    except RuntimeError as exc:
+        _fail(str(exc))
+    if not as_json:
+        answer = "yes" if report.answering else ("something else is on the port" if report.port_busy else "no")
+        report.messages.insert(0, f"answering on {host}:{port}: {answer}")
+    _print_service(report, as_json)
+
+
 @app.command()
 def transcript(
     path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True,

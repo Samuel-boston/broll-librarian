@@ -317,6 +317,24 @@ The web app and CLI commands can share a workspace safely: each job records the
 process holding it, and a starting worker only reclaims jobs whose owner has
 actually died.
 
+**Keeping it running for Editing Joe.** Editing Joe's agents expect the library
+at `http://127.0.0.1:8000` whenever they cut a video, so on the Mac that runs
+them it should start by itself:
+
+```bash
+broll service install     # a launchd agent: starts at login, restarts if it dies
+broll service status      # installed? running? answering /api/health?
+broll service uninstall
+```
+
+The agent runs `broll serve --host 127.0.0.1 --port 8000` from this checkout
+(so it reads the same `.env` as the launcher), with `BROLL_INBOX=~/Broll Inbox`
+and ffmpeg's folder on its PATH (launchd's own PATH has no Homebrew). It logs
+to `~/Library/Logs/editing-joe/broll.log`. If something is already serving on
+the port - the double-click launcher, say - installing leaves it running and
+the agent takes over at the next login. Restart it after updating the code:
+`broll service install` again.
+
 ## How the Drive tree is organised
 
 One canonical copy of each file, plus a faceted tree of **shortcuts**. A shortcut
@@ -650,6 +668,7 @@ Every removal is local: **nothing in Google Drive is ever deleted**, and the sho
 | `broll costs [--project N]` | Measured spend, and a projection |
 | `broll reanalyse [--stale/--all]` | Re-run analysis after a prompt change |
 | `broll serve` | The web UI plus the ingest worker, one process |
+| `broll service install / status / uninstall` | Keep `broll serve` running on this Mac (launchd) |
 | `broll remove <source-id> --yes` | Remove one file, and all its shots, from the library |
 | `broll cancel <job-id>` / `broll cancel --all` | Take one waiting file, or the whole queue, out of the queue |
 | `broll reset --yes` | Empty the whole library (refused while a file is being indexed) |
