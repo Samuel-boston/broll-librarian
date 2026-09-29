@@ -53,11 +53,18 @@ def _sdk():
     return genai, types
 
 
+# Caught live on a free key: a request was sent, Google never answered, and with
+# no timeout the worker waited on it for good - which, with the always-on server
+# indexing one file at a time, stops all indexing. A vision request takes seconds;
+# after this long it is abandoned as "timed out", which the queue retries later.
+REQUEST_TIMEOUT_MS = 180_000
+
+
 def _client(api_key: str | None):
-    genai, _ = _sdk()
+    genai, types = _sdk()
     if not api_key:
         raise MissingCredentialsError("GEMINI_API_KEY (or GOOGLE_API_KEY) is not set.")
-    return genai.Client(api_key=api_key)
+    return genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS))
 
 
 class GeminiVisionProvider(VisionProvider):

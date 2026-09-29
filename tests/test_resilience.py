@@ -95,3 +95,25 @@ def test_clearing_the_library_empties_everything_local(workspace, store, tmp_pat
     assert store.list_shots() == []
     assert store.vectors.count() == 0
     assert queue_stats(store).total == 0
+
+
+def test_a_gemini_request_that_never_answers_is_abandoned_and_retried(monkeypatch):
+    """Caught live: a free-key request hung for minutes with the socket open, and with
+    the always-on server indexing one file at a time nothing else could be indexed."""
+    pytest.importorskip("google.genai")
+    from google import genai
+
+    from broll.analysis.providers import gemini
+    from broll.analysis.providers.base import TransientProviderError, classify_error
+
+    made = {}
+
+    class Client:
+        def __init__(self, **kwargs):
+            made.update(kwargs)
+
+    monkeypatch.setattr(genai, "Client", Client)
+    gemini._client("a-key")
+    assert made["http_options"].timeout == gemini.REQUEST_TIMEOUT_MS
+    assert gemini.REQUEST_TIMEOUT_MS <= 300_000
+    assert classify_error("gemini request failed: The read operation timed out") is TransientProviderError
