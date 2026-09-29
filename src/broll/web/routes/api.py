@@ -252,12 +252,12 @@ async def create_client(request: Request, body: ClientRequest) -> dict:
     studio = _studio(request)
     like = studio.clients[studio.default_id].config
     try:
-        workspace, created = await asyncio.to_thread(create_library, body.name, body.id, like)
+        library_id, name, created = await asyncio.to_thread(create_library, body.name, body.id, like)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if workspace.id not in studio.clients:
-        await studio.add_client(load_workspace_config(workspace.id))
-    return {"id": workspace.id, "name": workspace.name, "created": created}
+    if library_id not in studio.clients:
+        await studio.add_client(load_workspace_config(library_id))
+    return {"id": library_id, "name": name, "created": created}
 
 
 @router.get("/status")

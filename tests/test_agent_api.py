@@ -280,6 +280,21 @@ def test_a_library_made_by_hand_is_found_by_the_client_s_name(api):
     assert found == {"id": "adam", "name": "Adam Kunder", "created": False}
 
 
+def test_a_library_renamed_in_settings_is_found_by_the_name_people_see(api, libraries):
+    """Caught live: the registry keeps the name a library was created with ("Nathan Test"),
+    Settings renames only its config ("Adam Kunder"), and matching the registry's name made
+    a second library for Adam."""
+    adam, _ = libraries
+    registry = Registry()
+    try:
+        registry.update("adam", name="Nathan Test")
+    finally:
+        registry.close()
+    found = api.post("/api/clients", json={"name": "Adam Kunder"}).json()
+    assert found == {"id": "adam", "name": "Adam Kunder", "created": False}
+    assert [c["id"] for c in api.get("/api/clients").json()["clients"]] == ["adam", "luqman"]
+
+
 def test_a_new_library_shares_the_server_s_key_settings_but_not_its_client(api, broll_home):
     api.post("/api/clients", json={"name": "Knversion"})
     from broll.config import load_workspace_config

@@ -11,13 +11,26 @@ from __future__ import annotations
 
 import re
 
-from .config import WorkspaceConfig, slugify_id
+from .config import WorkspaceConfig, load_workspace_config, slugify_id
 from .db.models import Workspace
 from .db.store import Registry, Store
 
 
 def _normalised(name: str) -> str:
     return re.sub(r"\s+", " ", name.strip()).lower()
+
+
+def display_name(workspace: Workspace) -> str:
+    """The name every screen shows: the workspace config's.
+
+    The registry keeps the name a library was created with, and Settings edits
+    only the config, so the two drift apart - the `test` library is "Nathan
+    Test" in the registry and "Adam Kunder" everywhere a person looks.
+    """
+    try:
+        return load_workspace_config(workspace.id).name
+    except (OSError, ValueError):
+        return workspace.name
 
 
 def register(config: WorkspaceConfig, registry: Registry) -> None:
@@ -36,7 +49,7 @@ def register(config: WorkspaceConfig, registry: Registry) -> None:
 
 
 def find_library(registry: Registry, name: str, workspace_id: str | None = None) -> Workspace | None:
-    """The existing library for this client: by id if given, else by name.
+    """The existing library for this client: by id if given, else by its shown name.
 
     Matching by name (ignoring case and spacing) is what makes creation
     idempotent for an app that only knows its client's name: asking twice, or
@@ -47,7 +60,7 @@ def find_library(registry: Registry, name: str, workspace_id: str | None = None)
         return registry.get(workspace_id)
     wanted = _normalised(name)
     for workspace in registry.list():
-        if _normalised(workspace.name) == wanted:
+        if _normalised(display_name(workspace)) == wanted:
             return workspace
     return registry.get(slugify_id(name))
 
@@ -57,8 +70,8 @@ def create_library(
     workspace_id: str | None = None,
     like: WorkspaceConfig | None = None,
     registry: Registry | None = None,
-) -> tuple[Workspace, bool]:
-    """(the library, created). Returns the existing one untouched if there is one.
+) -> tuple[str, str, bool]:
+    """(library id, its shown name, created). An existing library is returned untouched.
 
     ``like`` is another library whose provider, embedder and request-rate cap
     the new one copies: libraries on one server share one API key and one
@@ -74,7 +87,7 @@ def create_library(
     try:
         existing = find_library(registry, name, workspace_id)
         if existing is not None:
-            return existing, False
+            return existing.id, display_name(existing), False
         config = WorkspaceConfig(id=workspace_id or slugify_id(name), name=name)
         if like is not None:
             config.provider = like.provider.model_copy(deep=True)
@@ -82,7 +95,7 @@ def create_library(
             config.ingest.requests_per_minute = like.ingest.requests_per_minute
             config.ingest.concurrency = like.ingest.concurrency
         register(config, registry)
-        return registry.get(config.id), True  # type: ignore[return-value]
+        return config.id, config.name, True
     finally:
         if own:
             registry.close()
