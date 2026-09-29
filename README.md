@@ -461,6 +461,60 @@ Tokens are stored per workspace at `~/.broll/workspaces/<id>/drive_token.json`.
 > "In production" removes the expiry but triggers Google's verification
 > requirement for the restricted scope.
 
+## Many clients, one server
+
+A workspace is a client library: its own database, its own Drive tree, its own
+folder structure, its own client profile. `broll serve` with no `--workspace`
+serves all of them from one process - one embedding model, one worker per
+client - and the header carries a picker. `?client=<id>` switches and is
+remembered, so every link after it stays inside that client.
+
+```bash
+broll init --name "Adam Kunder"    # a client library
+broll clients                      # what exists, and what is in each
+broll serve                        # all of them, switchable in the header
+```
+
+Nothing crosses between clients unless you ask: search, browse, review and
+transcript matching are all scoped to the client in the header, and only
+`/api/search?all_clients=true` looks everywhere at once.
+
+### Footage that files itself
+
+Give a client watched folders and anything dropped in is queued, analysed and
+filed without opening the app. Nothing is moved or deleted; the file is read
+where it lies, and content hashing means dropping the same clip twice costs one
+analysis.
+
+```yaml
+ingest:
+  watch_dirs: ["/Users/you/Broll Inbox/adam-kunder"]
+  watch_interval_s: 30
+```
+
+Or set `BROLL_INBOX=~/Broll Inbox` and every client watches
+`~/Broll Inbox/<client id>/`, created on startup. `broll watch --once` sweeps
+by hand when the server is not running.
+
+### The JSON API
+
+For an agent rather than a person. `BROLL_API_TOKEN` guards it; without one set,
+only loopback is served.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/clients` | Every library, its size, its folder tree |
+| `GET /api/status?client=` | Queue and index state |
+| `GET /api/search?q=&client=` | Search one client, or `all_clients=true` |
+| `GET /api/clip/{shot_id}` | One shot in full, from any client |
+| `POST /api/shortlist` | Candidates per line of script. Costs nothing |
+| `POST /api/suggest` | The model's pick per line, with a reason. One request per line |
+| `POST /api/ingest` | Queue files or folders for a client |
+
+`/api/shortlist` is the one that matters: it does the mechanical half of B-roll
+selection - segment the script, search each line, drop what is already used -
+and hands the judgement to whatever is reading it.
+
 ## Transcript matching
 
 ```bash

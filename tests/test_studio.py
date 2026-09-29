@@ -166,3 +166,93 @@ def test_a_token_is_required_once_one_is_set(studio, monkeypatch):
     assert studio.get("/api/clients", headers={"X-Broll-Token": "wrong"}).status_code == 401
     ok = studio.get("/api/clients", headers={"Authorization": "Bearer s3cret"})
     assert ok.status_code == 200
+
+
+# -- footage that files itself ----------------------------------------------
+
+
+def test_a_dropped_file_is_queued_without_anyone_opening_the_app(workspace, store, tmp_path, monkeypatch):
+    from broll.ingest import watcher
+    from broll.jobs.queue import queue_stats
+
+    drop = tmp_path / "drop"
+    drop.mkdir()
+    workspace.ingest.watch_dirs = [str(drop)]
+    monkeypatch.setattr(watcher, "SETTLE_S", 0.01)
+
+    assert watcher.sweep(workspace, store) == 0, "an empty folder is not news"
+
+    (drop / "beach.mp4").write_bytes(b"pretend video")
+    (drop / "notes.txt").write_text("not footage")
+    assert watcher.sweep(workspace, store) == 1
+    assert queue_stats(store).queued == 1
+
+    # Sweeping again must not queue the same file twice.
+    assert watcher.sweep(workspace, store) == 0
+    assert queue_stats(store).queued == 1
+
+
+def test_a_half_copied_file_waits_for_the_copy_to_finish(workspace, store, tmp_path, monkeypatch):
+    """A 4 GB card copy is still growing when the first sweep sees it."""
+    from broll.ingest import watcher
+
+    drop = tmp_path / "drop"
+    drop.mkdir()
+    workspace.ingest.watch_dirs = [str(drop)]
+    monkeypatch.setattr(watcher, "SETTLE_S", 0.01)
+
+    growing = drop / "big.mov"
+    growing.write_bytes(b"first chunk")
+
+    sizes = iter([10, 20, 30, 30])   # still growing, then settled
+
+    class Stat:
+        def __init__(self, size): self.st_size = size
+
+    monkeypatch.setattr(watcher.Path, "stat", lambda self, **kw: Stat(next(sizes)))
+    assert watcher.sweep(workspace, store) == 0, "queued a file that was still copying"
+
+
+def test_an_inbox_gives_every_client_its_own_drop_folder(workspace, tmp_path, monkeypatch):
+    from broll.ingest.watcher import inbox_dir, watched_dirs
+
+    monkeypatch.setenv("BROLL_INBOX", str(tmp_path / "inbox"))
+    assert inbox_dir(workspace) == tmp_path / "inbox" / workspace.id
+
+    created = watched_dirs(workspace, create=True)
+    assert (tmp_path / "inbox" / workspace.id).is_dir()
+    assert created == [tmp_path / "inbox" / workspace.id]
+
+    monkeypatch.delenv("BROLL_INBOX")
+    assert inbox_dir(workspace) is None
+
+
+async def test_the_watcher_opens_its_database_in_its_own_thread(workspace, tmp_path, monkeypatch):
+    """A SQLite connection belongs to the thread that made it.
+
+    Caught live: the sweep ran in a worker thread on a connection opened by the
+    event loop, and every sweep failed with "SQLite objects created in a thread
+    can only be used in that same thread".
+    """
+    import asyncio
+
+    from broll.db.store import Store
+    from broll.ingest import watcher
+    from broll.jobs.queue import queue_stats
+
+    drop = tmp_path / "drop"
+    drop.mkdir()
+    (drop / "clip.mp4").write_bytes(b"pretend video")
+    workspace.ingest.watch_dirs = [str(drop)]
+    monkeypatch.setattr(watcher, "SETTLE_S", 0.01)
+
+    queued = await asyncio.to_thread(
+        watcher.sweep_once, workspace, lambda: Store.for_config(workspace)
+    )
+    assert queued == 1
+
+    store = Store.for_config(workspace)
+    try:
+        assert queue_stats(store).queued == 1
+    finally:
+        store.close()

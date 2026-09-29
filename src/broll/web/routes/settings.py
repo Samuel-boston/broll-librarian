@@ -44,6 +44,7 @@ async def save_settings(
     words_per_minute: int = Form(150),
     concurrency: int = Form(4),
     requests_per_minute: float = Form(0.0),
+    watch_dirs: str = Form(""),
     review_below_confidence: float = Form(0.7),
 ):
     state = client_state(request)
@@ -58,6 +59,9 @@ async def save_settings(
     config.transcript.words_per_minute = max(30, words_per_minute)
     config.ingest.concurrency = max(1, concurrency)
     config.ingest.requests_per_minute = max(0.0, requests_per_minute)
+    config.ingest.watch_dirs = [
+        line.strip() for line in watch_dirs.splitlines() if line.strip()
+    ]
     config.ingest.review_below_confidence = min(1.0, max(0.0, review_below_confidence))
     config.save()
 

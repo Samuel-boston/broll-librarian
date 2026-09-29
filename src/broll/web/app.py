@@ -47,6 +47,7 @@ class AppState:
         self.worker_store: Store | None = None
         self.drive_organise = None  # shared by the worker and the Top Picks star
         self.sync_task: asyncio.Task | None = None
+        self.watch_task: asyncio.Task | None = None
         self.backup_task: asyncio.Task | None = None
         self.sync_status: dict[str, object] = {"state": "off", "message": "", "at": None}
         # Transcript runs live in memory: a run is cheap to redo, and
@@ -80,6 +81,16 @@ class AppState:
         )
         self.worker = Worker(self.config, self.worker_store, pipeline)
         self.worker_task = asyncio.create_task(self.worker.run(drain=False))
+
+    def start_watching(self) -> None:
+        """Watch this client's drop folders, if it has any."""
+        from ..ingest.watcher import watch_loop, watched_dirs
+
+        if self.watch_task is not None or not self.run_worker:
+            return
+        if not watched_dirs(self.config, create=True):
+            return
+        self.watch_task = asyncio.create_task(watch_loop(self.config, self.store))
 
     def start_dashboard_sync(self) -> None:
         """Keep the dashboard's Footage index current, for as long as the app runs."""
@@ -136,6 +147,8 @@ class AppState:
             await asyncio.sleep(interval)
 
     async def stop_worker(self) -> None:
+        if self.watch_task:
+            self.watch_task.cancel()
         if self.sync_task:
             self.sync_task.cancel()
         if self.backup_task:
@@ -192,6 +205,7 @@ class Studio:
         for state in self.clients.values():
             shared = self.embedder if state.config.embedder == first.config.embedder else None
             await state.start_worker(embedder=shared)
+            state.start_watching()
             state.start_dashboard_sync()
             state.start_backups()
 

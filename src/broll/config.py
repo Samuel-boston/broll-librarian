@@ -249,6 +249,11 @@ class IngestConfig(BaseModel):
     # about 5 a minute; without a cap the workers are answered with 429s and
     # 503s that look like the model failing.
     requests_per_minute: float = 0.0
+    # Folders watched for new footage. Anything dropped in one is queued for
+    # this client without anybody opening the app. Set BROLL_INBOX as well and
+    # every client also watches <inbox>/<client id>.
+    watch_dirs: list[str] = Field(default_factory=list)
+    watch_interval_s: int = 30
     # Send a shot to the review queue when the model's own confidence is below
     # this. Clean footage comes back at 0.95+, so anything under this really is
     # the model hedging - and a wrong caption is worse than a minute of review.

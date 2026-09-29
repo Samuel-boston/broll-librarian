@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -1421,6 +1422,107 @@ def cancel(
     _echo(f"Removed {result.cancelled} job(s) from the queue.")
     if result.still_running:
         _echo(f"{result.still_running} job(s) already running will finish.")
+
+
+@app.command()
+def clients(
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Every client library on this machine, and what is in it."""
+    from .ingest.watcher import watched_dirs
+
+    cfg.load_env()
+    registry = Registry()
+    try:
+        entries = registry.list()
+    finally:
+        registry.close()
+    if not entries:
+        _echo('No client libraries yet. Run: broll init --name "Client Name"')
+        return
+
+    rows = []
+    for entry in entries:
+        config = cfg.load_workspace_config(entry.id)
+        store = Store.for_config(config)
+        try:
+            stats = queue_stats(store)
+            rows.append({
+                "id": config.id,
+                "name": config.name,
+                "featured_person": config.client.featured_person,
+                "clips": len(store.list_sources(limit=1_000_000)),
+                "shots": store.count_shots(),
+                "needs_review": store.count_shots("needs_review"),
+                "outstanding": stats.outstanding,
+                "failed": stats.failed,
+                "watching": [str(d) for d in watched_dirs(config)],
+            })
+        finally:
+            store.close()
+
+    if as_json:
+        _echo(json.dumps(rows, indent=2))
+        return
+
+    width = max(len(r["name"]) for r in rows)
+    for row in rows:
+        flags = []
+        if row["outstanding"]:
+            flags.append(f"{row['outstanding']} queued")
+        if row["failed"]:
+            flags.append(f"{row['failed']} failed")
+        if row["needs_review"]:
+            flags.append(f"{row['needs_review']} to review")
+        _echo(
+            f"  {row['name']:<{width}}  {row['shots']:>5} shot(s) "
+            f"from {row['clips']:>4} file(s)"
+            + (f"   {', '.join(flags)}" if flags else "")
+        )
+        _echo(f"  {'':<{width}}  id: {row['id']}"
+              + (f"   watching: {', '.join(row['watching'])}" if row["watching"] else ""))
+
+
+@app.command()
+def watch(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    once: bool = typer.Option(False, "--once", help="Sweep now and stop."),
+    interval: Optional[int] = typer.Option(None, "--interval", help="Seconds between sweeps."),
+) -> None:
+    """Queue anything new in this client's watched folders.
+
+    `broll serve` already does this. Use it standalone when the app is not
+    running, or with --once to pull in a folder you just filled.
+    """
+    from .ingest.watcher import sweep, watched_dirs
+
+    workspace_config = resolve_workspace(workspace)
+    if interval:
+        workspace_config.ingest.watch_interval_s = interval
+    directories = watched_dirs(workspace_config, create=True)
+    if not directories:
+        _fail(
+            "No watched folders for this client. Add one under ingest.watch_dirs "
+            "in the workspace config, or set BROLL_INBOX."
+        )
+    for directory in directories:
+        _echo(f"  watching {directory}")
+
+    store = Store.for_config(workspace_config)
+    try:
+        while True:
+            queued = sweep(workspace_config, store)
+            if queued:
+                _echo(f"Queued {queued} new file(s).")
+            if once:
+                if not queued:
+                    _echo("Nothing new.")
+                return
+            time.sleep(max(5, workspace_config.ingest.watch_interval_s))
+    except KeyboardInterrupt:
+        _echo("Stopped.")
+    finally:
+        store.close()
 
 
 if __name__ == "__main__":

@@ -61,6 +61,16 @@
     </div>
 
     <label class="block">
+      <span class="label">Watched folders</span>
+      <textarea name="watch_dirs" rows="2" class="textarea mono mt-1.5 text-xs"
+                placeholder="/Users/you/Broll Inbox/this-client">{{ workspace.ingest.watch_dirs | join('\n') }}</textarea>
+      <span class="mt-1.5 block text-[11px] text-faint">
+        One path per line. Anything dropped in is queued for this client by itself.
+        Nothing is moved or deleted.
+      </span>
+    </label>
+
+    <label class="block">
       <span class="label">Drive root folder ID</span>
       <input name="drive_root_folder_id" value="{{ workspace.drive_root_folder_id or '' }}"
              placeholder="leave blank to use a folder named {{ workspace.drive_root_folder_name }}" class="input mt-1.5">
