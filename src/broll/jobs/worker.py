@@ -49,20 +49,27 @@ class Worker:
         pipeline: IngestPipeline,
         concurrency: int | None = None,
         on_progress: ProgressFn | None = None,
+        gate: asyncio.Semaphore | None = None,
+        idle_poll_s: float = 0.5,
     ):
         self.config = config
         self.store = store
         self.pipeline = pipeline
         self.concurrency = concurrency or config.ingest.concurrency
         self.on_progress = on_progress
+        # Shared by every client's worker in one server, to cap how many files
+        # the whole machine indexes at once (a laptop running it all day).
+        self.gate = gate
+        self.idle_poll_s = idle_poll_s
         self.stats = WorkerStats()
         self._stop = asyncio.Event()
 
     def stop(self) -> None:
         self._stop.set()
 
-    async def run(self, drain: bool = True, poll_interval: float = 0.5) -> WorkerStats:
+    async def run(self, drain: bool = True, poll_interval: float | None = None) -> WorkerStats:
         """Work the queue until it is empty (drain) or until stopped."""
+        poll_interval = self.idle_poll_s if poll_interval is None else poll_interval
         requeued = self.store.reset_stale_jobs()
         if requeued:
             log.info("requeued %d job(s) left running by a previous worker", requeued)
@@ -71,8 +78,14 @@ class Worker:
         tasks: set[asyncio.Task] = set()
 
         while not self._stop.is_set():
+            # Take the machine-wide slot before claiming, so a job waiting for
+            # its turn stays "queued" instead of looking like it is running.
+            if self.gate is not None:
+                await self.gate.acquire()
             job = self.store.claim_job()
             if job is None:
+                if self.gate is not None:
+                    self.gate.release()
                 if tasks:
                     await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                     tasks = {t for t in tasks if not t.done()}
@@ -88,6 +101,8 @@ class Worker:
             task = asyncio.create_task(self._run_job(job, semaphore))
             tasks.add(task)
             task.add_done_callback(tasks.discard)
+            if self.gate is not None:
+                task.add_done_callback(lambda _done: self.gate.release())
 
             if len(tasks) >= self.concurrency:
                 await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

@@ -854,11 +854,20 @@ def serve(
     worker: bool = typer.Option(True, "--worker/--no-worker",
                                 help="Run the ingest worker inside the web process."),
     reload: bool = typer.Option(False, "--reload"),
+    max_jobs: Optional[int] = typer.Option(
+        None, "--max-jobs", min=1,
+        help="At most this many files indexed at once across every client (default: each library's own setting)."),
+    lazy_model: bool = typer.Option(
+        False, "--lazy-model", help="Load the embedding model when first needed instead of at start."),
+    idle_poll: float = typer.Option(
+        0.5, "--idle-poll", min=0.1, help="Seconds between an idle worker's checks of the queue."),
 ) -> None:
     """Serve the web UI (and, by default, the ingest worker) on one process.
 
     With no --workspace, every client library is served from this one process
-    and you switch between them in the header.
+    and you switch between them in the header. `broll service install` runs this
+    in the background with --max-jobs 1 --lazy-model --idle-poll 5, so a Mac that
+    keeps it up all day stays quiet.
     """
     cfg.load_env()
     try:
@@ -866,7 +875,7 @@ def serve(
     except ImportError:
         _fail("The web UI needs the extra: pip install 'broll-librarian[web]'")
 
-    from .web.app import create_studio_app
+    from .web.app import Gentle, create_studio_app
 
     if workspace or os.environ.get(WORKSPACE_ENV):
         configs = [resolve_workspace(workspace)]
@@ -888,7 +897,8 @@ def serve(
             _echo(f"  {config.name}  ({config.id})")
     if not worker:
         _echo("Worker disabled - run `broll work --follow` separately.")
-    uvicorn.run(create_studio_app(configs, run_worker=worker),
+    gentle = Gentle(max_jobs=max_jobs, lazy_model=lazy_model, idle_poll_s=idle_poll)
+    uvicorn.run(create_studio_app(configs, run_worker=worker, gentle=gentle),
                 host=host, port=port, reload=reload)
 
 

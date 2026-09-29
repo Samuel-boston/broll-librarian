@@ -38,9 +38,10 @@ templates.env.globals["access_enabled"] = lambda: bool(os.environ.get("BROLL_ACC
 class AppState:
     """Everything the routes need, built once at startup."""
 
-    def __init__(self, config: WorkspaceConfig, run_worker: bool = True):
+    def __init__(self, config: WorkspaceConfig, run_worker: bool = True, gentle: "Gentle | None" = None):
         self.config = config
         self.run_worker = run_worker
+        self.gentle = gentle or Gentle()
         self.embedder = None
         self.worker: Worker | None = None
         self.worker_task: asyncio.Task | None = None
@@ -68,7 +69,8 @@ class AppState:
         if self.embedder is None:
             try:
                 self.embedder = get_embedder(self.config)
-                await asyncio.to_thread(self.embedder.warm_up)
+                if not self.gentle.lazy_model:
+                    await asyncio.to_thread(self.embedder.warm_up)
             except Exception as exc:  # keyword search still works without embeddings
                 log.warning("embeddings unavailable: %s", exc)
                 self.embedder = None
@@ -79,7 +81,8 @@ class AppState:
             self.config, self.worker_store, embedder=self.embedder,
             organise=self.drive_organise,
         )
-        self.worker = Worker(self.config, self.worker_store, pipeline)
+        self.worker = Worker(self.config, self.worker_store, pipeline,
+                             gate=self.gentle.gate, idle_poll_s=self.gentle.idle_poll_s)
         self.worker_task = asyncio.create_task(self.worker.run(drain=False))
 
     def start_watching(self) -> None:
@@ -164,6 +167,29 @@ class AppState:
             self.worker_store.close()
 
 
+class Gentle:
+    """How hard a server works in the background. The defaults are the old behaviour.
+
+    A Mac that runs the library all day for Editing Joe wants it quiet: at most
+    `max_jobs` files indexed at once across every client (None: each library's
+    own concurrency), the embedding model loaded when first needed rather than
+    at start, and an idle worker checking the queue every `idle_poll_s`.
+    """
+
+    def __init__(self, max_jobs: int | None = None, lazy_model: bool = False, idle_poll_s: float = 0.5):
+        self.max_jobs = max_jobs
+        self.lazy_model = lazy_model
+        self.idle_poll_s = idle_poll_s
+        self._gate: asyncio.Semaphore | None = None
+
+    @property
+    def gate(self) -> asyncio.Semaphore | None:
+        # Made on first use, inside the running event loop that will share it.
+        if self.max_jobs and self._gate is None:
+            self._gate = asyncio.Semaphore(self.max_jobs)
+        return self._gate
+
+
 class Studio:
     """Every client library this server serves, and which one a request means.
 
@@ -171,12 +197,14 @@ class Studio:
     workspace: its own database, its own Drive tree, its own folder structure.
     """
 
-    def __init__(self, configs: list[WorkspaceConfig], run_worker: bool = True):
+    def __init__(self, configs: list[WorkspaceConfig], run_worker: bool = True,
+                 gentle: Gentle | None = None):
         if not configs:
             raise ValueError("A studio needs at least one client library.")
+        self.gentle = gentle or Gentle()
         self.order = [config.id for config in configs]
         self.clients: dict[str, AppState] = {
-            config.id: AppState(config, run_worker=run_worker) for config in configs
+            config.id: AppState(config, run_worker=run_worker, gentle=self.gentle) for config in configs
         }
         self.embedder = None
 
@@ -198,7 +226,8 @@ class Studio:
         if first.run_worker:
             try:
                 self.embedder = get_embedder(first.config)
-                await asyncio.to_thread(self.embedder.warm_up)
+                if not self.gentle.lazy_model:
+                    await asyncio.to_thread(self.embedder.warm_up)
             except Exception as exc:  # keyword search still works without embeddings
                 log.warning("embeddings unavailable: %s", exc)
                 self.embedder = None
@@ -216,7 +245,7 @@ class Studio:
             return self.clients[config.id]
         config.ensure_dirs()
         first = self.clients[self.default_id]
-        state = AppState(config, run_worker=first.run_worker)
+        state = AppState(config, run_worker=first.run_worker, gentle=self.gentle)
         self.clients[config.id] = state
         self.order.append(config.id)
         shared = self.embedder if config.embedder == first.config.embedder else None
@@ -248,10 +277,11 @@ def create_app(config: WorkspaceConfig, run_worker: bool = True) -> FastAPI:
     return create_studio_app([config], run_worker=run_worker)
 
 
-def create_studio_app(configs: list[WorkspaceConfig], run_worker: bool = True) -> FastAPI:
+def create_studio_app(configs: list[WorkspaceConfig], run_worker: bool = True,
+                      gentle: Gentle | None = None) -> FastAPI:
     for config in configs:
         config.ensure_dirs()
-    studio = Studio(configs, run_worker=run_worker)
+    studio = Studio(configs, run_worker=run_worker, gentle=gentle)
     config = configs[0]
 
     @asynccontextmanager

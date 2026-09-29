@@ -51,11 +51,23 @@ def mac(tmp_path, monkeypatch):
 
 def test_the_agent_serves_on_loopback_with_the_inbox_and_one_log(mac):
     plist = service.build_plist(inbox=str(mac / "Broll Inbox"))
+    args = plist["ProgramArguments"]
     assert plist["Label"] == "com.editingjoe.broll"
-    assert plist["ProgramArguments"][-5:] == ["serve", "--host", "127.0.0.1", "--port", "8000"]
+    assert args[args.index("serve"):args.index("serve") + 5] == ["serve", "--host", "127.0.0.1", "--port", "8000"]
     assert plist["EnvironmentVariables"]["BROLL_INBOX"] == str(mac / "Broll Inbox")
     assert plist["StandardOutPath"] == plist["StandardErrorPath"] == str(service.log_path())
     assert plist["RunAtLoad"] is True and plist["KeepAlive"] is True
+
+
+def test_the_agent_is_gentle_on_a_laptop_that_runs_it_all_day(mac):
+    plist = service.build_plist()
+    args = " ".join(plist["ProgramArguments"])
+    assert "--max-jobs 1" in args, "one file indexed at a time across every client"
+    assert "--lazy-model" in args, "the embedding model is loaded when first needed"
+    assert "--idle-poll 5" in args
+    assert plist["Nice"] == 10
+    env = plist["EnvironmentVariables"]
+    assert env["OMP_NUM_THREADS"] == env["VECLIB_MAXIMUM_THREADS"] == "2"
 
 
 def test_the_agent_can_find_ffmpeg_even_with_launchd_s_bare_path(mac):
@@ -125,3 +137,74 @@ def test_on_anything_but_a_mac_it_points_at_systemd(monkeypatch):
     monkeypatch.setattr(service.sys, "platform", "linux")
     with pytest.raises(RuntimeError, match="systemd"):
         service.install()
+
+
+# -- gentle serving ------------------------------------------------------------
+
+
+class SlowPipeline:
+    """Counts how many files are being indexed at the same moment, across workers."""
+
+    running = 0
+    most = 0
+
+    async def ingest(self, discovered, force=False, overwrite_corrections=False):
+        import asyncio
+
+        from broll.ingest.pipeline import IngestResult
+
+        SlowPipeline.running += 1
+        SlowPipeline.most = max(SlowPipeline.most, SlowPipeline.running)
+        await asyncio.sleep(0.05)
+        SlowPipeline.running -= 1
+        return IngestResult(status="indexed", filename=discovered.filename)
+
+
+async def test_one_gate_holds_every_client_to_one_file_at_a_time(broll_home):
+    import asyncio
+
+    from broll.config import WorkspaceConfig
+    from broll.db.store import Store
+    from broll.jobs.worker import Worker
+
+    gate = asyncio.Semaphore(1)
+    workers, stores = [], []
+    for client_id in ("adam", "luqman"):
+        config = WorkspaceConfig(id=client_id, name=client_id)
+        config.provider.vision = "mock"
+        config.ingest.concurrency = 4
+        config.save()
+        store = Store.for_config(config)
+        for n in range(3):
+            store.enqueue("index_source", {"filename": f"{client_id}{n}.mp4", "origin": "local"})
+        stores.append(store)
+        workers.append(Worker(config, store, SlowPipeline(), gate=gate))
+    SlowPipeline.running = SlowPipeline.most = 0
+    try:
+        stats = await asyncio.gather(*(w.run(drain=True) for w in workers))
+    finally:
+        for store in stores:
+            store.close()
+    assert sum(s.done for s in stats) == 6
+    assert SlowPipeline.most == 1, "two clients' workers must share the one slot"
+
+
+def test_a_lazy_server_does_not_load_the_model_at_start(workspace, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from broll.web import app as web
+
+    class Model:
+        warmed = 0
+
+        def warm_up(self):
+            Model.warmed += 1
+
+    monkeypatch.setattr(web, "get_embedder", lambda config: Model())
+    with TestClient(web.create_studio_app([workspace], run_worker=True,
+                                          gentle=web.Gentle(max_jobs=1, lazy_model=True, idle_poll_s=5))):
+        pass
+    assert Model.warmed == 0
+    with TestClient(web.create_studio_app([workspace], run_worker=True)):
+        pass
+    assert Model.warmed >= 1, "the default still loads it up front"

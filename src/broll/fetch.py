@@ -343,8 +343,11 @@ def cut(original: Path, dest: Path, start: float, end: float) -> tuple[str, floa
             anchor = start if anchor is None else anchor
             seek = max(0.0, anchor - 0.001)
         partial = dest.with_name(f".{dest.stem}.{uuid.uuid4().hex[:8]}.part{dest.suffix}")
-        common = ["ffmpeg", "-v", "error", "-nostdin", "-y", "-ss", f"{seek:.6f}", "-i", str(original),
-                  "-t", f"{end - anchor:.6f}", "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn"]
+        # Two threads each way: a cut is a few seconds of footage, and the machine
+        # it runs on is usually busy with something that matters more.
+        common = ["ffmpeg", "-v", "error", "-nostdin", "-y", "-threads", "2", "-ss", f"{seek:.6f}",
+                  "-i", str(original), "-t", f"{end - anchor:.6f}", "-map", "0:v:0", "-map", "0:a:0?",
+                  "-sn", "-dn", "-threads", "2"]
         if mode == "copy":
             cmd = common + ["-c", "copy", "-avoid_negative_ts", "make_zero"]
         else:

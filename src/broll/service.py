@@ -14,6 +14,12 @@ Two details that decide whether it works at all:
   the agent runs from the checkout it was installed from - the same folder
   the double-click launcher uses - and finds the same keys.
 
+It is gentle, because it runs all day on a laptop: niced, one file indexed at a
+time across every client, the embedding model loaded only when first needed,
+an idle worker that looks at the queue every five seconds, and numeric
+libraries held to two threads. Nothing about the answers changes, only how
+hard it works to give them.
+
 Installing never stops a server someone else started: if the port is already
 taken, the agent is written but not started, and takes over at the next login.
 """
@@ -62,11 +68,18 @@ def _domain() -> str:
     return f"gui/{os.getuid()}"
 
 
+# One file at a time, the model on first use, a quiet idle loop.
+GENTLE_ARGS = ["--max-jobs", "1", "--lazy-model", "--idle-poll", "5"]
+# torch, numpy (Accelerate) and tokenizers otherwise take every core for a moment.
+THREAD_CAPS = {"OMP_NUM_THREADS": "2", "MKL_NUM_THREADS": "2", "VECLIB_MAXIMUM_THREADS": "2",
+               "TOKENIZERS_PARALLELISM": "false"}
+
+
 def program_arguments(host: str, port: int) -> list[str]:
     """The `broll` next to this interpreter, so the agent runs this install."""
     script = Path(sys.executable).with_name("broll")
     head = [str(script)] if script.exists() else [sys.executable, "-m", "broll.cli"]
-    return head + ["serve", "--host", host, "--port", str(port)]
+    return head + ["serve", "--host", host, "--port", str(port), *GENTLE_ARGS]
 
 
 def working_directory() -> Path:
@@ -100,6 +113,7 @@ def build_plist(
         "BROLL_INBOX": str(Path(inbox).expanduser()),
         # Unbuffered, so the log shows what happened when it happened.
         "PYTHONUNBUFFERED": "1",
+        **THREAD_CAPS,
     }
     if os.environ.get(BROLL_HOME_ENV):
         env[BROLL_HOME_ENV] = str(Path(os.environ[BROLL_HOME_ENV]).expanduser())
@@ -111,6 +125,7 @@ def build_plist(
         "EnvironmentVariables": env,
         "RunAtLoad": True,
         "KeepAlive": True,
+        "Nice": 10,
         # If it cannot start (a port clash, a broken install), try again every
         # half minute rather than launchd's default ten seconds of log spam.
         "ThrottleInterval": 30,

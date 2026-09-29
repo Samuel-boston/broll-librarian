@@ -330,7 +330,12 @@ broll service uninstall
 The agent runs `broll serve --host 127.0.0.1 --port 8000` from this checkout
 (so it reads the same `.env` as the launcher), with `BROLL_INBOX=~/Broll Inbox`
 and ffmpeg's folder on its PATH (launchd's own PATH has no Homebrew). It logs
-to `~/Library/Logs/editing-joe/broll.log`. If something is already serving on
+to `~/Library/Logs/editing-joe/broll.log`. Because it runs all day on a laptop
+it is gentle: niced, `--max-jobs 1` (one file indexed at a time across every
+client), `--lazy-model` (the embedding model loads when first needed),
+`--idle-poll 5` (an idle worker looks at the queue every five seconds), and
+torch/numpy held to two threads; cuts made by `/api/fetch` use two ffmpeg
+threads. The answers are the same, only slower to come when there is work. If something is already serving on
 the port - the double-click launcher, say - installing leaves it running and
 the agent takes over at the next login. Restart it after updating the code:
 `broll service install` again.
