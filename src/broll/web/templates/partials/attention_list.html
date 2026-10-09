@@ -6,7 +6,7 @@
     <p class="empty">Nothing needs attention. Every file the library has seen was indexed.</p>
   {% else %}
   <div class="flex flex-wrap items-center gap-3">
-    <p class="text-sm text-muted">{{ total }} file(s). Files longer than {{ limit_text }} or bigger than {{ '%g'|format(limits.max_file_gb) }} GB are not downloaded.</p>
+    <p class="text-sm text-muted">{{ total }} file(s).{% if limit_text %} Anything longer than {{ limit_text }} is set aside, so a recording doesn't get tagged as if it were B-roll.{% endif %}</p>
     <button class="btn btn-sm ml-auto" hx-post="/attention/sync" hx-target="#attention-list" hx-swap="outerHTML">
       Add shortcuts to Drive
     </button>
@@ -27,7 +27,7 @@
             {% if item.duration_text %}{{ item.duration_text }}{% endif %}
             {% if item.duration_text and item.size_text %} · {% endif %}
             {% if item.size_text %}{{ item.size_text }}{% endif %}
-            {% if item.detail %}<span class="block text-muted">{{ item.detail }}</span>{% endif %}
+            {% if item.detail and item.kind not in ('too_long', 'too_big') %}<span class="block text-muted">{{ item.detail }}</span>{% endif %}
           </p>
         </div>
         {% if item.link %}
