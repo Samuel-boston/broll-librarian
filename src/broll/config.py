@@ -274,7 +274,12 @@ class IngestConfig(BaseModel):
     # Files past these limits are not downloaded or analysed. They are listed, with a link, on the
     # "Needs attention" page, where a person can still choose to index one. 0 turns a limit off.
     max_duration_s: float = 600.0
+    # Files this big are not downloaded when they are in Drive (see stream_above_gb), so this limit
+    # is about uploads and local files, which have to be on the server's disk.
     max_file_gb: float = 8.0
+    # A video in Drive at least this big is not downloaded at all: frames are read straight out of
+    # it over HTTPS, a few megabytes each. A 30 GB camera file then costs the server almost no disk.
+    stream_above_gb: float = 2.0
     # A person can force a flagged file through, up to this much video.
     max_forced_duration_s: float = 10800.0
     # Never let a download leave less than this much of the disk free.

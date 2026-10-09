@@ -80,25 +80,31 @@ def _tile_grid(data: dict) -> tuple[int, int] | None:
     return None
 
 
-def probe(path: Path) -> ProbeResult:
+def probe(path) -> ProbeResult:
+    """What ffprobe says about a local file, or about a video read straight from Drive."""
     _, ffprobe = check_ffmpeg()
-    if not path.exists():
-        raise FileNotFoundError(path)
+    remote = hasattr(path, "ffmpeg_input")
+    if remote:
+        source, name = list(path.ffmpeg_input()), path.name
+    else:
+        if not path.exists():
+            raise FileNotFoundError(path)
+        source, name = [str(path)], path.name
     proc = subprocess.run(
         [
             ffprobe, "-v", "error", "-print_format", "json",
-            "-show_format", "-show_streams", "-show_stream_groups", str(path),
+            "-show_format", "-show_streams", "-show_stream_groups", *source,
         ],
         capture_output=True, text=True,
     )
     if proc.returncode != 0:
-        raise NotAVideoError(f"ffprobe could not read {path.name}: {proc.stderr.strip()[:200]}")
+        raise NotAVideoError(f"ffprobe could not read {name}: {proc.stderr.strip()[:200]}")
 
     data = json.loads(proc.stdout or "{}")
     streams = data.get("streams", [])
     video = next((s for s in streams if s.get("codec_type") == "video"), None)
     if video is None:
-        raise NotAVideoError(f"{path.name} contains no image or video stream - skipping.")
+        raise NotAVideoError(f"{name} contains no image or video stream - skipping.")
 
     fmt = data.get("format", {})
     duration = video.get("duration") or fmt.get("duration")
@@ -106,7 +112,7 @@ def probe(path: Path) -> ProbeResult:
 
     # A still decodes as a one-frame video stream, so the extension is what
     # actually says which it is. Its duration and frame rate are meaningless.
-    kind = media_kind(path) or "video"
+    kind = media_kind(name) or "video"
     width, height = int(video.get("width") or 0), int(video.get("height") or 0)
     if kind == "image":
         duration, fps = 0.0, None
@@ -123,7 +129,7 @@ def probe(path: Path) -> ProbeResult:
         height=height,
         fps=fps,
         codec=video.get("codec_name"),
-        filesize_bytes=int(fmt.get("size") or path.stat().st_size),
+        filesize_bytes=int(fmt.get("size") or (getattr(path, "size", None) if remote else path.stat().st_size) or 0),
         container=fmt.get("format_name"),
         has_audio=any(s.get("codec_type") == "audio" for s in streams),
     )

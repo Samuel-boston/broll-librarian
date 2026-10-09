@@ -24,6 +24,8 @@ DEFAULT_POSITIONS = (0.2, 0.5, 0.8)
 # Retry offsets, as a fraction of shot duration, when a sample is rejected.
 RESAMPLE_OFFSETS = (0.06, -0.06, 0.12, -0.12, 0.2)
 
+EXTRACT_TIMEOUT_S = 300
+
 NEAR_BLACK = 18.0
 NEAR_WHITE = 240.0
 MIN_STDDEV = 8.0
@@ -81,14 +83,21 @@ def _extract_one(
     # A still has exactly one frame, and seeking - even to 0 - lands past it:
     # ffmpeg then exits 0 having written nothing. So don't seek into a still.
     seek_args = ["-ss", f"{max(timestamp, 0):.3f}"] if seek else []
-    proc = subprocess.run(
-        [
-            ffmpeg, "-nostdin", "-loglevel", "error",
-            *seek_args, *ffmpeg_input(video),
-            "-frames:v", "1", "-vf", scale, "-q:v", "3", "-y", str(out_path),
-        ],
-        capture_output=True, text=True,
-    )
+    try:
+        proc = subprocess.run(
+            [
+                ffmpeg, "-nostdin", "-loglevel", "error",
+                *seek_args, *ffmpeg_input(video),
+                "-frames:v", "1", "-vf", scale, "-q:v", "3", "-y", str(out_path),
+            ],
+            capture_output=True, text=True, timeout=EXTRACT_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        # A frame that cannot be had in this long (a stalled connection) is a frame to skip, not a
+        # worker to lose.
+        log.warning("timed out reading a frame at %.1fs", timestamp)
+        out_path.unlink(missing_ok=True)
+        return False
     return proc.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0
 
 

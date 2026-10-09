@@ -160,8 +160,8 @@ async def test_a_long_drive_file_is_listed_with_a_link_and_never_fetched(workspa
 
 
 async def test_the_worker_counts_a_skip_as_done_not_failed(workspace, store):
-    discovered = DiscoveredFile(origin="drive", path=None, filename="big.mp4", drive_file_id="d2",
-                                origin_path="drive:d2", size_bytes=50 * GB, duration_s=100)
+    discovered = DiscoveredFile(origin="local", path=None, filename="big.mp4",
+                                origin_path="/footage/big.mp4", size_bytes=50 * GB, duration_s=100)
     enqueue_files(store, [discovered])
     worker = Worker(workspace, store, _pipeline(workspace, store))
     stats = await worker.run()
@@ -199,8 +199,8 @@ async def test_index_anyway_lifts_the_length_limit_for_that_file(workspace, stor
 
 
 async def test_a_dismissed_file_is_not_queued_again(workspace, store):
-    discovered = DiscoveredFile(origin="drive", path=None, filename="x.mp4", drive_file_id="d3",
-                                origin_path="drive:d3", size_bytes=50 * GB)
+    discovered = DiscoveredFile(origin="local", path=None, filename="x.mp4",
+                                origin_path="/footage/x.mp4", size_bytes=50 * GB)
     await _pipeline(workspace, store).ingest(discovered)
     [item] = store.list_attention()
     attention.dismiss(store, item["id"])
@@ -374,3 +374,156 @@ def test_two_files_with_the_same_name_in_one_folder_are_both_found(workspace):
     found = scan_drive_folder(client, folder.id)
     assert [f.filename for f in found] == ["IMG_0001.MOV", "IMG_0001.MOV", "IMG_0002.MOV"]
     assert len({f.drive_file_id for f in found}) == 3
+
+
+# -- big Drive videos are read in place, not downloaded --------------------------------------------
+
+
+class RangeServer:
+    """A local web server that serves one file and honours Range requests, the way Drive does."""
+
+    def __init__(self, path):
+        import http.server
+        import re
+        import threading
+
+        data = path.read_bytes()
+        self.data, self.requests = data, []
+        outer = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                outer.requests.append((self.headers.get("Range"), self.headers.get("Authorization")))
+                if self.headers.get("Authorization") != "Bearer tok":
+                    self.send_response(401); self.end_headers(); return
+                rng = self.headers.get("Range")
+                if rng:
+                    a, b = re.match(r"bytes=(\d+)-(\d*)", rng).groups()
+                    a, b = int(a), int(b) if b else len(data) - 1
+                    chunk = data[a:b + 1]
+                    self.send_response(206)
+                    self.send_header("Content-Range", f"bytes {a}-{a + len(chunk) - 1}/{len(data)}")
+                else:
+                    chunk = data
+                    self.send_response(200)
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Content-Length", str(len(chunk)))
+                self.send_header("Content-Type", "video/mp4")
+                self.end_headers()
+                try:
+                    self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/clip.mp4"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+
+
+class TokenClient:
+    def access_token(self):
+        return "tok"
+
+
+@pytest.fixture()
+def served_clip(tmp_path):
+    path = tmp_path / "remote.mp4"
+    subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "lavfi", "-i",
+                    "testsrc2=size=320x240:rate=15:duration=24", "-pix_fmt", "yuv420p",
+                    "-movflags", "+faststart", "-y", str(path)], check=True)
+    server = RangeServer(path)
+    yield path, server
+    server.close()
+
+
+def test_a_remote_video_has_the_same_fingerprint_as_the_downloaded_file(served_clip):
+    from broll.ingest.hashing import content_hash
+    from broll.ingest.remote import RemoteDriveVideo
+
+    path, server = served_clip
+    remote = RemoteDriveVideo(TokenClient(), "id", "remote.mp4", size=path.stat().st_size, url=server.url)
+    assert remote.content_hash() == content_hash(path), "streamed or fetched, it is the same file"
+
+
+def test_ffprobe_and_ffmpeg_read_a_video_over_https_with_the_token(served_clip, tmp_path):
+    from broll.ingest.frames import extract_frames_timed
+    from broll.ingest.probe import probe
+    from broll.ingest.remote import RemoteDriveVideo
+
+    path, server = served_clip
+    remote = RemoteDriveVideo(TokenClient(), "id", "remote.mp4", size=path.stat().st_size, url=server.url)
+    meta = probe(remote)
+    assert meta.duration_s == pytest.approx(24, abs=0.5) and (meta.width, meta.height) == (320, 240)
+    frames = extract_frames_timed(remote, tmp_path / "f", start_s=0, duration_s=24, count=4, centred=True)
+    assert len(frames) == 4 and all(f.path.stat().st_size > 0 for f in frames)
+    assert all(auth == "Bearer tok" for _, auth in server.requests), "every request carried the token"
+    fetched = sum(1 for rng, _ in server.requests if rng)
+    assert fetched >= 4, "it asked for pieces of the file, not the whole thing"
+
+
+async def test_a_big_drive_video_is_indexed_without_being_downloaded(workspace, store, served_clip, monkeypatch):
+    path, server = served_clip
+    workspace.ingest.stream_above_gb = 0.000001   # treat this small file as "big"
+    monkeypatch.setattr("broll.ingest.remote.API", server.url + "?{id}")
+    pipeline = IngestPipeline(workspace, store, drive_client=lambda: TokenClient())
+    from broll.ingest import pipeline as pipeline_module
+    original = pipeline_module.RemoteDriveVideo
+
+    class Served(original):
+        def __init__(self, client, file_id, name, size=None, url=None):
+            super().__init__(client, file_id, name, size, url=server.url)
+
+    monkeypatch.setattr(pipeline_module, "RemoteDriveVideo", Served)
+    discovered = DiscoveredFile(origin="drive", path=None, filename="remote.mp4", drive_file_id="abc",
+                                origin_path="drive:abc", size_bytes=path.stat().st_size, link="https://drive/abc")
+    result = await pipeline.ingest(discovered)
+
+    assert result.status in ("indexed", "needs_review") and result.shots_analysed >= 1
+    assert "Read in place from Drive" in " ".join(result.messages)
+    [source] = store.list_sources()
+    assert source.drive_file_id == "abc" and source.duration_s == pytest.approx(24, abs=0.5)
+    assert not list(workspace.temp_dir.glob("drive-*")), "nothing was downloaded"
+    assert server.requests and all(rng for rng, _ in server.requests), "only ever asked for ranges"
+
+
+async def test_a_streamed_video_over_the_length_limit_is_listed_after_one_look(workspace, store, served_clip, monkeypatch):
+    path, server = served_clip
+    workspace.ingest.stream_above_gb = 0.000001
+    workspace.ingest.max_duration_s = 10
+    from broll.ingest import pipeline as pipeline_module
+    original = pipeline_module.RemoteDriveVideo
+
+    class Served(original):
+        def __init__(self, client, file_id, name, size=None, url=None):
+            super().__init__(client, file_id, name, size, url=server.url)
+
+    monkeypatch.setattr(pipeline_module, "RemoteDriveVideo", Served)
+    pipeline = IngestPipeline(workspace, store, drive_client=lambda: TokenClient())
+    discovered = DiscoveredFile(origin="drive", path=None, filename="remote.mp4", drive_file_id="abc",
+                                origin_path="drive:abc", size_bytes=path.stat().st_size)
+    result = await pipeline.ingest(discovered)
+    assert result.skipped_kind == "too_long" and store.list_sources() == []
+
+
+def test_a_drive_video_is_streamed_only_when_it_is_big_and_a_video(workspace, store):
+    pipeline = IngestPipeline(workspace, store)
+    def d(name, size, origin="drive"):
+        return DiscoveredFile(origin=origin, path=None, filename=name, drive_file_id="x", origin_path="drive:x", size_bytes=size)
+    assert pipeline._streams(d("a.mov", 3 * GB))
+    assert not pipeline._streams(d("a.mov", GB)), "small enough to download"
+    assert not pipeline._streams(d("a.jpg", 3 * GB)), "photos are downloaded"
+    assert not pipeline._streams(d("a.mov", 3 * GB, origin="local")), "only Drive files can be read in place"
+
+
+def test_a_recording_is_read_in_fewer_bigger_windows():
+    from broll.analysis.segmentation import plan_windows
+
+    assert len(plan_windows(0, 600)) == 10                 # ten minutes: a minute at a time
+    long = plan_windows(0, 3 * 3600)                       # three hours
+    assert len(long) <= 20 and all(w.end_s - w.start_s <= 601 for w in long) and long[-1].end_s == 3 * 3600

@@ -302,17 +302,24 @@ class Window:
 
 
 def plan_windows(
-    start_s: float, end_s: float, max_frames: int = 12, window_s: float = 60.0, frame_gap_s: float = 3.0
+    start_s: float,
+    end_s: float,
+    max_frames: int = 12,
+    window_s: float | None = None,
+    frame_gap_s: float = 3.0,
 ) -> list[Window]:
     """How to look at a stretch: one call if it is short, one per minute if it is long.
 
-    A short clip gets a frame about every three seconds; a long recording is read a minute at a time
-    with up to `max_frames` frames each, so a two-hour file is a couple of hundred frames rather than
-    one impossible request.
+    A short clip gets a frame about every three seconds; a long one is read a minute at a time with up to
+    `max_frames` frames each. A recording longer than twenty minutes is read in at most twenty windows (up to
+    ten minutes each, so a frame every ~50 s): finding the usable stretches in a three-hour recording does
+    not need a frame every few seconds, and would cost hundreds of model calls.
     """
     duration = max(0.0, end_s - start_s)
     if duration <= 0:
         return []
+    if window_s is None:
+        window_s = 60.0 if duration <= 1200 else max(60.0, min(600.0, duration / 20))
     if duration <= window_s:
         return [Window(start_s, end_s, max(4, min(max_frames, round(duration / frame_gap_s))))]
     windows: list[Window] = []

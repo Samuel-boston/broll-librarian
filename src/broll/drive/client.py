@@ -116,8 +116,18 @@ class DriveClient:
                 "Drive support needs the extra: pip install 'broll-librarian[drive]'"
             ) from exc
         self.service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+        self.credentials = credentials
         self.page_size = page_size
         self._children: dict[str, dict[str, DriveFile]] = {}
+
+    def access_token(self) -> str:
+        """A current OAuth token, for a request made outside the Drive library (reading a video over HTTPS)."""
+        credentials = self.credentials
+        if not getattr(credentials, "valid", True):
+            from google.auth.transport.requests import Request
+
+            credentials.refresh(Request())
+        return credentials.token
 
     # -- reads --------------------------------------------------------------
 

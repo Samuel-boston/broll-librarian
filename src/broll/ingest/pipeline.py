@@ -33,6 +33,7 @@ from .hashing import content_hash
 from .limits import Verdict, check_limits
 from .probe import NotAVideoError, ProbeResult, probe
 from .raw import extract_preview, is_raw, rawpy_available
+from .remote import RemoteDriveVideo
 from .scanner import DiscoveredFile, media_kind
 from .segments import number_usable, plan_segments, primary_segment_index
 from .shots import detect_shots
@@ -68,11 +69,14 @@ class IngestPipeline:
         analyzer: Analyzer | None = None,
         embedder: Embedder | None = None,
         organise: Callable[[str], object] | None = None,
+        drive_client: Callable[[], object] | None = None,
     ):
         self.config = config
         self.store = store
         self.analyzer = analyzer or Analyzer(config)
         self._embedder = embedder
+        # How to get a Drive client for reading a video in place. Overridable for tests.
+        self._drive_client = drive_client or self._default_drive_client
         # Runs in a worker thread, so it must open its own database connection
         # and Drive client - see drive_organise_callable().
         self._organise = organise
@@ -115,6 +119,24 @@ class IngestPipeline:
         result.messages.append(f"{attention.heading(verdict.kind)}: {verdict.detail}")
         return result
 
+    def _default_drive_client(self):
+        from ..drive.auth import load_credentials
+        from ..drive.client import DriveClient
+
+        credentials = load_credentials(self.config)
+        if credentials is None:
+            raise RuntimeError("Drive is not connected for this workspace. Run `broll drive login`.")
+        return DriveClient(credentials)
+
+    def _streams(self, discovered: DiscoveredFile) -> bool:
+        """Is this a video big enough, and in Drive, to be read in place rather than downloaded?"""
+        limit = self.config.ingest.stream_above_gb
+        return bool(
+            limit and discovered.origin == "drive" and discovered.drive_file_id
+            and discovered.size_bytes and discovered.size_bytes >= limit * 1_000_000_000
+            and media_kind(discovered.filename) == "video"
+        )
+
     def _free_bytes(self) -> int | None:
         try:
             self.config.temp_dir.mkdir(parents=True, exist_ok=True)
@@ -138,14 +160,23 @@ class IngestPipeline:
         size = discovered.size_bytes
         if size is None and discovered.path and discovered.path.exists():
             size = discovered.path.stat().st_size
+        stream = self._streams(discovered)
         verdict = check_limits(
-            ingest, size_bytes=size, duration_s=discovered.duration_s, is_image=is_image,
-            forced=allow_long, free_bytes=self._free_bytes(),
+            ingest, size_bytes=None if stream else size, duration_s=discovered.duration_s,
+            is_image=is_image, forced=allow_long, free_bytes=self._free_bytes(),
         )
         if verdict:
             return self._turn_away(discovered, verdict, result, size, discovered.duration_s)
 
-        video = await self._fetch(discovered)
+        if stream:
+            # Too big to download sensibly: read frames straight from Drive.
+            video = RemoteDriveVideo(
+                await asyncio.to_thread(self._drive_client), discovered.drive_file_id,
+                discovered.filename, discovered.size_bytes,
+            )
+            result.messages.append("Read in place from Drive (too big to download)")
+        else:
+            video = await self._fetch(discovered)
         if video is None:
             result.status = "failed"
             result.error = "could not obtain the file's bytes"
@@ -154,7 +185,7 @@ class IngestPipeline:
         # 2. A RAW photograph is read through the JPEG inside it; the RAW itself is never touched.
         working = video
         raw_dir: Path | None = None
-        if is_raw(video):
+        if isinstance(video, Path) and is_raw(video):
             raw_dir = self.config.temp_dir / f"raw-{new_id()[:8]}"
             preview = await asyncio.to_thread(extract_preview, video, raw_dir)
             if preview is None:
@@ -180,15 +211,17 @@ class IngestPipeline:
     async def _index(
         self,
         discovered: DiscoveredFile,
-        video: Path,
-        working: Path,
+        video: Path | RemoteDriveVideo,
+        working: Path | RemoteDriveVideo,
         force: bool,
         overwrite_corrections: bool,
         progress: dict[str, str],
         result: IngestResult,
         allow_long: bool,
     ) -> IngestResult:
-        digest = await asyncio.to_thread(content_hash, video)
+        digest = await asyncio.to_thread(
+            video.content_hash if isinstance(video, RemoteDriveVideo) else (lambda: content_hash(video))
+        )
         existing = self.store.source_by_hash(digest)
         if existing and not force and self._is_complete(existing):
             result.source_id = existing.id
@@ -202,7 +235,9 @@ class IngestPipeline:
             result.status = "failed"
             result.error = str(exc)
             return result
-        if working is not video:
+        if isinstance(video, RemoteDriveVideo):
+            meta.filesize_bytes = video.size or meta.filesize_bytes
+        elif working is not video:
             meta.filesize_bytes = video.stat().st_size  # the RAW's size, not its preview's
 
         # The length is known for certain now: a file Drive gave no length for is caught here.
@@ -359,7 +394,7 @@ class IngestPipeline:
             return {"segments": [Segment(0.0, 0.0, "usable")], "cost": 0.0, "messages": messages}
 
         duration = meta.duration_s
-        if 0 < duration <= ingest.scene_detect_max_s:
+        if 0 < duration <= ingest.scene_detect_max_s and isinstance(working, Path):
             spans = await asyncio.to_thread(
                 detect_shots, working, duration,
                 ingest.min_shot_length_s, ingest.min_average_shot_length_s,
@@ -453,7 +488,7 @@ class IngestPipeline:
                 leftover.unlink(missing_ok=True)
             raw_dir.rmdir()
 
-    def _cleanup(self, work_dir: Path | None, video: Path, discovered: DiscoveredFile,
+    def _cleanup(self, work_dir: Path | None, video, discovered: DiscoveredFile,
                  source_id: str | None) -> None:
         """Only ever delete inside the workspace temp and staging directories,
         and never delete the only copy of an uploaded file.
@@ -472,6 +507,8 @@ class IngestPipeline:
             source = self.store.get_source(source_id) if source_id else None
             if not (source and source.drive_file_id):
                 return  # not in Drive yet - keep it
+        if not isinstance(video, Path):
+            return  # read in place from Drive: there is nothing of ours to delete
         staging = self.config.staging_dir.resolve()
         tmp = self.config.temp_dir.resolve()
         resolved = video.resolve()
