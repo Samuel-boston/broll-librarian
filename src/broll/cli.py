@@ -1756,6 +1756,8 @@ def attention_list(
             _echo(f"        {item['detail']}")
         if item["link"]:
             _echo(f"        {item['link']}")
+        elif item["origin"] != "drive" and item["origin_path"]:
+            _echo(f"        {item['origin_path']}")
     _echo("\nIndex one anyway:  broll attention index <id>     Not wanted:  broll attention dismiss <id>")
 
 
