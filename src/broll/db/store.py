@@ -387,6 +387,7 @@ class Store:
             "observations_json": json.dumps(shot.observations),
             "themes_json": json.dumps(shot.themes),
             "phrases_json": json.dumps(shot.search_phrases),
+            "body_json": json.dumps(shot.body_language),
             "category_confidence": shot.category_confidence,
             "review_reasons_json": json.dumps(shot.review_reasons),
             "best_start_s": shot.best_start_s,

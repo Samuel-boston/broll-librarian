@@ -88,8 +88,9 @@ changes - not for small changes inside one continuous shot. Most clips are a sin
 segment, often with some setup before it and a tail after it. Say so when that is what you \
 see, and do not split a good continuous shot into pieces.
 
-For each usable segment also give best_start_s and best_end_s: the strongest 3 to 10 seconds \
-inside it - stable, well framed, the subject doing the thing. It is the part an editor would \
+For each usable segment also give best_start_s and best_end_s: the 3 to 10 seconds where the \
+point of the shot lands - the peak of the action or the feeling (the jump, the laugh, the head \
+in the hands), not merely the sharpest or the first seconds. It is the part an editor would \
 cut first. It must lie inside the segment.
 
 Put a boundary between the two frames that show the change; if you cannot tell where, put it \

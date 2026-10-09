@@ -77,7 +77,7 @@
       </label>
       {% endfor %}
 
-      {% for field in ['emotions', 'subjects', 'mood', 'usable_for', 'quality_flags', 'tags', 'themes'] %}
+      {% for field in ['emotions', 'subjects', 'mood', 'usable_for', 'quality_flags', 'tags', 'themes', 'body_language', 'search_phrases'] %}
       <label class="block">
         <span class="label">{{ field.replace('_',' ') }} <span class="normal-case tracking-normal text-faint">(comma separated)</span></span>
         <input name="{{ field }}" value="{{ shot[field] | join(', ') }}" class="input mt-1.5">

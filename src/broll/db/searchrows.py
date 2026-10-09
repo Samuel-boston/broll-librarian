@@ -45,6 +45,7 @@ def search_columns(row: sqlite3.Row, tags: list[str]) -> tuple[str, str]:
         subjects=_list(row, "subjects_json"),
         tags=tags,
         time_of_day=row["time_of_day"],
+        body_language=_list(row, "body_json"),
     )
     concept = searchtext.concept_terms(
         themes=_list(row, "themes_json"),
@@ -65,6 +66,7 @@ def embedding_for(row: sqlite3.Row, tags: list[str], folder_notes: Mapping[str, 
         subjects=_list(row, "subjects_json"),
         tags=tags,
         time_of_day=row["time_of_day"],
+        body_language=_list(row, "body_json"),
         themes=_list(row, "themes_json"),
         mood=_list(row, "mood_json"),
         emotions=_list(row, "emotions_json"),

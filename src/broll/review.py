@@ -41,7 +41,7 @@ SCALAR_FIELDS = {
     "pace": Pace,
     "category": None,
 }
-LIST_FIELDS = ("subjects", "mood", "emotions", "usable_for", "quality_flags", "tags", "themes")
+LIST_FIELDS = ("subjects", "mood", "emotions", "usable_for", "quality_flags", "tags", "themes", "body_language", "search_phrases")
 BOOL_FIELDS = ("has_recognisable_faces", "has_text_on_screen", "top_pick", "featured_person")
 
 ENUM_OPTIONS = {

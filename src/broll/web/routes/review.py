@@ -29,7 +29,8 @@ router = APIRouter()
 EDITABLE = (
     "caption", "setting", "setting_detail", "action", "shot_type", "camera_movement",
     "time_of_day", "colour_profile", "people_count", "pace", "subjects", "mood",
-    "emotions", "usable_for", "quality_flags", "tags", "themes", "category", "top_pick",
+    "emotions", "usable_for", "quality_flags", "tags", "themes", "body_language", "search_phrases",
+    "category", "top_pick",
 )
 
 

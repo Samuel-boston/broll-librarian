@@ -68,6 +68,7 @@ def primary_terms(
     subjects: Sequence[str],
     tags: Sequence[str],
     time_of_day: str | None,
+    body_language: Sequence[str] = (),
 ) -> list[str]:
     return _terms([
         caption,
@@ -75,6 +76,7 @@ def primary_terms(
         setting,
         setting_detail,
         *subjects,
+        *body_language,
         *tags,
         time_words(time_of_day),
     ])
@@ -105,7 +107,8 @@ def embedding_text(
     subjects: Sequence[str],
     tags: Sequence[str],
     time_of_day: str | None,
-    themes: Sequence[str],
+    body_language: Sequence[str] = (),
+    themes: Sequence[str] = (),
     mood: Sequence[str],
     emotions: Sequence[str],
     categories: Sequence[str | None],
@@ -123,7 +126,7 @@ def embedding_text(
     for term in (
         *primary_terms(
             caption=caption, action=action, setting=setting, setting_detail=setting_detail,
-            subjects=subjects, tags=tags, time_of_day=time_of_day,
+            subjects=subjects, tags=tags, time_of_day=time_of_day, body_language=body_language,
         ),
         *concept_terms(themes=themes, mood=mood, emotions=emotions, categories=categories, phrases=phrases),
     ):

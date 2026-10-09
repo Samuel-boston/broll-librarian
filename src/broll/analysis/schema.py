@@ -281,6 +281,19 @@ DEFECT_FLAGS: frozenset[str] = frozenset({
     "noisy", "compression_artifacts", "empty_frame", "low_resolution",
 })
 
+# What the person's body and face are doing, and where the gaze goes. Visible things, so they are searchable as words:
+# "staring", "head in hands", "walking alone" are what an editor types when they want a scene like that, and a
+# closed list means the same thing is always called the same thing.
+BODY_LANGUAGE: tuple[str, ...] = (
+    "staring", "looking away", "looking down", "looking up", "looking at camera", "gazing into the distance",
+    "eyes closed", "head in hands", "hand on chin", "hand on forehead", "rubbing face", "rubbing eyes",
+    "rubbing temples", "head down", "head back", "slumped", "hunched", "arms crossed", "hands clasped",
+    "fidgeting", "sighing", "yawning", "stretching", "pacing", "walking alone", "sitting alone",
+    "standing alone", "leaning", "lying down", "crying", "laughing", "smiling", "frowning", "tense jaw",
+    "shrugging", "pointing", "gesturing", "nodding", "shaking head", "hugging", "clapping", "waving",
+    "dancing", "relaxed posture", "upright posture", "turned away",
+)
+
 # Human emotions, deliberately separate from mood. Mood is how a shot *looks*
 # (cinematic, moody, clean); emotions are what the person feels and what a
 # viewer is made to feel. Editors cut to feeling, so this is what they search.
@@ -309,6 +322,7 @@ TAG_STOPLIST: frozenset[str] = frozenset({
 VOCABULARIES: dict[str, tuple[str, ...]] = {
     "subjects": SUBJECTS,
     "action": ACTIONS,
+    "body_language": BODY_LANGUAGE,
     "setting": SETTINGS,
     "mood": MOODS,
     "emotions": EMOTIONS,
@@ -372,6 +386,13 @@ class AnalysisResult(BaseModel):
             "part: one term. Not everything that happens in it. An object in frame is not an action: "
             "a laptop at the edge of the picture is not 'working', a mug on a table is not 'drinking'. "
             "A person who is mostly still, thinking or visibly feeling something: that is the action."
+        ),
+    )
+    body_language: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Up to 5 from the list: what the person's body and face are doing and where their gaze goes, "
+            "as far as you can see it (staring, head in hands, slumped, walking alone...)."
         ),
     )
     caption: str = Field(
@@ -485,7 +506,7 @@ class AnalysisResult(BaseModel):
 
     @field_validator(
         "observations", "subjects", "mood", "emotions", "tags", "themes", "search_phrases", "usable_for",
-        "quality_flags",
+        "quality_flags", "body_language",
         mode="before",
     )
     @classmethod
@@ -561,6 +582,11 @@ class AnalysisResult(BaseModel):
     def _cap_themes(cls, v: list[str]) -> list[str]:
         return v[:4]
 
+    @field_validator("body_language", mode="after")
+    @classmethod
+    def _cap_body_language(cls, v: list[str]) -> list[str]:
+        return v[:5]
+
     @field_validator("search_phrases", mode="after")
     @classmethod
     def _cap_phrases(cls, v: list[str]) -> list[str]:
@@ -598,6 +624,7 @@ class AnalysisResult(BaseModel):
             setting_detail=self.setting_detail,
             subjects=self.subjects,
             tags=self.tags,
+            body_language=self.body_language,
             time_of_day=self.time_of_day.value,
             themes=self.themes,
             mood=self.mood,
@@ -681,6 +708,7 @@ class ShotContext(BaseModel):
 _VOCAB_FIELDS = {
     "subjects": "subjects",
     "action": "action",
+    "body_language": "body_language",
     "setting": "setting",
     "mood": "mood",
     "emotions": "emotions",

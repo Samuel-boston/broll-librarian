@@ -442,7 +442,7 @@ def test_most_of_the_frames_come_from_the_strongest_stretch():
 
     times = times_weighted_to(0, 34, 8, (12, 22))
     assert len(times) == 8 and times == sorted(times)
-    assert sum(1 for t in times if 12 <= t <= 22) == 5, "about 60% from the best part"
+    assert sum(1 for t in times if 12 <= t <= 22) == 3, "about 40% from the best part"
     assert any(t < 12 for t in times) and any(t > 22 for t in times), "and some from either side"
     assert all(0 <= t <= 34 for t in times)
 
@@ -483,7 +483,7 @@ async def test_the_frames_for_a_shot_follow_its_best_part(workspace, tmp_path):
                       best_start_s=12.0, best_end_s=22.0)
     frames = analyzer.extract_timed(clip, ctx, tmp_path / "f")
     inside = [f for f in frames if 12 <= f.t <= 22]
-    assert len(frames) == 8 and len(inside) == 5
+    assert len(frames) == 8 and len(inside) == 3, "some from the best part, and the rest still cover the whole shot"
 
 
 class QueryVector(HashEmbedder):
@@ -599,3 +599,36 @@ def test_two_words_of_three_still_keep_a_clip(store):
     sid = add_shot(store, "a.mp4", caption="A man doing nervous system regulation.", tags=["nervous system"])
     add_shot(store, "b.mp4", caption="Unrelated clip.")
     assert [r.shot.id for r in SearchEngine(store).search("nervous system regulation")] == [sid]
+
+
+# -- body language: what an editor types to find a scene like that -------------------------------------
+
+
+def test_what_the_body_is_doing_is_searchable_and_the_phrase_is_found_whole(store):
+    wanted = add_shot(store, "a.mp4", caption="Adam sits on the edge of a bed.", body_language=["staring", "head in hands"])
+    other = add_shot(store, "b.mp4", caption="Adam gestures with his hands while speaking.", body_language=["gesturing"])
+    for i in range(6):
+        add_shot(store, f"f{i}.mp4", caption=f"A beach at dawn {i}.")
+    engine = SearchEngine(store)
+    assert [r.shot.id for r in engine.search("staring")] == [wanted]
+    results = [r.shot.id for r in engine.search("head in hands")]
+    assert wanted in results and other not in results
+    row = store.conn.execute("SELECT search_text, concept_text FROM shots WHERE id = ?", (wanted,)).fetchone()
+    assert "head in hands" in row["search_text"], "something visible, so it counts in full"
+
+
+def test_body_language_is_a_closed_list_the_model_is_given():
+    from broll.analysis.prompt import vocabulary_block
+    from broll.analysis.schema import BODY_LANGUAGE, find_oov
+
+    block = vocabulary_block()
+    assert "body_language (choose up to 5 you can see)" in block and "head in hands" in block
+    result = AnalysisResult.model_validate({**BASE, "body_language": ["Staring", "head in hands", "levitating", "x1", "x2", "x3"]})
+    assert result.body_language[:2] == ["staring", "head in hands"] and len(result.body_language) == 5
+    assert ("body_language", "levitating") in find_oov(result)
+    assert "staring" in BODY_LANGUAGE
+
+
+def test_the_clip_with_a_bodys_story_is_embedded_with_it(store):
+    sid = add_shot(store, "a.mp4", caption="Adam sits.", body_language=["slumped", "staring"])
+    assert "slumped, staring" in store.embedding_text(sid)

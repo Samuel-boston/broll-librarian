@@ -11,7 +11,7 @@ from pathlib import Path
 
 SQL_DIR = Path(__file__).parent
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 def _apply_sql_file(conn: sqlite3.Connection, name: str) -> None:
@@ -245,6 +245,11 @@ def _v9_search_phrases(conn: sqlite3.Connection) -> None:
     _add_column(conn, "ALTER TABLE shots ADD COLUMN phrases_json TEXT NOT NULL DEFAULT '[]'")
 
 
+def _v10_body_language(conn: sqlite3.Connection) -> None:
+    """What the person's body and face are doing (staring, head in hands...), as a searchable list."""
+    _add_column(conn, "ALTER TABLE shots ADD COLUMN body_json TEXT NOT NULL DEFAULT '[]'")
+
+
 MIGRATIONS = {
     1: _v1_base_schema,
     2: _v2_drive_shortcuts,
@@ -255,6 +260,7 @@ MIGRATIONS = {
     7: _v7_shot_usage,
     8: _v8_precision_intake_and_segments,
     9: _v9_search_phrases,
+    10: _v10_body_language,
 }
 
 

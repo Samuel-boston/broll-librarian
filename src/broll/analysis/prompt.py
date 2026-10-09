@@ -15,6 +15,7 @@ from collections.abc import Sequence
 
 from .schema import (
     ACTIONS,
+    BODY_LANGUAGE,
     EMOTIONS,
     MOODS,
     QUALITY_FLAGS,
@@ -30,7 +31,7 @@ from .schema import (
     TimeOfDay,
 )
 
-PROMPT_VERSION = "2.3.0"
+PROMPT_VERSION = "2.4.0"
 
 SYSTEM_PROMPT = """\
 You are a video editor's assistant cataloguing raw B-roll footage. You are shown still \
@@ -51,14 +52,17 @@ do, objects, the place, the light, any movement. Short and factual, 4-10 items, 
 interpretation. Everything below must be grounded in this list.
 2. action - the one main thing the person visibly does or shows for most of the shot (or in \
 its strongest stretch). If they are mostly still, thinking or feeling something, say that.
-3. caption - one sentence, the way an editor would describe the clip out loud to a \
+3. body_language - what the person's body and face are doing and where the gaze goes, from the \
+list, everything you can see (up to 5): staring, head in hands, slumped, walking alone... \
+Leave out what you cannot see.
+4. caption - one sentence, the way an editor would describe the clip out loud to a \
 colleague, leading with the action. A second action only when it fills a real share of the \
 shot. No preamble, no "this video shows". Never describe something you did not see being \
 done.
-4. subjects, setting, mood, emotions, usable_for, quality_flags - use the \
+5. subjects, setting, mood, emotions, usable_for, quality_flags - use the \
 controlled vocabularies exactly as written. If nothing fits, use the closest term; only \
 invent one when there is genuinely no near miss.
-5. tags - search keywords for things that are visibly present or plainly happening: 6-12, \
+6. tags - search keywords for things that are visibly present or plainly happening: 6-12, \
 lowercase, singular. Each tag must be one of your observations or a common synonym of one \
 ("sofa" for "couch", "ocean" for "sea"). Never put in tags: feelings, ideas, themes, what \
 the clip "represents", camera or shot terms, or anything you cannot see. A man sitting \
@@ -69,27 +73,27 @@ rubbing the face, pacing, walking alone, sitting on the edge of a bed - because 
 people search for. An activity is visible only when the pose, equipment or \
 setting makes it unmistakable: eyes closed in a meditation posture is meditation; a \
 person who is merely sitting is not.
-6. themes - only from the client's THEMES list, when one is given, copied exactly. Include \
+7. themes - only from the client's THEMES list, when one is given, copied exactly. Include \
 a theme only if the footage clearly shows it or is a direct visual stand-in for it. Most \
 clips match none or one; an empty list is normal and correct. Never add a theme just \
 because the client is about it.
-7. search_phrases - 3-8 short phrases an editor might type to find this exact clip, in their \
+8. search_phrases - 3-8 short phrases an editor might type to find this exact clip, in their \
 words rather than yours: how it feels ("sad", "low point"), what the body and eyes are doing \
 ("staring blankly", "head in hands", "walking alone"), the situation, and what the clip \
 would be used to say. Only things that are true of it, and use the client's own phrasing \
 where the brief gives it.
-8. emotions matter more to an editor than anything except the caption, because editors \
+9. emotions matter more to an editor than anything except the caption, because editors \
 cut to feeling. Give 2-5: what the person on screen is feeling, and what the shot makes a \
 viewer feel. Be honest about it - someone yawning and falling back asleep is tired or \
 drained, not cosy. mood is different: mood is how the shot looks as an image (cinematic, \
 moody, clean, warm).
-9. setting_detail is free text and is where specifics go ("rocky Cornish coastline", \
+10. setting_detail is free text and is where specifics go ("rocky Cornish coastline", \
 "open-plan office with exposed brick").
-10. Infer camera movement from the differences between frames. If the framing is identical \
+11. Infer camera movement from the differences between frames. If the framing is identical \
 across frames, it is static.
-11. quality_flags describe technical problems only. An intentionally shallow depth of field \
+12. quality_flags describe technical problems only. An intentionally shallow depth of field \
 is not out_of_focus. Leave the list empty when the clip is clean.
-12. confidence is your honest confidence that this analysis is right, 0 to 1. Use the whole \
+13. confidence is your honest confidence that this analysis is right, 0 to 1. Use the whole \
 range: 0.9 or more only when everything is clear; 0.7 to 0.9 when it is mostly clear; \
 below 0.7 when the frames are dark or ambiguous, or you are guessing at the action.
 
@@ -137,6 +141,7 @@ def vocabulary_block(emotions: Sequence[str] = EMOTIONS) -> str:
             "CONTROLLED VOCABULARIES - use these exact terms.",
             _vocab_block("subjects (choose all that apply, most important first)", SUBJECTS),
             _vocab_block("action (choose exactly one, or 'none')", ACTIONS),
+            _vocab_block("body_language (choose up to 5 you can see)", BODY_LANGUAGE),
             _vocab_block("setting (choose exactly one)", SETTINGS),
             _vocab_block("mood (choose up to 3)", MOODS),
             _vocab_block("emotions (choose 2-5, most important first)", emotions),

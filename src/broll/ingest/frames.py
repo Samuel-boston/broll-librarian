@@ -298,13 +298,13 @@ def wants_fast_seek(width: int, height: int) -> bool:
 
 
 def times_weighted_to(
-    start_s: float, end_s: float, count: int, best: tuple[float, float] | None, share: float = 0.6
+    start_s: float, end_s: float, count: int, best: tuple[float, float] | None, share: float = 0.4
 ) -> list[float] | None:
     """Moments to take frames at, with most of them inside the shot's strongest stretch.
 
     Describing a 34-second shot from eight evenly spaced frames lets a few seconds at the edges (someone
     glancing at a laptop) weigh as much as the ten seconds that are the shot. With the best part known,
-    about `share` of the frames come from it, spread evenly, and the rest from before and after it, so
+    about `share` of the frames come from it (the rest still cover the whole shot, so a shot is never judged by its best seconds alone), spread evenly, and the rest from before and after it, so
     the description follows what an editor would actually use. None when there is no best part, or it
     is most of the shot anyway.
     """
