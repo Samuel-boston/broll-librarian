@@ -395,7 +395,9 @@ class SearchEngine:
 
     # -- relevance ----------------------------------------------------------
 
-    def _coverage(self, tokens: list[str], shot_ids: list[str]) -> dict[str, float]:
+    def _coverage_detail(
+        self, tokens: list[str], shot_ids: list[str]
+    ) -> dict[str, tuple[float, int]]:
         """How much of the query each shot literally contains, weighted by rarity.
 
         A word on most of the library says little about any one clip; a word
@@ -435,9 +437,13 @@ class SearchEngine:
         if not weight:
             return {}
         return {
-            sid: sum(weights[t] * c for t, c in earned.items()) / weight
+            sid: (sum(weights[t] * c for t, c in earned.items()) / weight, len(earned))
             for sid, earned in credit.items()
         }
+
+    def _coverage(self, tokens: list[str], shot_ids: list[str]) -> dict[str, float]:
+        """`_coverage_detail`, without the count of words matched."""
+        return {sid: cov for sid, (cov, _n) in self._coverage_detail(tokens, shot_ids).items()}
 
     def _similarities(self, query_vector: list[float], shot_ids: list[str]) -> dict[str, float]:
         query = _unit(query_vector)
@@ -490,7 +496,8 @@ class SearchEngine:
         A near match failed all three but was close; only those are offered
         behind "show them" - never the whole library.
         """
-        coverage = self._coverage(tokens, [c for c in candidates if c in keyword_hits])
+        detail = self._coverage_detail(tokens, [c for c in candidates if c in keyword_hits])
+        coverage = {sid: cov for sid, (cov, _n) in detail.items()}
         sims = self._similarities(query_vector, candidates) if query_vector else {}
         best = max(sims.values(), default=None)
         floor, gap, near_floor, near_gap = (
@@ -501,12 +508,15 @@ class SearchEngine:
         near: set[str] = set()
         for sid in candidates:
             cov = coverage.get(sid, 0.0)
+            # One word of a two-word phrase is not the phrase: "head in hands" is not "gesturing with his
+            # hands". Words alone keep a clip only when more than one of them is there (or there was one).
+            literal = cov >= KEYWORD_COVERAGE and (detail.get(sid, (0, 0))[1] >= 2 or len(tokens) == 1)
             sim = sims.get(sid)
             if sim is None:
                 # Nothing to judge meaning by (no embedder, or not embedded
                 # yet): the weighted literal match has to carry it alone.
-                (keep if cov >= KEYWORD_PARTIAL else near if cov > 0 else set()).add(sid)
-            elif cov >= KEYWORD_COVERAGE:
+                (keep if literal else near if cov > 0 else set()).add(sid)
+            elif literal:
                 keep.add(sid)
             elif cov >= KEYWORD_PARTIAL and sim >= floor:
                 keep.add(sid)

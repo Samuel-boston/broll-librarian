@@ -693,6 +693,7 @@ Every removal is local: **nothing in Google Drive is ever deleted**, and the sho
 | `broll index --drive-folder <id> [--sample N] [--dry-run]` | Index footage already in Drive; `--sample` for a pilot, `--dry-run` to see what would be set aside |
 | `broll attention [index/dismiss/sync <id>]` | Files that were not indexed (too long, unreadable...), with a link each |
 | `broll folders [approve/dismiss <id>]` | New folders the model suggested |
+| `broll folders rename/add/note/remove` | Change the client's folder tree; clips follow a rename |
 | `broll audit-tags` | Is the tagging healthy? No model calls |
 | `broll work [--follow]` | Work the queue; safe to kill and restart |
 | `broll status` | Queue, counts, vector backend, cost |

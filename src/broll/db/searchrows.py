@@ -15,6 +15,9 @@ from .. import searchtext
 
 
 def _list(row: sqlite3.Row, column: str) -> list[str]:
+    # A column added by a later migration is not there yet while an earlier one rewrites the text.
+    if column not in row.keys():
+        return []
     return json.loads(row[column] or "[]")
 
 
@@ -48,6 +51,7 @@ def search_columns(row: sqlite3.Row, tags: list[str]) -> tuple[str, str]:
         mood=_list(row, "mood_json"),
         emotions=_list(row, "emotions_json"),
         categories=_categories(row),
+        phrases=_list(row, "phrases_json"),
     )
     return searchtext.join_terms(primary), searchtext.join_terms(concept)
 
@@ -66,6 +70,7 @@ def embedding_for(row: sqlite3.Row, tags: list[str], folder_notes: Mapping[str, 
         emotions=_list(row, "emotions_json"),
         categories=_categories(row),
         folder_notes=folder_notes,
+        phrases=_list(row, "phrases_json"),
     )
 
 

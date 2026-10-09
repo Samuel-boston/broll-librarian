@@ -96,6 +96,8 @@ class Shot(BaseModel):
     observations: list[str] = Field(default_factory=list)
     #: Client themes the footage clearly shows (a closed list, so never free-form noise).
     themes: list[str] = Field(default_factory=list)
+    #: How an editor would put it when looking for this clip ("staring blankly", "low point").
+    search_phrases: list[str] = Field(default_factory=list)
     category: str | None = None
     category_confidence: float | None = None
     secondary_categories: list[str] = Field(default_factory=list)
@@ -126,6 +128,7 @@ class Shot(BaseModel):
             ("secondary_categories_json", "secondary_categories"),
             ("observations_json", "observations"),
             ("themes_json", "themes"),
+            ("phrases_json", "search_phrases"),
             ("review_reasons_json", "review_reasons"),
         ):
             d[dst] = json.loads(d.pop(src, "[]") or "[]")
@@ -164,6 +167,7 @@ class Shot(BaseModel):
         self.emotions = result.emotions
         self.observations = result.observations
         self.themes = result.themes
+        self.search_phrases = result.search_phrases
         self.category = result.category
         self.category_confidence = result.category_confidence
         self.secondary_categories = result.secondary_categories

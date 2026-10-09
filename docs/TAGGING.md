@@ -28,7 +28,17 @@ the client's own name is removed, and themes not on the client's list are discar
 Search looks at two columns (`searchtext.py`):
 
 * **the picture** - caption, subjects, action, place, time of day, tags. A match here counts in full.
-* **concepts** - themes, mood, emotions, the folder name. A match here counts for 70%, and ranks lower.
+* **concepts** - themes, mood, emotions, **search phrases**, and the name of every folder the clip is filed
+  under (so a clip in Speaking > Keynotes is also found by "speaking"). A match here counts for 70%, and ranks lower.
+
+**Search phrases** are written by the model as it describes the clip: 3 to 8 short phrases an editor might type to
+find it, in their words rather than the model's ("staring blankly", "head in hands", "low point"). This is what
+lets a search for how a clip feels or what the person is doing find it, even when the caption says something
+else. They only ever describe what is true of the clip.
+
+**What a folder is for** also counts. The client's own note on a folder ("Low points: sad, crying, staring blankly,
+head in hands...") is added to the meaning-based search text of every clip filed there, so a search for any word
+of the note reaches all of them. Change a note with `broll folders note`, then `broll reembed` so existing clips pick it up.
 
 Not searchable as words: shot type, camera movement, colour, people count, pace, "usable for". They sit
 on most clips, so as words they only add noise ("slow", "wide", "static", "one"). They are still filters,
@@ -59,6 +69,19 @@ Run it after the first 40 or so clips and again after a big batch. If a tag is o
 delete it by hand: tighten the client's theme list or the prompt and re-run `broll reanalyse` on those clips.
 
 ## When a person should look
+
+## Changing the folders
+
+```bash
+broll folders rename "08_Life Chapters" "08_Adam's Journey"   # clips follow
+broll folders add "08_Adam's Journey" "Landscaping Business" -n "What belongs in it. The model reads this."
+broll folders note "07_Mood/Struggle & Upset" "What the folder is for."
+broll folders remove "07_Mood/Night & City" --into "07_Mood/Reflective"
+```
+
+A folder's note is read by the model when it files a clip, so it is where "this, not that" goes. Clips remember their folder
+by path, so rename and remove carry them along (a removed folder's clips are flagged for review unless `--into` says where).
+Re-describing a folder changes where *new* clips go; `broll reanalyse` re-files the ones already indexed.
 
 A shot goes to **Review** when: the model's confidence is under 0.7; it was under 0.6 sure of the folder; the
 folder it named is not one of the client's; nothing in the file looked usable; or the footage is technically

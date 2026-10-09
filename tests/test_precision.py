@@ -567,3 +567,35 @@ def test_a_clip_is_described_by_what_its_folder_is_for(workspace):
 def test_a_folder_without_a_note_adds_nothing_to_the_embedding(store):
     sid = add_shot(store, "a.mp4", caption="x", category="02_Gym & Training")
     assert "Filed under" not in store.embedding_text(sid)
+
+
+# -- how editors put it: search phrases, and a phrase is not one of its words -------------------------
+
+
+def test_the_phrases_an_editor_would_type_are_searchable_and_embedded(store):
+    sid = add_shot(store, "a.mp4", caption="Adam sits on the edge of a bed.", tags=["bed"],
+                   search_phrases=["staring blankly", "low point", "head in hands"])
+    row = store.conn.execute("SELECT search_text, concept_text FROM shots WHERE id = ?", (sid,)).fetchone()
+    assert "staring blankly" in row["concept_text"] and "staring" not in row["search_text"]
+    assert "low point" in store.embedding_text(sid)
+    assert [r.shot.id for r in SearchEngine(store).search("staring")] == [sid]
+
+
+def test_one_word_of_a_two_word_phrase_is_not_the_phrase(store):
+    wanted = add_shot(store, "a.mp4", caption="Adam sits with his head in his hands on a bed.", tags=["head", "hands"])
+    other = add_shot(store, "b.mp4", caption="Adam gestures with his hands while speaking.", tags=["hands"])
+    for i in range(6):
+        add_shot(store, f"f{i}.mp4", caption=f"A beach at dawn {i}.", tags=["beach"])
+    results = [r.shot.id for r in SearchEngine(store).search("head in hands")]
+    assert wanted in results and other not in results
+
+
+def test_a_one_word_query_still_matches_on_the_one_word(store):
+    sid = add_shot(store, "a.mp4", caption="Adam gestures with his hands.", tags=["hands"])
+    assert [r.shot.id for r in SearchEngine(store).search("hands")] == [sid]
+
+
+def test_two_words_of_three_still_keep_a_clip(store):
+    sid = add_shot(store, "a.mp4", caption="A man doing nervous system regulation.", tags=["nervous system"])
+    add_shot(store, "b.mp4", caption="Unrelated clip.")
+    assert [r.shot.id for r in SearchEngine(store).search("nervous system regulation")] == [sid]

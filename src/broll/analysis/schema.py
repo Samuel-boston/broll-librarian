@@ -410,6 +410,14 @@ class AnalysisResult(BaseModel):
             "shows or is a direct visual stand-in for. Usually 0-2. Empty is normal."
         ),
     )
+    search_phrases: list[str] = Field(
+        default_factory=list,
+        description=(
+            "3-8 short phrases an editor might type to find this exact clip, in their words: how it feels "
+            "('sad', 'low point'), what the body and eyes are doing ('staring blankly', 'head in hands', "
+            "'walking alone'), the situation, and what the clip would be used to say. Only what is true of it."
+        ),
+    )
     usable_for: list[str] = Field(default_factory=list)
     quality_flags: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
@@ -476,7 +484,8 @@ class AnalysisResult(BaseModel):
         return coerce_enum("pace", v, Pace) if isinstance(v, str) else v
 
     @field_validator(
-        "observations", "subjects", "mood", "emotions", "tags", "themes", "usable_for", "quality_flags",
+        "observations", "subjects", "mood", "emotions", "tags", "themes", "search_phrases", "usable_for",
+        "quality_flags",
         mode="before",
     )
     @classmethod
@@ -552,6 +561,11 @@ class AnalysisResult(BaseModel):
     def _cap_themes(cls, v: list[str]) -> list[str]:
         return v[:4]
 
+    @field_validator("search_phrases", mode="after")
+    @classmethod
+    def _cap_phrases(cls, v: list[str]) -> list[str]:
+        return v[:8]
+
     @field_validator("category_confidence", mode="before")
     @classmethod
     def _clamp_category_confidence(cls, v):
@@ -589,6 +603,7 @@ class AnalysisResult(BaseModel):
             mood=self.mood,
             emotions=self.emotions,
             categories=(self.category, *self.secondary_categories),
+            phrases=self.search_phrases,
         )
 
     def search_text(self) -> str:

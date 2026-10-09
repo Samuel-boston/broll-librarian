@@ -86,8 +86,10 @@ def concept_terms(
     mood: Sequence[str],
     emotions: Sequence[str],
     categories: Iterable[str | None],
+    phrases: Sequence[str] = (),
 ) -> list[str]:
-    return _terms([*themes, *mood, *emotions, *category_terms(categories)])
+    """What the clip stands for, and how an editor would put it when looking for it."""
+    return _terms([*themes, *mood, *emotions, *phrases, *category_terms(categories)])
 
 
 def join_terms(terms: Iterable[str]) -> str:
@@ -108,6 +110,7 @@ def embedding_text(
     emotions: Sequence[str],
     categories: Sequence[str | None],
     folder_notes: Mapping[str, str] | None = None,
+    phrases: Sequence[str] = (),
 ) -> str:
     """What the embedder reads: the picture first, then what it stands for, each term once.
 
@@ -122,7 +125,7 @@ def embedding_text(
             caption=caption, action=action, setting=setting, setting_detail=setting_detail,
             subjects=subjects, tags=tags, time_of_day=time_of_day,
         ),
-        *concept_terms(themes=themes, mood=mood, emotions=emotions, categories=categories),
+        *concept_terms(themes=themes, mood=mood, emotions=emotions, categories=categories, phrases=phrases),
     ):
         key = term.lower()
         if key in seen:

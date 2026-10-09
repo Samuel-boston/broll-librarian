@@ -11,7 +11,7 @@ from pathlib import Path
 
 SQL_DIR = Path(__file__).parent
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 def _apply_sql_file(conn: sqlite3.Connection, name: str) -> None:
@@ -240,6 +240,11 @@ def _v8_precision_intake_and_segments(conn: sqlite3.Connection) -> None:
     conn.execute("INSERT INTO shots_fts(shots_fts) VALUES ('rebuild')")
 
 
+def _v9_search_phrases(conn: sqlite3.Connection) -> None:
+    """How an editor would put it when looking for a clip, written by the model as it describes it."""
+    _add_column(conn, "ALTER TABLE shots ADD COLUMN phrases_json TEXT NOT NULL DEFAULT '[]'")
+
+
 MIGRATIONS = {
     1: _v1_base_schema,
     2: _v2_drive_shortcuts,
@@ -249,6 +254,7 @@ MIGRATIONS = {
     6: _v6_media_kind,
     7: _v7_shot_usage,
     8: _v8_precision_intake_and_segments,
+    9: _v9_search_phrases,
 }
 
 

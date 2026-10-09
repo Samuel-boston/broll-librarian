@@ -386,6 +386,7 @@ class Store:
             "raw_analysis_json": json.dumps(shot.raw_analysis) if shot.raw_analysis else None,
             "observations_json": json.dumps(shot.observations),
             "themes_json": json.dumps(shot.themes),
+            "phrases_json": json.dumps(shot.search_phrases),
             "category_confidence": shot.category_confidence,
             "review_reasons_json": json.dumps(shot.review_reasons),
             "best_start_s": shot.best_start_s,
