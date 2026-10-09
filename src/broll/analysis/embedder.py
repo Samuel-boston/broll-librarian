@@ -99,6 +99,7 @@ class LocalEmbedder(Embedder):
 
 class GeminiEmbedder(Embedder):
     name = "gemini"
+    BATCH = 96
 
     def __init__(self, config: EmbedderConfig, api_key: str | None):
         model, dimensions = PROVIDER_EMBEDDING_MODELS["gemini"]
@@ -111,14 +112,18 @@ class GeminiEmbedder(Embedder):
         from google.genai import types
 
         client = genai.Client(api_key=self.api_key)
-        result = client.models.embed_content(
-            model=self.model,
-            contents=texts,
-            config=types.EmbedContentConfig(
-                output_dimensionality=self.dimensions, task_type=task_type
-            ),
-        )
-        return [list(e.values) for e in result.embeddings]
+        vectors: list[list[float]] = []
+        # The API takes at most 100 texts in one request.
+        for start in range(0, len(texts), self.BATCH):
+            result = client.models.embed_content(
+                model=self.model,
+                contents=texts[start:start + self.BATCH],
+                config=types.EmbedContentConfig(
+                    output_dimensionality=self.dimensions, task_type=task_type
+                ),
+            )
+            vectors.extend(list(e.values) for e in result.embeddings)
+        return vectors
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         return self._embed(texts, "RETRIEVAL_DOCUMENT")

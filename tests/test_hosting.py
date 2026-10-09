@@ -337,3 +337,36 @@ def test_the_entrypoint_refuses_a_public_domain_without_a_password():
     done = subprocess.run(["sh", str(script)], env={"PATH": "/usr/bin:/bin", "BROLL_DOMAIN": "example.com"},
                           capture_output=True, text=True)
     assert done.returncode == 1 and "BROLL_ACCESS_PASSWORD" in done.stderr
+
+
+def test_gemini_embeddings_are_sent_in_batches_the_api_accepts(monkeypatch):
+    """The API rejects more than 100 texts in a request; a rebuild of a big library sends more."""
+    import sys
+    import types as pytypes
+
+    seen = []
+
+    class FakeModels:
+        def embed_content(self, model, contents, config):
+            seen.append((len(contents), config.task_type))
+            return pytypes.SimpleNamespace(
+                embeddings=[pytypes.SimpleNamespace(values=[1.0, 0.0]) for _ in contents])
+
+    genai = pytypes.ModuleType("google.genai")
+    genai.Client = lambda api_key: pytypes.SimpleNamespace(models=FakeModels())
+    genai.types = pytypes.SimpleNamespace(
+        EmbedContentConfig=lambda **kw: pytypes.SimpleNamespace(**kw))
+    google = pytypes.ModuleType("google")
+    google.genai = genai
+    monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setitem(sys.modules, "google.genai", genai)
+
+    from broll.analysis.embedder import GeminiEmbedder
+    from broll.config import EmbedderConfig
+
+    embedder = GeminiEmbedder(EmbedderConfig(kind="gemini", model="gemini-embedding-001", dimensions=2), "k")
+    assert len(embedder.embed_documents(["t"] * 250)) == 250
+    assert [n for n, _ in seen] == [96, 96, 58] and {t for _, t in seen} == {"RETRIEVAL_DOCUMENT"}
+    seen.clear()
+    embedder.embed_query("q")
+    assert seen == [(1, "RETRIEVAL_QUERY")], "a query is embedded as a query"
