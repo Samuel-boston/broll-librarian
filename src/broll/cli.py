@@ -774,6 +774,48 @@ def drive_import(
     _echo(f"Connected. Token stored at {workspace_config.drive_token_path}")
 
 
+@drive_app.command("copy-folder")
+def drive_copy_folder(
+    source: str = typer.Argument(..., help="The folder's Drive link, or its id."),
+    name: Optional[str] = typer.Option(None, "--name", help="Name for the copy (default: '<folder> (working copy)')."),
+    into: Optional[str] = typer.Option(None, "--into", help="Folder link or id to put the copy in (default: My Drive)."),
+    all_files: bool = typer.Option(False, "--all-files",
+                                   help="Copy documents and other files too, not just photos and video."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Count and size everything, and copy nothing."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+) -> None:
+    """Copy a Drive folder (subfolders included) into a new folder, leaving the original untouched.
+
+    Index and organise the copy instead of the original. The copy is made inside Drive, belongs to the
+    account this workspace is signed in as, and uses that account's storage. Safe to stop and re-run:
+    it only copies what is missing.
+    """
+    from .drive.client import DriveError, DriveStorageFullError
+    from .drive.copier import copy_folder, parse_folder_id
+
+    workspace_config = resolve_workspace(workspace)
+    try:
+        source_id = parse_folder_id(source)
+        parent_id = parse_folder_id(into) if into else "root"
+    except ValueError as exc:
+        _fail(str(exc))
+    client = _drive_client(workspace_config)
+    try:
+        report = copy_folder(
+            client, source_id, parent_id, name,
+            state_path=workspace_config.dir / "drive_copy_state.json",
+            media_only=not all_files, dry_run=dry_run,
+            progress=lambda message: _echo(message, err=True),
+        )
+    except DriveStorageFullError as exc:
+        _fail(f"{exc} What was copied so far is kept: free some space and run it again.")
+    except DriveError as exc:
+        _fail(str(exc))
+    _echo(report.summary())
+    if not dry_run and report.dest_root_id:
+        _echo(f"\nNext: broll index --drive-folder {report.dest_root_id}")
+
+
 @drive_app.command("status")
 def drive_status(workspace: Optional[str] = typer.Option(None, "--workspace", "-w")) -> None:
     """Show the Drive connection and root folder."""

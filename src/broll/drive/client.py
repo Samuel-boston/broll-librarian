@@ -37,6 +37,11 @@ class DriveFile:
     parents: list[str] = field(default_factory=list)
     web_view_link: str | None = None
     shortcut_target_id: str | None = None
+    #: Bytes, when Drive reports one (folders, shortcuts and Google Docs have none).
+    size: int | None = None
+    md5: str | None = None
+    #: Custom key/values stored on the file (the copier stamps each copy with where it came from).
+    app_properties: dict[str, str] | None = None
 
     @property
     def is_folder(self) -> bool:
@@ -141,7 +146,7 @@ class DriveClient:
                 return self.service.files().list(
                     q=f"'{parent_id}' in parents and trashed = false",
                     fields=("nextPageToken, files(id,name,mimeType,parents,"
-                            "webViewLink,shortcutDetails)"),
+                            "webViewLink,shortcutDetails,size,md5Checksum,appProperties)"),
                     pageSize=self.page_size,
                     pageToken=page_token,
                     supportsAllDrives=True,
@@ -159,7 +164,59 @@ class DriveClient:
         self._children[parent_id] = children
         return children
 
+    def list_all(self, parent_id: str) -> list[DriveFile]:
+        """Every child of a folder, in a list, uncached. Unlike `list_children`, two files with
+        the same name both come back: a folder of footage often has them."""
+        found: list[DriveFile] = []
+        page_token = None
+        while True:
+            def call():
+                return self.service.files().list(
+                    q=f"'{parent_id}' in parents and trashed = false",
+                    fields=("nextPageToken, files(id,name,mimeType,parents,"
+                            "webViewLink,shortcutDetails,size,md5Checksum,appProperties)"),
+                    pageSize=self.page_size,
+                    pageToken=page_token,
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                ).execute()
+
+            response = with_backoff(call, description=f"list {parent_id}")
+            found.extend(_to_file(item) for item in response.get("files", []))
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                return found
+
+    def storage_quota(self) -> tuple[int | None, int]:
+        """(limit, used) in bytes for the signed-in account. The limit is None when unlimited
+        or pooled in a way Drive does not report."""
+        def call():
+            return self.service.about().get(fields="storageQuota").execute()
+
+        quota = with_backoff(call, description="storage quota").get("storageQuota", {})
+        limit = quota.get("limit")
+        return (int(limit) if limit else None), int(quota.get("usage", 0))
+
     # -- writes -------------------------------------------------------------
+
+    def copy_file(self, file_id: str, name: str, parent_id: str,
+                  app_properties: dict[str, str] | None = None) -> DriveFile:
+        """Copy a file inside Drive, on Google's side: nothing is downloaded or uploaded. The copy
+        belongs to whoever is signed in, and counts against their storage."""
+        body: dict[str, Any] = {"name": name, "parents": [parent_id]}
+        if app_properties:
+            body["appProperties"] = app_properties
+
+        def call():
+            return self.service.files().copy(
+                fileId=file_id, body=body,
+                fields="id,name,mimeType,parents,webViewLink,size,md5Checksum,appProperties",
+                supportsAllDrives=True,
+            ).execute()
+
+        created = _to_file(with_backoff(call, description=f"copy {name}"))
+        self._children.setdefault(parent_id, {})[name] = created
+        return created
 
     def create_folder(self, name: str, parent_id: str) -> DriveFile:
         def call():
@@ -310,4 +367,7 @@ def _to_file(payload: dict[str, Any]) -> DriveFile:
         parents=list(payload.get("parents") or []),
         web_view_link=payload.get("webViewLink"),
         shortcut_target_id=details.get("targetId"),
+        size=int(payload["size"]) if payload.get("size") else None,
+        md5=payload.get("md5Checksum"),
+        app_properties=payload.get("appProperties") or None,
     )

@@ -387,6 +387,25 @@ broll organise --dry-run          # show what would change
 broll reorganise                  # rebuild the tree from the database
 ```
 
+## Copy a Drive folder first, so the original is never touched
+
+Organising moves and renames the files it files. To keep the original archive exactly as it is, copy
+it first and organise the copy:
+
+```bash
+broll drive copy-folder "<folder link>" --dry-run     # count the files and the size, copy nothing
+broll drive copy-folder "<folder link>"               # copy it (subfolders included)
+broll index --drive-folder <the copy's id> --organise
+```
+
+* The copy is made inside Drive, so nothing is downloaded or uploaded. It belongs to the account
+  this workspace is signed in as, and counts against that account's storage (roughly double the
+  footage). The dry run prints the size and the free space first.
+* Only photos and video are copied (`--all-files` for everything). Shortcuts are skipped.
+* The original is only ever read. Safe to stop and re-run: every copy is stamped with where it came
+  from, so a repeat, a resume or a lost state file never makes a second copy.
+* A destination inside the folder being copied is refused.
+
 ## Connecting to the Content Ops dashboard
 
 If the client also uses the Content Ops dashboard, the library's Footage index

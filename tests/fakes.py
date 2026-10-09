@@ -61,7 +61,38 @@ class FakeDriveClient:
             f.name: f for f in self._files.values() if parent_id in f.parents
         }
 
+    def list_all(self, parent_id: str) -> list[DriveFile]:
+        if parent_id not in self._files:
+            raise DriveError(f"File not found: {parent_id}")
+        return [f for f in self._files.values() if parent_id in f.parents]
+
+    def storage_quota(self) -> tuple[int | None, int]:
+        return getattr(self, "quota", (None, 0))
+
+    def add_file(self, name: str, parent_id: str, mime_type: str = "video/mp4",
+                 size: int | None = 1000) -> DriveFile:
+        """Seed a file without counting it as a write (it is the starting state of the test)."""
+        entry = DriveFile(id=self._new_id("src"), name=name, mime_type=mime_type,
+                          parents=[parent_id], size=size)
+        self._files[entry.id] = entry
+        return entry
+
+    def add_folder(self, name: str, parent_id: str) -> DriveFile:
+        entry = DriveFile(id=self._new_id("srcfolder"), name=name, mime_type=FOLDER_MIME,
+                          parents=[parent_id])
+        self._files[entry.id] = entry
+        return entry
+
     # -- writes -------------------------------------------------------------
+
+    def copy_file(self, file_id: str, name: str, parent_id: str, app_properties=None) -> DriveFile:
+        self._record(f"copy:{name}")
+        original = self._files[file_id]
+        entry = DriveFile(id=self._new_id("copy"), name=name, mime_type=original.mime_type,
+                          parents=[parent_id], size=original.size, md5=original.md5)
+        entry.app_properties = dict(app_properties or {}) or None
+        self._files[entry.id] = entry
+        return entry
 
     def create_folder(self, name: str, parent_id: str) -> DriveFile:
         self._record(f"create_folder:{name}")
