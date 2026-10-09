@@ -69,3 +69,16 @@ class DriveSession:
         if report.errors:
             raise RuntimeError("; ".join(report.errors))
         return report
+
+    def mirror_attention(self) -> int:
+        """Shortcuts for the files on the "Needs attention" list. Safe to call from any thread."""
+        from ..attention import sync_drive_shortcuts
+        from ..db.store import Store
+
+        with self._lock:
+            self._expire_if_stale()
+            store = Store.for_config(self.config)
+            try:
+                return sync_drive_shortcuts(self.config, store, self.client())
+            finally:
+                store.close()

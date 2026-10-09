@@ -48,7 +48,8 @@ PRUNE_LIMIT_MIN = 20
 SHOT_SQL = """
     SELECT s.id, s.source_id, s.start_s, s.end_s, s.duration_s, s.caption,
            s.action, s.setting, s.shot_type, s.emotions_json, s.subjects_json,
-           s.category, s.top_pick, s.featured_person, s.search_text,
+           s.category, s.top_pick, s.featured_person,
+           trim(s.search_text || ', ' || s.concept_text, ', ') AS search_text,
            s.thumbnail_path,
            src.media_kind, src.original_filename, src.drive_file_id,
            src.drive_web_link, src.drive_path

@@ -3,6 +3,29 @@
     <p class="alert alert-ok">{{ message }}</p>
   {% endif %}
 
+  {% if proposals %}
+  <section class="card overflow-hidden">
+    <header class="border-b border-line-soft px-5 py-4">
+      <h2 class="text-sm font-semibold text-white">Suggested folders <span class="tag tag-warn">{{ proposals|length }}</span></h2>
+      <p class="mt-1 text-xs text-muted">The model found clips that fit none of the client's folders. Nothing was created. Approve a folder to add it and move those clips into it.</p>
+    </header>
+    <ul class="divide-line">
+      {% for p in proposals %}
+      <li class="flex flex-wrap items-center gap-3 px-5 py-3 text-sm">
+        <div class="min-w-0 flex-1">
+          <p class="font-medium">{{ p.path.replace('/', ' › ') }}</p>
+          <p class="mt-0.5 text-xs text-faint">{{ p.shot_ids|length }} clip(s){% if p.note %} · {{ p.note }}{% endif %}</p>
+        </div>
+        <button type="button" class="btn btn-sm btn-primary" hx-post="/review/folders/{{ p.id }}/approve"
+                hx-target="#review-queue" hx-swap="outerHTML">Create folder</button>
+        <button type="button" class="btn btn-sm" hx-post="/review/folders/{{ p.id }}/dismiss"
+                hx-target="#review-queue" hx-swap="outerHTML">Dismiss</button>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
   {% if not queue %}
     <p class="empty">Nothing needs review. {{ indexed }} shot(s) are indexed.</p>
   {% else %}
@@ -54,7 +77,7 @@
       </label>
       {% endfor %}
 
-      {% for field in ['emotions', 'subjects', 'mood', 'usable_for', 'quality_flags', 'tags'] %}
+      {% for field in ['emotions', 'subjects', 'mood', 'usable_for', 'quality_flags', 'tags', 'themes'] %}
       <label class="block">
         <span class="label">{{ field.replace('_',' ') }} <span class="normal-case tracking-normal text-faint">(comma separated)</span></span>
         <input name="{{ field }}" value="{{ shot[field] | join(', ') }}" class="input mt-1.5">

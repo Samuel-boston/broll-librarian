@@ -397,7 +397,10 @@ class IngestPipeline:
         """
         if source.status not in ("indexed", "needs_review"):
             return False
-        return bool(self.store.shots_for_source(source.id))
+        shots = self.store.shots_for_source(source.id)
+        planned = sum(1 for s in source.segments if s.get("kind") == "usable")
+        # A plan that calls for more shots than exist means the run was cut short.
+        return bool(shots) and len(shots) >= planned
 
     # -- stages -------------------------------------------------------------
 

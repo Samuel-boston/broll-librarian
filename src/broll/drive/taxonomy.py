@@ -322,12 +322,19 @@ def plan_tree(
     """
     leaves = {path for path, _ in config.category_leaves()}
     primary = primary_shot(shots)
-    home_category = primary.category if primary and primary.category in leaves else None
-    home = (
-        FolderPath((*prefix, *home_category.split("/")))
-        if home_category
-        else FolderPath((*prefix, config.unsorted_folder))
+    route = config.route_uncertain_to_review
+    # A clip whose folder is in doubt is filed in the review folder, not guessed into a wrong one.
+    # It moves to its real folder when a person confirms it.
+    in_doubt = bool(route and primary and primary.misfile_risk)
+    home_category = (
+        primary.category if primary and primary.category in leaves and not in_doubt else None
     )
+    if in_doubt:
+        home = FolderPath((*prefix, config.review_folder_name))
+    elif home_category:
+        home = FolderPath((*prefix, *home_category.split("/")))
+    else:
+        home = FolderPath((*prefix, config.unsorted_folder))
 
     plans: list[ShortcutPlan] = []
     seen: set[tuple[str, str]] = set()
@@ -342,9 +349,10 @@ def plan_tree(
                                       shot_id=shot.shot_id))
 
     for shot in shots:
-        for category in (shot.category, *shot.secondary_categories):
-            if category and category in leaves and category != home_category:
-                add(category.split("/"), shot)
+        if not (route and shot.misfile_risk):
+            for category in (shot.category, *shot.secondary_categories):
+                if category and category in leaves and category != home_category:
+                    add(category.split("/"), shot)
         if shot.top_pick and config.top_picks_folder:
             add((config.top_picks_folder,), shot)
     return home, plans

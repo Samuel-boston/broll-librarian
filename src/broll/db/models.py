@@ -175,6 +175,14 @@ class Shot(BaseModel):
         return self
 
 
+#: Reasons that mean "the folder it was given may be wrong". A shaky clip is flagged for review too,
+#: but it is still in the right folder, so it is not among these.
+ROUTING_REASONS = frozenset({
+    "low_confidence", "low_category_confidence", "category_unmatched", "analysis_failed",
+    "no_usable_part",
+})
+
+
 class ShotFacets(BaseModel):
     """The subset of a shot the taxonomy needs. Keeps taxonomy.py pure."""
 
@@ -196,6 +204,8 @@ class ShotFacets(BaseModel):
     category: str | None = None
     secondary_categories: list[str] = Field(default_factory=list)
     top_pick: bool = False
+    #: The folder this shot was given is in doubt; see ROUTING_REASONS.
+    misfile_risk: bool = False
 
     @classmethod
     def from_shot(cls, shot: Shot) -> "ShotFacets":
@@ -218,6 +228,7 @@ class ShotFacets(BaseModel):
             category=shot.category,
             secondary_categories=shot.secondary_categories,
             top_pick=shot.top_pick,
+            misfile_risk=bool(ROUTING_REASONS.intersection(shot.review_reasons)),
         )
 
 

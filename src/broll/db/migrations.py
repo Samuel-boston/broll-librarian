@@ -203,6 +203,17 @@ def _v8_precision_intake_and_segments(conn: sqlite3.Connection) -> None:
         DROP TRIGGER IF EXISTS shots_ad;
         DROP TRIGGER IF EXISTS shots_au;
         DROP TABLE IF EXISTS shots_fts;
+        """
+    )
+    # Shots indexed under the old rules have the old, noisier text. Rewrite it now, while nothing is
+    # watching the table: an update with the old triggers in place would try to remove rows from an
+    # index that no longer holds them. Embeddings need `broll reembed` afterwards.
+    from .searchrows import rewrite_all_search_text
+
+    rewrite_all_search_text(conn)
+
+    conn.executescript(
+        """
         CREATE VIRTUAL TABLE shots_fts USING fts5(
             search_text,
             concept_text,
@@ -226,11 +237,6 @@ def _v8_precision_intake_and_segments(conn: sqlite3.Connection) -> None:
         END;
         """
     )
-    # Shots indexed under the old rules have the old, noisier text. Rewrite it so the keyword index
-    # is right straight away (embeddings need `broll reembed`).
-    from .searchrows import rewrite_all_search_text
-
-    rewrite_all_search_text(conn)
     conn.execute("INSERT INTO shots_fts(shots_fts) VALUES ('rebuild')")
 
 

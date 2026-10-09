@@ -35,6 +35,7 @@ from typing import Any
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
+from ... import attention
 from ...db.store import Store, canonical_time
 from ...ingest.scanner import DiscoveredFile, media_kind, scan_local
 from ...jobs.queue import enqueue_files, queue_stats
@@ -133,6 +134,7 @@ def _shot_json(result: Any, client_id: str, usage: dict[str, list[dict]] | None 
         "emotions": shot.emotions,
         "mood": shot.mood,
         "tags": shot.tags,
+        "themes": shot.themes,
         "action": shot.action,
         "setting": shot.setting,
         "shot_type": shot.shot_type,
@@ -150,6 +152,10 @@ def _shot_json(result: Any, client_id: str, usage: dict[str, list[dict]] | None 
         "local_path": source.origin_path,
         "thumbnail_url": f"/thumbnails/{shot.id}.jpg" if shot.thumbnail_path else None,
         "end_s": round(shot.end_s, 2),
+        # The strongest stretch inside this shot, when the library picked one: cut from here first.
+        "best_start_s": None if shot.best_start_s is None else round(shot.best_start_s, 2),
+        "best_end_s": None if shot.best_end_s is None else round(shot.best_end_s, 2),
+        "review_reasons": shot.review_reasons,
         "width": source.width,
         "height": source.height,
         "fps": source.fps,
@@ -277,8 +283,73 @@ async def status(request: Request, client: str | None = None) -> dict:
             "failed": stats.failed,
             "shots": store.count_shots(),
             "needs_review": store.count_shots("needs_review"),
+            "needs_attention": sum(store.attention_counts().values()),
             "worker_running": bool(state.worker),
         }
+    finally:
+        store.close()
+
+
+@router.get("/attention")
+async def attention_list(request: Request, client: str | None = None) -> dict:
+    """Files the library did not index, each with the reason and a link to open it."""
+    _authorise(request)
+    state = _client_for(request, client)
+    store = state.store()
+    try:
+        items = store.list_attention("open")
+        return {
+            "client": state.config.id,
+            "count": len(items),
+            "items": [
+                {
+                    "id": i["id"], "kind": i["kind"], "filename": i["filename"], "detail": i["detail"],
+                    "link": i["link"], "size_bytes": i["size_bytes"], "duration_s": i["duration_s"],
+                }
+                for i in items
+            ],
+        }
+    finally:
+        store.close()
+
+
+@router.post("/attention/{item_id}/index")
+async def attention_index(request: Request, item_id: int, client: str | None = None) -> dict:
+    """Queue a listed file anyway, with the length limit lifted for it."""
+    _authorise(request)
+    state = _client_for(request, client)
+    store = state.store()
+    try:
+        if not attention.requeue(state.config, store, item_id, forced=True):
+            raise HTTPException(status_code=404, detail=f"No item {item_id} on the list.")
+    finally:
+        store.close()
+    return {"queued": True, "id": item_id}
+
+
+@router.post("/attention/{item_id}/dismiss")
+async def attention_dismiss(request: Request, item_id: int, client: str | None = None) -> dict:
+    _authorise(request)
+    state = _client_for(request, client)
+    store = state.store()
+    try:
+        if not attention.dismiss(store, item_id):
+            raise HTTPException(status_code=404, detail=f"No item {item_id} on the list.")
+    finally:
+        store.close()
+    return {"dismissed": True, "id": item_id}
+
+
+@router.get("/audit/tags")
+async def audit_tags(request: Request, client: str | None = None) -> dict:
+    """How the tagging is doing: over-used tags, themes, how sure the model was."""
+    _authorise(request)
+    from ...audit import tag_audit
+
+    state = _client_for(request, client)
+    store = state.store()
+    try:
+        return tag_audit(store)
     finally:
         store.close()
 

@@ -1,0 +1,51 @@
+<div id="attention-list" class="space-y-6">
+  {% if message %}<p class="alert alert-ok">{{ message }}</p>{% endif %}
+  {% if error %}<p class="alert alert-bad">{{ error }}</p>{% endif %}
+
+  {% if not groups %}
+    <p class="empty">Nothing needs attention. Every file the library has seen was indexed.</p>
+  {% else %}
+  <div class="flex flex-wrap items-center gap-3">
+    <p class="text-sm text-muted">{{ total }} file(s). Files longer than {{ limit_text }} or bigger than {{ '%g'|format(limits.max_file_gb) }} GB are not downloaded.</p>
+    <button class="btn btn-sm ml-auto" hx-post="/attention/sync" hx-target="#attention-list" hx-swap="outerHTML">
+      Add shortcuts to Drive
+    </button>
+  </div>
+
+  {% for heading, items in groups.items() %}
+  <section class="card overflow-hidden">
+    <header class="border-b border-line-soft px-5 py-4">
+      <h2 class="text-sm font-semibold text-white">{{ heading }} <span class="tag tag-warn">{{ items|length }}</span></h2>
+      <p class="mt-1 text-xs text-muted">{{ items[0].advice }}</p>
+    </header>
+    <ul class="divide-line">
+      {% for item in items %}
+      <li class="flex flex-wrap items-center gap-3 px-5 py-3 text-sm">
+        <div class="min-w-0 flex-1">
+          <p class="truncate font-medium" title="{{ item.filename }}">{{ item.filename }}</p>
+          <p class="mt-0.5 text-xs text-faint">
+            {% if item.duration_text %}{{ item.duration_text }}{% endif %}
+            {% if item.duration_text and item.size_text %} · {% endif %}
+            {% if item.size_text %}{{ item.size_text }}{% endif %}
+            {% if item.detail %}<span class="block text-muted">{{ item.detail }}</span>{% endif %}
+          </p>
+        </div>
+        {% if item.link %}
+        <a class="btn btn-sm" href="{{ item.link }}" target="_blank" rel="noopener">Open in Drive</a>
+        {% endif %}
+        {% if item.can_force %}
+        <button class="btn btn-sm btn-primary" hx-post="/attention/{{ item.id }}/index"
+                hx-target="#attention-list" hx-swap="outerHTML"
+                hx-confirm="Index {{ item.filename }} anyway? The library will look through it for usable stretches.">
+          {{ 'Index anyway' if item.kind == 'too_long' else 'Try again' }}
+        </button>
+        {% endif %}
+        <button class="btn btn-sm" hx-post="/attention/{{ item.id }}/dismiss"
+                hx-target="#attention-list" hx-swap="outerHTML">Dismiss</button>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
+  {% endif %}
+</div>

@@ -41,7 +41,7 @@ SCALAR_FIELDS = {
     "pace": Pace,
     "category": None,
 }
-LIST_FIELDS = ("subjects", "mood", "emotions", "usable_for", "quality_flags", "tags")
+LIST_FIELDS = ("subjects", "mood", "emotions", "usable_for", "quality_flags", "tags", "themes")
 BOOL_FIELDS = ("has_recognisable_faces", "has_text_on_screen", "top_pick", "featured_person")
 
 ENUM_OPTIONS = {
@@ -56,6 +56,13 @@ ENUM_OPTIONS = {
 
 class CorrectionError(ValueError):
     pass
+
+
+REASON_TEXT = {
+    "category_unmatched": "the folder the model named isn't one of the client's folders",
+    "analysis_failed": "the model could not describe it",
+    "no_usable_part": "nothing in this file looked usable, so the whole of it was kept for you to judge",
+}
 
 
 def parse_list(value: Any) -> list[str]:
@@ -102,6 +109,8 @@ def apply_correction(
 
     shot.status = status
     shot.error_message = None
+    if status == "indexed":
+        shot.review_reasons = []  # a person has looked: nothing is in doubt any more
     if shot.raw_analysis is not None:
         shot.raw_analysis = {**shot.raw_analysis, "corrected_by_operator": True}
 
@@ -174,10 +183,20 @@ def review_queue(
         reasons = []
         if row["error_message"]:
             reasons.append(row["error_message"])
-        if shot.quality_flags:
-            reasons.append("quality flags: " + ", ".join(shot.quality_flags))
-        if shot.confidence is not None and shot.confidence < below_confidence:
-            reasons.append(f"low confidence ({shot.confidence:.2f})")
+        for code in shot.review_reasons:
+            if code == "quality_defect":
+                reasons.append("quality flags: " + ", ".join(shot.quality_flags))
+            elif code == "low_confidence" and shot.confidence is not None:
+                reasons.append(f"low confidence ({shot.confidence:.2f})")
+            elif code == "low_category_confidence" and shot.category_confidence is not None:
+                reasons.append(f"unsure of the folder ({shot.category_confidence:.2f})")
+            elif code in REASON_TEXT:
+                reasons.append(REASON_TEXT[code])
+        if not shot.review_reasons:  # shots flagged before reasons were recorded
+            if shot.quality_flags:
+                reasons.append("quality flags: " + ", ".join(shot.quality_flags))
+            if shot.confidence is not None and shot.confidence < below_confidence:
+                reasons.append(f"low confidence ({shot.confidence:.2f})")
         queue.append(
             {
                 "shot": shot,
@@ -186,3 +205,66 @@ def review_queue(
             }
         )
     return queue
+
+
+# --------------------------------------------------------------------------
+# New folders the model suggested
+# --------------------------------------------------------------------------
+
+
+def approve_folder_proposal(
+    config: WorkspaceConfig,
+    store: Store,
+    proposal_id: int,
+    embedder: Embedder | None = None,
+) -> dict[str, Any]:
+    """Create the suggested folder and move the clips that suggested it into it.
+
+    A clip a person has already corrected keeps the folder they chose. Returns what happened:
+    {"path", "created", "moved": [shot ids], "sources": [source ids to re-file in Drive]}.
+    """
+    proposal = store.get_folder_proposal(proposal_id)
+    if proposal is None or proposal["status"] != "open":
+        raise CorrectionError("That folder suggestion is no longer open.")
+    path = proposal["path"]
+    parent, _, name = path.rpartition("/")
+    if config.taxonomy.find_node(path) is None:
+        if config.taxonomy.find_node(parent) is None:
+            raise CorrectionError(f"The parent folder {parent!r} no longer exists.")
+        config.taxonomy.add_folder(parent, name, proposal.get("note") or "Added from a suggestion.")
+        config.save()
+        created = True
+    else:
+        created = False
+
+    moved: list[str] = []
+    sources: set[str] = set()
+    for shot_id in proposal["shot_ids"]:
+        shot = store.get_shot(shot_id)
+        if shot is None or _is_corrected(shot):
+            continue
+        shot.category = path
+        shot.secondary_categories = [c for c in shot.secondary_categories if c != path]
+        store.update_shot(shot)
+        text = store.recompute_search_text(shot.id)
+        if embedder is not None and text:
+            try:
+                store.vectors.upsert(shot.id, embedder.embed_documents([text])[0])
+            except Exception as exc:  # noqa: BLE001 - moving the clip matters more than its vector
+                log.warning("re-embedding %s failed: %s", shot.id, exc)
+        moved.append(shot.id)
+        sources.add(shot.source_id)
+    store.set_folder_proposal_status(proposal_id, "approved")
+    return {"path": path, "created": created, "moved": moved, "sources": sorted(sources)}
+
+
+def dismiss_folder_proposal(store: Store, proposal_id: int) -> bool:
+    proposal = store.get_folder_proposal(proposal_id)
+    if proposal is None or proposal["status"] != "open":
+        return False
+    store.set_folder_proposal_status(proposal_id, "dismissed")
+    return True
+
+
+def _is_corrected(shot: Shot) -> bool:
+    return bool((shot.raw_analysis or {}).get("corrected_by_operator"))

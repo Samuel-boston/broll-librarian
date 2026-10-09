@@ -145,6 +145,7 @@ class Worker:
                     job, f"{type(exc).__name__}: {exc}",
                     transient=isinstance(exc, TransientProviderError),
                 )
+                await self._mirror_attention()
                 return
 
             if result.error and result.status == "failed":
@@ -159,6 +160,7 @@ class Worker:
                 self.store.finish_job(job.id, "done", error="; ".join(result.messages) or None)
                 self.stats.skipped += 1
                 self._notify("finished", job, result)
+                await self._mirror_attention()
                 return
             self.store.finish_job(job.id, "done", cost=result.cost_usd)
             self.stats.done += 1
@@ -194,6 +196,19 @@ class Worker:
             duration_s=payload.get("duration_s"),
             link=payload.get("link"),
         )
+
+    async def _mirror_attention(self) -> None:
+        """Put a shortcut to each listed file in Drive's "_Needs Attention" folder, when Drive is
+        connected and filing is on. A courtesy: a failure here never touches the job."""
+        session = getattr(getattr(self.pipeline, "_organise", None), "__self__", None)
+        if session is None or not hasattr(session, "mirror_attention"):
+            return
+        if not self.config.ingest.auto_organise:
+            return
+        try:
+            await asyncio.to_thread(session.mirror_attention)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not mirror the needs-attention list to Drive: %s", exc)
 
     def _handle_failure(self, job: Job, error: str, transient: bool = False) -> None:
         limit = max_attempts(transient)

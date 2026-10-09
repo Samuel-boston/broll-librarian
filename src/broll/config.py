@@ -143,6 +143,9 @@ class TaxonomyConfig(BaseModel):
     # Off: a model inventing "Jet Ski", "Jetski" and "Jet Skiing" would otherwise reshape the
     # client's own folder structure on its own.
     auto_create_folders: bool = False
+    # File a clip the model was unsure about in the review folder rather than guess it into a
+    # folder. A person confirms it there; confirming moves it to the right place.
+    route_uncertain_to_review: bool = True
     # Split the whole tree by media at the top level, so photographs and clips
     # never sit in the same folder: Videos/<tree> and Images/<tree>. The tree
     # itself is written once and used for both.

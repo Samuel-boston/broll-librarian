@@ -17,6 +17,7 @@ from typing import Optional
 
 import typer
 
+from . import attention
 from . import config as cfg
 from .analysis.analyzer import Analyzer
 from .analysis.prompt import PROMPT_VERSION
@@ -364,9 +365,34 @@ def index(
         _fail(f"No video files found at {path}")
 
     if dry_run:
-        _echo(f"Would queue {len(files)} file(s) into workspace {workspace_config.id!r}:")
+        from collections import Counter
+
+        from .ingest.limits import check_limits
+        from .ingest.scanner import media_kind
+
+        turned_away: Counter = Counter()
+        will_run = []
         for discovered in files:
+            verdict = check_limits(
+                workspace_config.ingest, size_bytes=discovered.size_bytes,
+                duration_s=discovered.duration_s,
+                is_image=media_kind(discovered.filename) == "image",
+            )
+            if verdict:
+                turned_away[verdict.kind] += 1
+            else:
+                will_run.append(discovered)
+        kinds = Counter(media_kind(d.filename) for d in will_run)
+        gb = sum(d.size_bytes or 0 for d in will_run) / 1e9
+        _echo(f"Would queue {len(will_run)} file(s) into workspace {workspace_config.id!r} "
+              f"({kinds.get('video', 0)} video, {kinds.get('image', 0)} photo, about {gb:.0f} GB to read).")
+        if turned_away:
+            _echo("Would leave for you to decide (listed with a link, not downloaded): "
+                  + ", ".join(f"{n} {attention.heading(k).lower()}" for k, n in turned_away.items()))
+        for discovered in will_run[:40]:
             _echo(f"  {discovered.origin:<7} {discovered.origin_path or discovered.filename}")
+        if len(will_run) > 40:
+            _echo(f"  ... and {len(will_run) - 40} more")
         _echo("Nothing was written. Drop --dry-run to run it.")
         return
 
@@ -487,7 +513,9 @@ def _run_worker(workspace_config, store, concurrency: int | None, drain: bool = 
         if event == "started":
             _echo(f"  ... {name}")
         elif event == "finished" and result is not None:
-            if result.deduped:
+            if result.status == "skipped":
+                typer.secho(f"  skipped {name}: {'; '.join(result.messages)}", fg=typer.colors.YELLOW)
+            elif result.deduped:
                 _echo(f"  dup {name} - already indexed as {result.source_id}")
             else:
                 _echo(
@@ -507,9 +535,11 @@ def _run_worker(workspace_config, store, concurrency: int | None, drain: bool = 
     stats = asyncio.run(worker.run(drain=drain))
     _echo(
         f"Done: {stats.done} file(s), {stats.shots} shot(s), {stats.failed} failed, "
-        f"{stats.deduped} deduped, ${stats.cost_usd:.4f} estimated, "
+        f"{stats.deduped} deduped, {stats.skipped} left for you, ${stats.cost_usd:.4f} estimated, "
         f"{stats.elapsed_s:.1f}s elapsed"
     )
+    if stats.skipped or stats.failed:
+        _echo("See what needs a decision with `broll attention`.")
     _sync_dashboard_quietly(workspace_config)
 
 
@@ -694,6 +724,13 @@ def status(
         _echo("sources:   " + (", ".join(f"{k}={v}" for k, v in sources.items()) or "none"))
         _echo(f"shots:     {payload['shots']} total, {payload['needs_review']} need review")
         _echo(f"vectors:   {payload['vectors']} ({payload['vector_backend']} backend)")
+        waiting = store.attention_counts()
+        if waiting:
+            _echo("needs attention: " + ", ".join(f"{attention.heading(k)}={v}" for k, v in waiting.items())
+                  + "  (see `broll attention`)")
+        suggested = store.list_folder_proposals("open")
+        if suggested:
+            _echo(f"suggested folders: {len(suggested)}  (see `broll folders`)")
         _echo(f"cost:      ${spent:.4f} spent, ~${remaining:.4f} remaining "
               f"({stats.outstanding} file(s) outstanding)")
         candidates = store.vocabulary_candidates(min_count=2)
@@ -1646,3 +1683,187 @@ def watch(
 
 if __name__ == "__main__":
     app()
+
+
+# --------------------------------------------------------------------------
+# Files that need a person, folders the model suggested, and a health check on the tags
+# --------------------------------------------------------------------------
+
+attention_app = typer.Typer(
+    invoke_without_command=True,
+    help="Files the library did not index (too long, too big, a download that did not finish).",
+)
+app.add_typer(attention_app, name="attention")
+
+
+@attention_app.callback()
+def attention_list(
+    ctx: typer.Context,
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """List them, with a link to each."""
+    if ctx.invoked_subcommand is not None:
+        return
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        items = store.list_attention("open")
+    finally:
+        store.close()
+    if as_json:
+        _echo(json.dumps(items, indent=2))
+        return
+    if not items:
+        _echo("Nothing needs attention.")
+        return
+    current = None
+    for item in items:
+        if item["kind"] != current:
+            current = item["kind"]
+            _echo(f"\n{attention.heading(current)}  -  {attention.advice(current)}")
+        bits = []
+        if item["duration_s"]:
+            from .ingest.limits import human_duration
+
+            bits.append(human_duration(item["duration_s"]))
+        if item["size_bytes"]:
+            bits.append(f"{item['size_bytes'] / 1e9:.1f} GB")
+        _echo(f"  [{item['id']}] {item['filename']}  {' · '.join(bits)}")
+        if item["detail"]:
+            _echo(f"        {item['detail']}")
+        if item["link"]:
+            _echo(f"        {item['link']}")
+    _echo("\nIndex one anyway:  broll attention index <id>     Not wanted:  broll attention dismiss <id>")
+
+
+@attention_app.command("index")
+def attention_index(
+    item_id: int = typer.Argument(..., help="The number in brackets in the list."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+) -> None:
+    """Queue a listed file anyway, with the length limit lifted for it."""
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        if not attention.requeue(workspace_config, store, item_id, forced=True):
+            _fail(f"No item {item_id} on the list.")
+    finally:
+        store.close()
+    _echo("Queued. Run `broll work` (or leave the app running) to process it.")
+
+
+@attention_app.command("dismiss")
+def attention_dismiss(
+    item_id: int = typer.Argument(...),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+) -> None:
+    """Say a listed file is not wanted: it is not queued again."""
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        if not attention.dismiss(store, item_id):
+            _fail(f"No item {item_id} on the list.")
+    finally:
+        store.close()
+    _echo("Dismissed.")
+
+
+@attention_app.command("sync")
+def attention_sync(workspace: Optional[str] = typer.Option(None, "--workspace", "-w")) -> None:
+    """Put a shortcut to each listed file in the "_Needs Attention" folder in Drive."""
+    workspace_config = resolve_workspace(workspace)
+    from .drive.session import DriveSession
+
+    try:
+        created = DriveSession(workspace_config).mirror_attention()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"Couldn't update Drive: {exc}")
+    _echo(f"Added {created} shortcut(s) to {attention.DRIVE_FOLDER}.")
+
+
+folders_app = typer.Typer(
+    invoke_without_command=True,
+    help="New folders the model suggested. Nothing is created until you approve it.",
+)
+app.add_typer(folders_app, name="folders")
+
+
+@folders_app.callback()
+def folders_list(
+    ctx: typer.Context,
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+) -> None:
+    """List the suggestions."""
+    if ctx.invoked_subcommand is not None:
+        return
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        proposals = store.list_folder_proposals("open")
+    finally:
+        store.close()
+    if not proposals:
+        _echo("No folder suggestions.")
+        return
+    for p in proposals:
+        _echo(f"[{p['id']}] {p['path']}  ({len(p['shot_ids'])} clip(s))")
+        if p["note"]:
+            _echo(f"      {p['note']}")
+    _echo("\nApprove:  broll folders approve <id>     Not wanted:  broll folders dismiss <id>")
+
+
+@folders_app.command("approve")
+def folders_approve(
+    proposal_id: int = typer.Argument(...),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+) -> None:
+    """Create the folder and move the clips that suggested it into it."""
+    from .review import approve_folder_proposal
+
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        embedder = _load_embedder(workspace_config)
+        try:
+            done = approve_folder_proposal(workspace_config, store, proposal_id, embedder)
+        except CorrectionError as exc:
+            _fail(str(exc))
+    finally:
+        store.close()
+    _echo(f"Created {done['path']}; moved {len(done['moved'])} clip(s) into it.")
+    _echo("Run `broll organise` to move the files in Drive too.")
+
+
+@folders_app.command("dismiss")
+def folders_dismiss(
+    proposal_id: int = typer.Argument(...),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+) -> None:
+    from .review import dismiss_folder_proposal
+
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        if not dismiss_folder_proposal(store, proposal_id):
+            _fail(f"No open suggestion {proposal_id}.")
+    finally:
+        store.close()
+    _echo("Dismissed.")
+
+
+@app.command("audit-tags")
+def audit_tags(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Is the tagging any good? Over-used tags, themes, and how sure the model was. No model calls."""
+    from .audit import format_report, tag_audit
+
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        report = tag_audit(store)
+    finally:
+        store.close()
+    _echo(json.dumps(report, indent=2) if as_json else format_report(report))

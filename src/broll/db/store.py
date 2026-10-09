@@ -257,6 +257,9 @@ class Store:
         ).fetchall()
         counts = {r["status"]: r["n"] for r in rows}
         total = sum(counts.values())
+        if total and total < self._planned_shots(source_id):
+            # Some of the shots the plan calls for have not been written yet: still being indexed.
+            counts["pending"] = counts.get("pending", 0) + 1
         if total == 0:
             status = "pending"
         elif counts.get("needs_review"):
@@ -284,6 +287,19 @@ class Store:
             fields["analysis_version"] = min(versions, key=_version_key)
         self.update_source(source_id, **fields)
         return status
+
+    def _planned_shots(self, source_id: str) -> int:
+        """How many shots the stored plan for this file calls for (0 when there is no plan)."""
+        row = self.conn.execute(
+            "SELECT segments_json FROM sources WHERE workspace_id = ? AND id = ?",
+            (self.workspace_id, source_id),
+        ).fetchone()
+        if not row or not row["segments_json"]:
+            return 0
+        try:
+            return sum(1 for s in json.loads(row["segments_json"]) if s.get("kind") == "usable")
+        except (ValueError, AttributeError):
+            return 0
 
     # -- shots --------------------------------------------------------------
 

@@ -363,7 +363,7 @@ def create_studio_app(configs: list[WorkspaceConfig], run_worker: bool = True,
         return Response(status_code=404)
 
     from .routes import (
-        api, drive_connect, ingest, library, review, search, settings, transcript,
+        api, attention, drive_connect, ingest, library, review, search, settings, transcript,
     )
 
     app.include_router(library.router)
@@ -371,6 +371,7 @@ def create_studio_app(configs: list[WorkspaceConfig], run_worker: bool = True,
     app.include_router(ingest.router)
     app.include_router(transcript.router)
     app.include_router(review.router)
+    app.include_router(attention.router)
     app.include_router(settings.router)
     app.include_router(drive_connect.router)
     app.include_router(api.router)

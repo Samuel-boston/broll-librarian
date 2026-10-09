@@ -190,8 +190,10 @@
       <nav class="-mx-1 flex gap-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {% for href, key, label in [('/library', 'library', 'Library'), ('/ingest', 'ingest', 'Upload'),
                                     ('/transcript', 'transcript', 'Script to B-roll'),
-                                    ('/review', 'review', 'Review'), ('/settings', 'settings', 'Settings')] %}
-        <a href="{{ href }}" class="nav-link {% if active == key %}is-active{% endif %}">{{ label }}</a>
+                                    ('/review', 'review', 'Review'), ('/attention', 'attention', 'Needs attention'),
+                                    ('/settings', 'settings', 'Settings')] %}
+        <a href="{{ href }}" class="nav-link {% if active == key %}is-active{% endif %}"
+           {% if key == 'attention' %}hx-get="/attention/badge" hx-trigger="load, every 60s" hx-swap="innerHTML"{% endif %}>{{ label }}</a>
         {% endfor %}
       </nav>
       {% set clients = request.state.clients if request.state is defined else none %}
