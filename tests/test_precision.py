@@ -525,3 +525,45 @@ def test_a_small_library_still_keeps_only_the_best_matchs_company(store):
     engine = SearchEngine(store, QueryVector(query))
     found = {r.shot.id for r in engine.search("anything", limit=10)}
     assert not engine.adaptive and near in found and far not in found
+
+
+# -- the client's folders are vocabulary --------------------------------------------------------------
+
+
+def test_every_folder_on_the_way_is_a_word_a_clip_can_be_found_by(store):
+    add_shot(store, "k.mp4", caption="Adam on a stage.", category="03_Work & Speaking/Speaking/Keynotes", subjects=["man"])
+    row = store.conn.execute("SELECT concept_text FROM shots").fetchone()
+    for word in ("Keynotes", "Speaking", "Work & Speaking"):
+        assert word in row["concept_text"], word
+    assert "03_" not in row["concept_text"], "the number that keeps folders in order is not a word"
+    # So everything filed under Speaking is found by "speaking", whichever word its caption used.
+    assert [r.source.original_filename for r in SearchEngine(store).search("speaking")] == ["k.mp4"]
+
+
+def test_a_clip_is_described_by_what_its_folder_is_for(workspace):
+    from broll.config import CategoryNode, TaxonomyConfig
+
+    workspace.taxonomy = TaxonomyConfig(mode="tree", tree=[
+        CategoryNode(name="07_Mood", children=[
+            CategoryNode(name="Struggle & Upset", description="Low points: sad, crying, staring blankly, head in hands."),
+        ]),
+    ])
+    workspace.save()
+    from broll.db.store import Store
+
+    store = Store.for_config(workspace)
+    try:
+        sid = add_shot(store, "a.mp4", caption="Adam sits on the edge of a bed.", emotions=["low"],
+                       category="07_Mood/Struggle & Upset")
+        text = store.embedding_text(sid)
+        assert text.endswith("Filed under Struggle & Upset: Low points: sad, crying, staring blankly, head in hands.")
+        # ...but the keyword index is not stuffed with the note: only the folder names are words there
+        concept = store.conn.execute("SELECT concept_text FROM shots WHERE id = ?", (sid,)).fetchone()[0]
+        assert "crying" not in concept and "Struggle & Upset" in concept
+    finally:
+        store.close()
+
+
+def test_a_folder_without_a_note_adds_nothing_to_the_embedding(store):
+    sid = add_shot(store, "a.mp4", caption="x", category="02_Gym & Training")
+    assert "Filed under" not in store.embedding_text(sid)

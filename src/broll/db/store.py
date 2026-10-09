@@ -167,6 +167,9 @@ class Store:
         migrate(self.conn)
         self._dimensions = dimensions
         self._vectors: VectorIndex | None = None
+        #: What each folder is for (path -> the client's note), read into the embedding text of the clips filed
+        #: there. Empty unless the store was opened for a workspace with a folder tree.
+        self.folder_notes: dict[str, str] = {}
 
     @property
     def vectors(self) -> VectorIndex:
@@ -177,7 +180,9 @@ class Store:
 
     @classmethod
     def for_config(cls, config: WorkspaceConfig) -> "Store":
-        return cls(config.id, config.db_path, config.embedder.dimensions)
+        store = cls(config.id, config.db_path, config.embedder.dimensions)
+        store.folder_notes = config.taxonomy.folder_descriptions() if config.taxonomy.mode == "tree" else {}
+        return store
 
     def close(self) -> None:
         self.conn.close()
@@ -503,7 +508,7 @@ class Store:
             "UPDATE shots SET search_text = ?, concept_text = ? WHERE workspace_id = ? AND id = ?",
             (primary, concept, self.workspace_id, shot_id),
         )
-        return embedding_for(row, tags)
+        return embedding_for(row, tags, self.folder_notes)
 
     def embedding_text(self, shot_id: str) -> str:
         """What the embedder reads for this shot, from what is stored now."""
@@ -511,7 +516,7 @@ class Store:
             "SELECT * FROM shots WHERE workspace_id = ? AND id = ?",
             (self.workspace_id, shot_id),
         ).fetchone()
-        return embedding_for(row, self.shot_tags(shot_id)) if row else ""
+        return embedding_for(row, self.shot_tags(shot_id), self.folder_notes) if row else ""
 
     # -- browsing -----------------------------------------------------------
 

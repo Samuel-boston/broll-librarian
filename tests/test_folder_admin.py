@@ -44,7 +44,7 @@ def test_renaming_a_leaf_updates_the_words_clips_are_searched_by(tree, store):
     shot = add_shot(store, "a.mp4", caption="x", category="02_Gym & Training")
     rename_folder(tree, store, "02_Gym & Training", "02_Training")
     row = store.conn.execute("SELECT concept_text FROM shots WHERE id = ?", (shot,)).fetchone()
-    assert "02_Training" in row["concept_text"] and "Gym" not in row["concept_text"]
+    assert "Training" in row["concept_text"] and "Gym" not in row["concept_text"]
 
 
 def test_a_rename_is_refused_when_it_would_collide_or_is_not_a_name(tree, store):

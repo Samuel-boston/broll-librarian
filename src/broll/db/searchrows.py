@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Mapping
 from typing import Any
 
 from .. import searchtext
@@ -51,7 +52,7 @@ def search_columns(row: sqlite3.Row, tags: list[str]) -> tuple[str, str]:
     return searchtext.join_terms(primary), searchtext.join_terms(concept)
 
 
-def embedding_for(row: sqlite3.Row, tags: list[str]) -> str:
+def embedding_for(row: sqlite3.Row, tags: list[str], folder_notes: Mapping[str, str] | None = None) -> str:
     return searchtext.embedding_text(
         caption=row["caption"],
         action=row["action"],
@@ -64,6 +65,7 @@ def embedding_for(row: sqlite3.Row, tags: list[str]) -> str:
         mood=_list(row, "mood_json"),
         emotions=_list(row, "emotions_json"),
         categories=_categories(row),
+        folder_notes=folder_notes,
     )
 
 

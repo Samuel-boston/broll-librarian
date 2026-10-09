@@ -191,6 +191,13 @@ class TaxonomyConfig(BaseModel):
             visit(node, (), [])
         return leaves
 
+    def folder_descriptions(self) -> dict[str, str]:
+        """path -> what the folder is for, in the client's own words (a folder's own note only)."""
+        return {
+            "/".join(path): node.description.strip()
+            for node in self.tree for path, node in node.walk() if node.description.strip()
+        }
+
     def parent_folders(self) -> list[str]:
         """Folders a new subfolder may be created under (not Top Picks or a guide)."""
         return [

@@ -16,7 +16,8 @@ a script line about "static electricity" or "a slow morning" would pull in unrel
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+import re
+from collections.abc import Iterable, Mapping, Sequence
 
 # Time-of-day values that carry no information as a word.
 _UNINFORMATIVE_TIME = {"", "unknown", "indoor_artificial"}
@@ -32,9 +33,30 @@ def _terms(values: Iterable[str | None]) -> list[str]:
     return [str(v).strip() for v in values if v and str(v).strip()]
 
 
+_NUMBER_PREFIX = re.compile(r"^\d+[_ -]+")
+
+
+def category_terms(categories: Iterable[str | None]) -> list[str]:
+    """Every folder name on the way to each folder a shot is filed in, leaf first.
+
+    "03_Work & Speaking/Speaking/Keynotes" is three words worth searching: a clip in Keynotes is
+    also a clip about speaking. The "03_" that keeps folders in order is not a word.
+    """
+    terms: list[str] = []
+    for category in categories:
+        if not category:
+            continue
+        for segment in reversed(category.split("/")):
+            name = _NUMBER_PREFIX.sub("", segment).strip()
+            if name and name not in terms:
+                terms.append(name)
+    return terms
+
+
+# Kept for callers that only want the last folder.
 def category_leaves(categories: Iterable[str | None]) -> list[str]:
     """The folder names (last path segment) of the folders a shot is filed in."""
-    return [c.split("/")[-1] for c in categories if c]
+    return [_NUMBER_PREFIX.sub("", c.split("/")[-1]).strip() for c in categories if c]
 
 
 def primary_terms(
@@ -65,7 +87,7 @@ def concept_terms(
     emotions: Sequence[str],
     categories: Iterable[str | None],
 ) -> list[str]:
-    return _terms([*themes, *mood, *emotions, *category_leaves(categories)])
+    return _terms([*themes, *mood, *emotions, *category_terms(categories)])
 
 
 def join_terms(terms: Iterable[str]) -> str:
@@ -84,9 +106,15 @@ def embedding_text(
     themes: Sequence[str],
     mood: Sequence[str],
     emotions: Sequence[str],
-    categories: Iterable[str | None],
+    categories: Sequence[str | None],
+    folder_notes: Mapping[str, str] | None = None,
 ) -> str:
-    """What the embedder reads: the picture first, then what it stands for, each term once."""
+    """What the embedder reads: the picture first, then what it stands for, each term once.
+
+    A clip is also described by what its folder is for. The client's own note on the folder ("low
+    points: sad, crying, staring blankly, head in hands...") is the vocabulary they think in, so a search
+    for any word of it finds every clip filed there, whichever word the model happened to use.
+    """
     seen: set[str] = set()
     out: list[str] = []
     for term in (
@@ -101,4 +129,10 @@ def embedding_text(
             continue
         seen.add(key)
         out.append(term)
-    return join_terms(out)
+    text = join_terms(out)
+    if folder_notes:
+        first = next((c for c in categories if c), None)
+        note = (folder_notes or {}).get(first or "")
+        if note:
+            text += ". Filed under " + category_terms([first])[0] + ": " + note.strip()
+    return text
