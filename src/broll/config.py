@@ -286,7 +286,7 @@ class IngestConfig(BaseModel):
     disk_headroom_gb: float = 6.0
     # Cut detection decodes every frame, so it is only run on short files. Longer files are
     # split by looking at frames spread through them instead.
-    scene_detect_max_s: float = 120.0
+    scene_detect_max_s: float = 60.0
     # Look inside any clip at least this long for setup, dead air and separate scenes.
     segment_min_s: float = 8.0
     max_segments_per_source: int = 8

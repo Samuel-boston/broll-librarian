@@ -367,6 +367,8 @@ def index(
     if not files:
         _fail(f"No video files found at {path}")
 
+    if sample is not None and sample < 1:
+        _fail("--sample needs a number of files, 1 or more.")
     if sample is not None and sample < len(files):
         files = _pilot_sample(files, sample)
         _echo(f"Pilot: {len(files)} file(s) picked from across the folder.")
@@ -1703,10 +1705,6 @@ def watch(
         store.close()
 
 
-if __name__ == "__main__":
-    app()
-
-
 # --------------------------------------------------------------------------
 # Files that need a person, folders the model suggested, and a health check on the tags
 # --------------------------------------------------------------------------
@@ -1786,7 +1784,7 @@ def attention_dismiss(
     workspace_config = resolve_workspace(workspace)
     store = Store.for_config(workspace_config)
     try:
-        if not attention.dismiss(store, item_id):
+        if not attention.dismiss(store, item_id, workspace_config):
             _fail(f"No item {item_id} on the list.")
     finally:
         store.close()
@@ -1909,3 +1907,7 @@ def _pilot_sample(files: list[DiscoveredFile], count: int) -> list[DiscoveredFil
     if len(picked) < count:  # not enough photos: fill with more video
         picked += videos[want_videos : want_videos + (count - len(picked))]
     return sorted(picked, key=lambda f: f.filename)
+
+
+if __name__ == "__main__":
+    app()

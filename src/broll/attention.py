@@ -111,6 +111,15 @@ def requeue(config: WorkspaceConfig, store: Store, item_id: int, forced: bool = 
     item = store.get_attention(item_id)
     if item is None:
         return False
+    key = item["origin_path"] or item["key"]
+    already = store.conn.execute(
+        """SELECT 1 FROM jobs WHERE workspace_id = ? AND kind = ? AND status IN ('queued', 'running')
+           AND COALESCE(json_extract(payload_json, '$.origin_path'), json_extract(payload_json, '$.filename')) = ?""",
+        (store.workspace_id, KIND_INDEX_SOURCE, key),
+    ).fetchone()
+    if already:
+        store.set_attention(item_id, status="requeued")  # it is on its way; a second click adds nothing
+        return True
     payload: dict[str, Any] = {
         "origin": item["origin"],
         "path": item["origin_path"] if item["origin"] != "drive" else None,
@@ -129,10 +138,21 @@ def requeue(config: WorkspaceConfig, store: Store, item_id: int, forced: bool = 
     return True
 
 
-def dismiss(store: Store, item_id: int) -> bool:
-    if store.get_attention(item_id) is None:
+def dismiss(store: Store, item_id: int, config: WorkspaceConfig | None = None) -> bool:
+    """Say a listed file is not wanted: it is never queued again.
+
+    An upload that was turned away is sitting in the server's staging folder, and nothing else would
+    ever free it. Dismissing it deletes that copy (the original is on whoever uploaded it). A file the
+    library only looked at in place, or in Drive, is never touched.
+    """
+    item = store.get_attention(item_id)
+    if item is None:
         return False
     store.set_attention(item_id, status="dismissed")
+    if config is not None and item["origin"] == "upload" and item["origin_path"]:
+        from .library_admin import _unlink_inside
+
+        _unlink_inside(item["origin_path"], config.staging_dir)
     return True
 
 
@@ -142,27 +162,43 @@ def dismiss(store: Store, item_id: int) -> bool:
 
 
 def sync_drive_shortcuts(config: WorkspaceConfig, store: Store, client) -> int:
-    """Create a shortcut in `_Needs Attention/<reason>` for each open Drive file that has none yet.
+    """Keep `_Needs Attention` in Drive in step with the list. Returns how many shortcuts were added.
 
-    Returns how many were created. Best effort: the caller treats a failure as a courtesy lost, not a
-    reason to stop indexing.
+    * a shortcut is added for each open Drive file that has none (reusing one that is already there, so
+      running it twice, or after the library was cleared and rescanned, never doubles up);
+    * a shortcut is removed once its file is indexed or dismissed (the file itself is never touched:
+      only shortcuts are ever deleted);
+    * one file that cannot be shortcut does not stop the rest.
+
+    Best effort: the caller treats a failure as a courtesy lost, not a reason to stop indexing.
     """
-    from .drive.organizer import Organizer
+    from .drive.organizer import OrganiseReport, Organizer
 
-    pending = [
-        i for i in store.list_attention("open")
-        if i["drive_file_id"] and not i["shortcut_id"]
-    ]
+    for item in store.list_attention(None):
+        if item["shortcut_id"] and item["status"] in ("resolved", "dismissed", "requeued"):
+            try:
+                client.delete_shortcut(item["shortcut_id"])
+            except Exception as exc:  # noqa: BLE001 - gone already, or not ours to remove: leave it
+                log.warning("could not remove the shortcut for %s: %s", item["filename"], exc)
+            store.set_attention(item["id"], shortcut_id=None)
+
+    pending = [i for i in store.list_attention("open") if i["drive_file_id"] and not i["shortcut_id"]]
     if not pending:
         return 0
     organizer = Organizer(config, store, client)
-    created = 0
-    from .drive.organizer import OrganiseReport
-
     report = OrganiseReport()
+    created = 0
     for item in pending:
-        folder = organizer._folder_id((DRIVE_FOLDER, heading(item["kind"])), report)
-        shortcut = client.create_shortcut(item["drive_file_id"], item["filename"], folder)
-        store.set_attention(item["id"], shortcut_id=shortcut.id)
-        created += 1
+        try:
+            folder = organizer._folder_id((DRIVE_FOLDER, heading(item["kind"])), report)
+            existing = next(
+                (e for e in client.list_all(folder)
+                 if e.is_shortcut and e.shortcut_target_id == item["drive_file_id"]),
+                None,
+            )
+            shortcut = existing or client.create_shortcut(item["drive_file_id"], item["filename"], folder)
+            store.set_attention(item["id"], shortcut_id=shortcut.id)
+            created += 0 if existing else 1
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not add a shortcut for %s: %s", item["filename"], exc)
     return created

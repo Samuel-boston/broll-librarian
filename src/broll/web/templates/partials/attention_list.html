@@ -41,7 +41,8 @@
         </button>
         {% endif %}
         <button class="btn btn-sm" hx-post="/attention/{{ item.id }}/dismiss"
-                hx-target="#attention-list" hx-swap="outerHTML">Dismiss</button>
+                hx-target="#attention-list" hx-swap="outerHTML"
+                {% if item.origin == 'upload' %}hx-confirm="Dismiss {{ item.filename }}? This also deletes the copy that was uploaded to the server (the original on your computer is untouched)."{% endif %}>Dismiss</button>
       </li>
       {% endfor %}
     </ul>

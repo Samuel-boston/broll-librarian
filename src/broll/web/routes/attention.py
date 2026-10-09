@@ -94,7 +94,7 @@ async def dismiss_one(request: Request, item_id: int):
     state = client_state(request)
     store = state.store()
     try:
-        attention.dismiss(store, item_id)
+        attention.dismiss(store, item_id, state.config)
         context = _context(request, state, store, message="Dismissed. It won't be queued again.")
     finally:
         store.close()
@@ -109,7 +109,9 @@ async def sync_to_drive(request: Request):
     def work() -> int:
         from ...drive.session import DriveSession
 
-        return DriveSession(state.config).mirror_attention()
+        # The app's own session when there is one, so this takes turns with the worker's Drive calls.
+        session = getattr(state.drive_organise, "__self__", None) or DriveSession(state.config)
+        return session.mirror_attention()
 
     store = state.store()
     try:

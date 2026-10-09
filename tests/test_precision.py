@@ -322,3 +322,53 @@ def test_an_old_library_gets_clean_search_text_when_it_is_upgraded(tmp_path):
     assert len(hits) == 1
     assert conn.execute("SELECT rowid FROM shots_fts WHERE shots_fts MATCH 'static'").fetchall() == []
     assert conn.execute("PRAGMA user_version").fetchone()[0] == migrations.SCHEMA_VERSION
+
+
+def _shot_with_similarity(store, name, query, target, rng):
+    """A shot whose vector scores exactly `target` against `query` (cosine)."""
+    dims = len(query)
+    r = [rng.gauss(0, 1) for _ in range(dims)]
+    dot = sum(a * b for a, b in zip(r, query))
+    r = [a - dot * b for a, b in zip(r, query)]          # orthogonal to the query
+    norm = math.sqrt(sum(a * a for a in r))
+    vector = [target * q + math.sqrt(1 - target ** 2) * a / norm for q, a in zip(query, r)]
+    shot_id = add_shot(store, name, caption=name)
+    store.vectors.upsert(shot_id, vector)
+    return shot_id
+
+
+@pytest.mark.parametrize("on_topic_share", [0.02, 0.10, 0.25, 0.40])
+def test_a_query_most_of_the_library_is_about_still_finds_its_clips(store, on_topic_share):
+    """Mean-and-deviation floors fail here: the on-topic clips inflate their own threshold."""
+    import random
+
+    rng = random.Random(3)
+    dims = 32
+    query = [1.0] + [0.0] * (dims - 1)
+    total = 200
+    on_topic = int(total * on_topic_share)
+    ids = []
+    for i in range(total):
+        target = rng.uniform(0.78, 0.9) if i < on_topic else rng.gauss(0.57, 0.03)
+        ids.append(_shot_with_similarity(store, f"c{i}", query, target, rng))
+
+    class Gemini(HashEmbedder):
+        name = "gemini"
+
+    engine = SearchEngine(store, Gemini())
+    floor, *_ = engine._thresholds(query)
+    sims = engine._similarities(query, ids)
+    found = sum(1 for sid in ids[:on_topic] if sims[sid] >= floor)
+    stray = sum(1 for sid in ids[on_topic:] if sims[sid] >= floor)
+    assert found >= on_topic * 0.9, f"floor {floor:.3f} lost {on_topic - found} of {on_topic} on-topic clips"
+    assert stray <= max(2, 0.02 * (total - on_topic)), f"floor {floor:.3f} let {stray} unrelated clips in"
+
+
+def test_the_background_sample_reaches_the_whole_library(store):
+    for i in range(799):
+        add_shot(store, f"c{i}.mp4", caption=str(i))
+    ids = store.sample_shot_ids(400)
+    assert 390 <= len(ids) <= 400
+    rowids = [r[0] for r in store.conn.execute(
+        f"SELECT rowid FROM shots WHERE id IN ({','.join('?' for _ in ids)})", ids)]
+    assert max(rowids) > 700, "the newest clips are sampled too, not just the oldest 400"

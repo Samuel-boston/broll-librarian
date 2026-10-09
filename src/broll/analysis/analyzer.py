@@ -111,6 +111,10 @@ class Analyzer:
         self.limiter = RateLimiter(config.ingest.requests_per_minute)
 
         self.new_folders: list[str] = []
+        try:
+            self._config_stamp = config.config_path.stat().st_mtime
+        except OSError:
+            self._config_stamp = None
         self._load_tree()
         # The featured person's name, in every form a tag might take. It is
         # recorded as featured_person_in_shot; as a tag it is on nearly every
@@ -138,6 +142,23 @@ class Analyzer:
         tree = self.config.taxonomy.category_leaves() if self.config.taxonomy.mode == "tree" else []
         self.leaves = [path for path, _ in tree]
         self.category_options = [f"{path} — {note}" if note else path for path, note in tree]
+
+    def _refresh_tree(self) -> None:
+        """Offer the folders as they are now. A folder approved while this runs (on the Review page,
+        or with `broll folders approve` from another process) is available to the very next clip."""
+        try:
+            stamp = self.config.config_path.stat().st_mtime
+        except OSError:
+            stamp = None
+        if stamp is not None and stamp != self._config_stamp:
+            from ..config import load_workspace_config
+
+            try:
+                self.config.taxonomy.tree = load_workspace_config(self.config.id).taxonomy.tree
+            except Exception:  # noqa: BLE001 - keep working with the folders already known
+                log.warning("could not re-read the folder list from %s", self.config.config_path)
+        self._config_stamp = stamp
+        self._load_tree()
 
     def _resolve_proposal(self, proposal: str, note: str | None):
         """Sort a suggested folder into: an existing near-match, or a genuinely new one.
@@ -202,6 +223,7 @@ class Analyzer:
     # -- analysis -----------------------------------------------------------
 
     def _prepare(self, context: ShotContext) -> ShotContext:
+        self._refresh_tree()
         return context.model_copy(
             update={
                 "client_context": self.client_context,

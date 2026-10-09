@@ -111,8 +111,7 @@ def apply_correction(
     shot.error_message = None
     if status == "indexed":
         shot.review_reasons = []  # a person has looked: nothing is in doubt any more
-    if shot.raw_analysis is not None:
-        shot.raw_analysis = {**shot.raw_analysis, "corrected_by_operator": True}
+    shot.raw_analysis = {**(shot.raw_analysis or {}), "corrected_by_operator": True}
 
     store.update_shot(shot)
     text = store.recompute_search_text(shot.id)
@@ -245,7 +244,15 @@ def approve_folder_proposal(
             continue
         shot.category = path
         shot.secondary_categories = [c for c in shot.secondary_categories if c != path]
+        # Approving the folder is a person saying where this clip belongs: the doubt about its
+        # folder is over. Without this it would stay filed in the review folder.
+        shot.review_reasons = [
+            r for r in shot.review_reasons if r not in ("low_category_confidence", "category_unmatched")
+        ]
+        if shot.status == "needs_review" and not shot.review_reasons and not shot.error_message:
+            shot.status = "indexed"
         store.update_shot(shot)
+        store.recompute_source_status(shot.source_id)
         text = store.recompute_search_text(shot.id)
         if embedder is not None and text:
             try:

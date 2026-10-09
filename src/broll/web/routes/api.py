@@ -333,7 +333,7 @@ async def attention_dismiss(request: Request, item_id: int, client: str | None =
     state = _client_for(request, client)
     store = state.store()
     try:
-        if not attention.dismiss(store, item_id):
+        if not attention.dismiss(store, item_id, state.config):
             raise HTTPException(status_code=404, detail=f"No item {item_id} on the list.")
     finally:
         store.close()
@@ -891,6 +891,11 @@ class FetchRequest(BaseModel):
                     "Without it, downloads and cuts go to the workspace temp directory.",
     )
     trim: bool = Field(default=False, description="Cut just the shot, plus handles, out of the file.")
+    best_part: bool = Field(
+        default=False,
+        description="Use the strongest stretch the library found inside the shot (best_start_s..best_end_s) "
+                    "instead of the whole shot, when there is one.",
+    )
     handles_s: float = Field(default=0.5, ge=0.0, le=10.0)
     copy_file: bool = Field(
         default=False, alias="copy",
@@ -920,7 +925,8 @@ async def fetch(request: Request, body: FetchRequest) -> dict:
         store = state.store()  # opened in this thread: a sqlite connection may not cross threads
         try:
             return fetch_shot(state.config, store, body.shot_id, dest_dir=dest, trim=body.trim,
-                              handles_s=body.handles_s, copy=body.copy_file)
+                              handles_s=body.handles_s, copy=body.copy_file,
+                              best_part=body.best_part)
         finally:
             store.close()
 
@@ -1049,7 +1055,7 @@ async def upload(request: Request, client: str | None = None,
     the staged copy is removed once Drive has it - the same as the Upload screen.
     """
     _authorise(request)
-    from .ingest import _unique_path
+    from .ingest import _has_room, _unique_path
 
     state = _named_client(request, client)
     accepted: list[DiscoveredFile] = []
@@ -1059,10 +1065,22 @@ async def upload(request: Request, client: str | None = None,
         if media_kind(name) is None:
             rejected.append(name)
             continue
+        if not _has_room(state.config):
+            rejected.append(f"{name} (the server is almost out of disk)")
+            continue
         target = _unique_path(state.config.staging_dir, name)
-        with target.open("wb") as handle:
-            while chunk := await upload_file.read(1024 * 1024):
-                handle.write(chunk)
+        try:
+            with target.open("wb") as handle:
+                written = 0
+                while chunk := await upload_file.read(1024 * 1024):
+                    handle.write(chunk)
+                    written += len(chunk)
+                    if written % (256 * 1024 * 1024) < len(chunk) and not _has_room(state.config):
+                        raise OSError("the server is almost out of disk")
+        except OSError as exc:
+            target.unlink(missing_ok=True)
+            rejected.append(f"{name} ({exc})")
+            continue
         accepted.append(DiscoveredFile(origin="upload", path=target, filename=name,
                                        origin_path=str(target)))
     store = state.store()

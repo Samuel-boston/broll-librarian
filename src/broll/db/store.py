@@ -257,7 +257,12 @@ class Store:
         ).fetchall()
         counts = {r["status"]: r["n"] for r in rows}
         total = sum(counts.values())
-        if total and total < self._planned_shots(source_id):
+        if total and not self._planned_indexes(source_id) <= {
+            r["shot_index"] for r in self.conn.execute(
+                "SELECT shot_index FROM shots WHERE workspace_id = ? AND source_id = ?",
+                (self.workspace_id, source_id),
+            ).fetchall()
+        }:
             # Some of the shots the plan calls for have not been written yet: still being indexed.
             counts["pending"] = counts.get("pending", 0) + 1
         if total == 0:
@@ -288,18 +293,18 @@ class Store:
         self.update_source(source_id, **fields)
         return status
 
-    def _planned_shots(self, source_id: str) -> int:
-        """How many shots the stored plan for this file calls for (0 when there is no plan)."""
+    def _planned_indexes(self, source_id: str) -> set[int]:
+        """The shot numbers the stored plan for this file calls for (empty when there is no plan)."""
         row = self.conn.execute(
             "SELECT segments_json FROM sources WHERE workspace_id = ? AND id = ?",
             (self.workspace_id, source_id),
         ).fetchone()
         if not row or not row["segments_json"]:
-            return 0
+            return set()
         try:
-            return sum(1 for s in json.loads(row["segments_json"]) if s.get("kind") == "usable")
-        except (ValueError, AttributeError):
-            return 0
+            return {int(s.get("index", 0)) for s in json.loads(row["segments_json"]) if s.get("kind") == "usable"}
+        except (ValueError, AttributeError, TypeError):
+            return set()
 
     # -- shots --------------------------------------------------------------
 
@@ -412,7 +417,7 @@ class Store:
         total = self.count_shots()
         if total <= 0:
             return []
-        step = max(1, total // max(1, n))
+        step = max(1, -(-total // max(1, n)))  # round up, so n rows reach the whole library
         rows = self.conn.execute(
             "SELECT id FROM shots WHERE workspace_id = ? AND rowid % ? = 0 LIMIT ?",
             (self.workspace_id, step, n),
@@ -430,12 +435,15 @@ class Store:
     def prune_shots(self, source_id: str, keep: int) -> int:
         """Delete this source's shots numbered `keep` and above: the file was planned into fewer shots.
 
-        Returns how many were removed. Their vectors go with them.
+        Returns how many were removed. Their vectors go with them. A shot a person has touched is
+        never removed: one they corrected or starred, or that a video already uses.
         """
         rows = self.conn.execute(
             "SELECT id FROM shots WHERE workspace_id = ? AND source_id = ? AND shot_index >= ?"
-            " AND (raw_analysis_json IS NULL OR raw_analysis_json NOT LIKE '%\"corrected_by_operator\": true%')",
-            (self.workspace_id, source_id, keep),
+            " AND top_pick = 0"
+            " AND (raw_analysis_json IS NULL OR raw_analysis_json NOT LIKE '%\"corrected_by_operator\": true%')"
+            " AND id NOT IN (SELECT shot_id FROM shot_usage WHERE workspace_id = ?)",
+            (self.workspace_id, source_id, keep, self.workspace_id),
         ).fetchall()
         for row in rows:
             self.vectors.delete(row["id"])

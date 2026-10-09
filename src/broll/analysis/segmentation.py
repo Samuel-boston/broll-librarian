@@ -17,6 +17,7 @@ discarding footage because the model was sloppy.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -142,6 +143,8 @@ class Segment:
     index: int = 0                  # shot index, for usable segments
     #: Set when nothing in the file looked usable and the whole of it was kept for a person to judge.
     unsure: bool = False
+    # Planning scratch: this segment ends where one window of the file ends and the next begins.
+    _seam_end: bool = field(default=False, repr=False, compare=False)
 
     @property
     def duration_s(self) -> float:
@@ -176,22 +179,63 @@ class Segment:
 MIN_SEGMENT_S = 1.5
 
 
+def _similar(a: str, b: str) -> bool:
+    """Do two one-line summaries describe the same thing? Loose on purpose: used only at a seam."""
+    words = lambda t: {w for w in re.findall(r"[a-z]{4,}", t.lower())}  # noqa: E731
+    x, y = words(a), words(b)
+    if not x or not y:
+        return True  # nothing to tell them apart by: a seam is no reason to cut a take in two
+    return len(x & y) / min(len(x), len(y)) >= 0.4
+
+
+def cap_usable(segments: list[Segment], max_usable: int) -> int:
+    """Keep the `max_usable` longest usable segments and mark the rest `skipped`. Returns how many were skipped."""
+    usable = [s for s in segments if s.kind == "usable"]
+    if len(usable) <= max_usable:
+        return 0
+    keep = {id(s) for s in sorted(usable, key=lambda s: -s.duration_s)[:max_usable]}
+    skipped = 0
+    for s in usable:
+        if id(s) not in keep:
+            s.kind = "skipped"
+            s.best_start_s = s.best_end_s = None
+            skipped += 1
+    return skipped
+
+
 def combine_windows(
     per_window: list[list[Segment]],
     min_segment_s: float = MIN_SEGMENT_S,
     max_usable: int = 8,
 ) -> list[Segment]:
-    """Join the segments of consecutive windows into one tiling, settling the seams."""
-    segments = [s for window in per_window for s in window]
-    segments = _absorb_short(segments, min_segment_s)
+    """Join the segments of consecutive windows into one tiling, settling the seams.
+
+    A take that runs across the boundary between two windows was looked at twice. Where the model called
+    both halves the same kind of thing (and, for usable footage, described the same scene) they are one
+    segment again, so a long continuous shot is not cut into pieces at every minute.
+    """
+    joined: list[Segment] = []
+    for window in per_window:
+        for seg in window:
+            last = joined[-1] if joined else None
+            if (
+                last is not None and last.kind == seg.kind and abs(last.end_s - seg.start_s) < 1e-6
+                and last._seam_end and (seg.kind != "usable" or _similar(last.summary, seg.summary))
+            ):
+                last.end_s = seg.end_s
+                last.summary = last.summary or seg.summary
+                if last.best_start_s is None:
+                    last.best_start_s, last.best_end_s = seg.best_start_s, seg.best_end_s
+                last._seam_end = seg._seam_end
+            else:
+                joined.append(seg)
+        if joined:
+            joined[-1]._seam_end = True  # the next window starts where this one ends
+    for seg in joined:
+        seg._seam_end = False
+    segments = _absorb_short(joined, min_segment_s)
     _check_best_windows(segments)
-    usable = [s for s in segments if s.kind == "usable"]
-    if len(usable) > max_usable:
-        keep = {id(s) for s in sorted(usable, key=lambda s: -s.duration_s)[:max_usable]}
-        for s in usable:
-            if id(s) not in keep:
-                s.kind = "skipped"
-                s.best_start_s = s.best_end_s = None
+    cap_usable(segments, max_usable)
     return segments
 
 
@@ -201,16 +245,20 @@ def normalise_segments(
     end_s: float,
     min_segment_s: float = MIN_SEGMENT_S,
     max_usable: int = 8,
+    unsure_if_none: bool = True,
 ) -> list[Segment]:
     """Turn a model's proposal into segments that tile [start_s, end_s] exactly.
 
     * times outside the stretch are clamped, and segments left empty by that are dropped;
-    * overlaps and gaps are settled at the midpoint between the two segments;
+    * overlaps and gaps are settled at the midpoint between the two segments, so the result always
+      tiles, however tangled the proposal;
     * a segment shorter than `min_segment_s` is absorbed by a neighbour, so a flicker in the
       model's answer never becomes a one-second shot;
     * the best window must sit inside its segment, and be at least a second long;
     * more than `max_usable` usable segments keeps the longest and marks the rest `skipped`;
-    * nothing usable at all keeps the whole stretch, flagged `unsure`, rather than losing it.
+    * nothing usable at all keeps the whole stretch, flagged `unsure`, rather than losing it. A caller
+      that is looking at one window of a longer file passes `unsure_if_none=False`: one dead minute
+      is not a reason to doubt the file.
     """
     if end_s <= start_s:
         return []
@@ -223,36 +271,33 @@ def normalise_segments(
     )
     ordered = [t for t in ordered if t[1] - t[0] > 1e-6]
     if not ordered:
-        return [Segment(start_s, end_s, "usable", unsure=True)]
+        return [Segment(start_s, end_s, "usable", unsure=unsure_if_none)]
 
-    # Tile: settle every boundary at the midpoint of the overlap or gap between neighbours.
-    spans: list[list] = [[a, b, s] for a, b, s in ordered]
-    spans[0][0] = start_s
-    spans[-1][1] = end_s
-    for left, right in zip(spans, spans[1:]):
-        edge = (left[1] + right[0]) / 2
-        left[1] = right[0] = min(max(edge, left[0]), right[1])
-
+    # Tile: one boundary between each pair of neighbours, at the midpoint of the overlap or gap, and
+    # never behind the boundary before it. Built as a list of boundaries, so the segments cannot
+    # overlap or leave a gap whatever the model said.
+    bounds = [start_s]
+    for left, right in zip(ordered, ordered[1:]):
+        bounds.append(min(end_s, max(bounds[-1], (left[1] + right[0]) / 2)))
+    bounds.append(end_s)
     segments = [
         Segment(
-            a, b, s.kind.value, s.summary.strip(),
+            lo, hi, s.kind.value, s.summary.strip(),
             best_start_s=s.best_start_s if s.kind is SegmentKind.usable else None,
             best_end_s=s.best_end_s if s.kind is SegmentKind.usable else None,
         )
-        for a, b, s in spans
+        for (lo, hi), (_a, _b, s) in zip(zip(bounds, bounds[1:]), ordered)
+        if hi - lo > 1e-6
     ]
+    if not segments:
+        return [Segment(start_s, end_s, "usable", unsure=unsure_if_none)]
+    segments[0].start_s, segments[-1].end_s = start_s, end_s
     segments = _absorb_short(segments, min_segment_s)
     _check_best_windows(segments)
 
-    usable = [s for s in segments if s.kind == "usable"]
-    if not usable:
-        return [Segment(start_s, end_s, "usable", unsure=True)]
-    if len(usable) > max_usable:
-        keep = {id(s) for s in sorted(usable, key=lambda s: -s.duration_s)[:max_usable]}
-        for s in usable:
-            if id(s) not in keep:
-                s.kind = "skipped"
-                s.best_start_s = s.best_end_s = None
+    if not any(s.kind == "usable" for s in segments):
+        return [Segment(start_s, end_s, "usable", unsure=True)] if unsure_if_none else segments
+    cap_usable(segments, max_usable)
     return segments
 
 

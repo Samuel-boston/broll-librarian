@@ -11,6 +11,8 @@ is asked for a few megabytes per frame instead of the whole file.
 from __future__ import annotations
 
 import hashlib
+import time
+import urllib.error
 import urllib.request
 
 CHUNK = 1024 * 1024
@@ -46,9 +48,28 @@ class RemoteDriveVideo:
         ]
 
     def _range(self, first: int, last: int) -> bytes:
-        request = urllib.request.Request(self.url, headers={**self._headers(), "Range": f"bytes={first}-{last}"})
-        with urllib.request.urlopen(request, timeout=60) as response:
-            return response.read()
+        """Bytes `first`..`last` of the file. Never more than asked for, and retried when Drive hiccups."""
+        want = last - first + 1
+        delay = 1.0
+        for attempt in range(4):
+            try:
+                request = urllib.request.Request(
+                    self.url, headers={**self._headers(), "Range": f"bytes={first}-{last}"}
+                )
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    if response.status == 200 and first > 0:
+                        # The server ignored the Range header and is sending the whole file.
+                        raise RuntimeError("the server ignored a byte-range request")
+                    return response.read(want + 1)[:want]
+            except urllib.error.HTTPError as exc:
+                if exc.code not in (429, 500, 502, 503, 504) or attempt == 3:
+                    raise
+            except (urllib.error.URLError, TimeoutError, ConnectionError):
+                if attempt == 3:
+                    raise
+            time.sleep(delay)
+            delay *= 2
+        raise RuntimeError("unreachable")  # pragma: no cover
 
     def content_hash(self) -> str:
         """The same fingerprint `ingest.hashing.content_hash` gives the downloaded file: its size plus its

@@ -68,7 +68,8 @@ VECTOR_FLOOR = 0.25       # kept for callers/tests that read it: the MiniLM floo
 VECTOR_GAP = 0.12
 BACKGROUND_MIN = 60       # shots needed before the background can be measured
 BACKGROUND_SAMPLE = 400   # shots sampled to measure it
-BACKGROUND_Z = 3.0        # standard deviations above the background to count as on topic
+BACKGROUND_Z = 3.0        # (robust) standard deviations above the background to count as on topic
+FLOOR_HEADROOM = 0.08     # a measured floor may not rise more than this past the fixed one, where known
 GAP_Z = 1.5               # ...and how close to the best match, in the same units
 MIN_GAP = 0.04
 KEYWORD_COVERAGE = 0.5    # half the (weighted) meaningful words present: keep
@@ -404,8 +405,9 @@ class SearchEngine:
         wedding" does not return a child playing in a park (1 of 5).
 
         A word that is in the description of what is on screen counts in full; one found only
-        among the concepts (a theme, a feeling, a folder name) counts CONCEPT_ONLY_WEIGHT, so a
-        clip cannot earn a place on interpretation alone.
+        among the concepts (a theme, a feeling, a folder name) counts CONCEPT_ONLY_WEIGHT, so a clip
+        that matches on interpretation alone ranks below one that matches on what is shown (it can
+        still be found by the concept: a search for the theme should find the clips tagged with it).
         """
         if not tokens or not shot_ids:
             return {}
@@ -444,22 +446,28 @@ class SearchEngine:
     def _thresholds(self, query_vector: list[float]) -> tuple[float, float, float, float]:
         """(floor, gap, near-miss floor, near-miss gap) for this query against this library.
 
-        Measured when the library is big enough to sample: the floor is BACKGROUND_Z standard
-        deviations above how this query scores on a spread of the library's own clips, whatever
-        the embedding model. Otherwise the fixed numbers for the model in use.
+        Measured when the library is big enough to sample: the floor is BACKGROUND_Z "standard
+        deviations" above how this query scores on a spread of the library's own clips, whatever the
+        embedding model. The mean and spread are the median and the median absolute deviation, so a
+        query about something a lot of the library is about does not drag its own floor up out of reach.
+        Otherwise the fixed numbers for the model in use. For a model whose numbers have been measured,
+        the measured floor is never allowed to rise far past them.
         """
+        known = CALIBRATION.get(getattr(self.embedder, "name", "local"))
+        fixed_floor, fixed_gap = known or DEFAULT_CALIBRATION
         sample_ids = self.store.sample_shot_ids(BACKGROUND_SAMPLE)
         if len(sample_ids) >= BACKGROUND_MIN:
-            sims = list(self._similarities(query_vector, sample_ids).values())
+            sims = sorted(self._similarities(query_vector, sample_ids).values())
             if len(sims) >= BACKGROUND_MIN:
-                mean = sum(sims) / len(sims)
-                std = math.sqrt(sum((x - mean) ** 2 for x in sims) / len(sims))
-                floor = mean + BACKGROUND_Z * std
-                gap = max(MIN_GAP, GAP_Z * std)
-                return floor, gap, floor - std, gap * 1.5
-        name = getattr(self.embedder, "name", "local")
-        floor, gap = CALIBRATION.get(name, DEFAULT_CALIBRATION)
-        return floor, gap, floor - 0.05, gap + 0.06
+                median = sims[len(sims) // 2]
+                mad = sorted(abs(x - median) for x in sims)[len(sims) // 2]
+                spread = max(1.4826 * mad, 0.005)
+                floor = median + BACKGROUND_Z * spread
+                if known:
+                    floor = min(floor, fixed_floor + FLOOR_HEADROOM)
+                gap = max(MIN_GAP, GAP_Z * spread)
+                return floor, gap, floor - spread, gap * 1.5
+        return fixed_floor, fixed_gap, fixed_floor - 0.05, fixed_gap + 0.06
 
     def _relevant(
         self,

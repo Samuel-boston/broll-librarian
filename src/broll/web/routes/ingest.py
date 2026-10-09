@@ -94,17 +94,30 @@ async def queue_partial(request: Request):
 async def upload(request: Request, files: list[UploadFile] = File(default=[])):
     state = client_state(request)
     store = state.store()
-    accepted, rejected = [], []
+    accepted, rejected, rejected_full = [], [], []
     try:
         for upload_file in files:
             name = Path(upload_file.filename or "clip").name
             if media_kind(name) is None:
                 rejected.append(name)
                 continue
+            if not _has_room(state.config):
+                rejected_full.append(f"{name} (the server is almost out of disk)")
+                continue
             target = _unique_path(state.config.staging_dir, name)
-            with target.open("wb") as handle:
-                while chunk := await upload_file.read(1024 * 1024):
-                    handle.write(chunk)
+            try:
+                with target.open("wb") as handle:
+                    written = 0
+                    while chunk := await upload_file.read(1024 * 1024):
+                        handle.write(chunk)
+                        written += len(chunk)
+                        # Every 256 MB: is there still room, with the spare the server needs to stay up?
+                        if written % (256 * 1024 * 1024) < len(chunk) and not _has_room(state.config):
+                            raise OSError("the server is almost out of disk")
+            except OSError as exc:
+                target.unlink(missing_ok=True)
+                rejected_full.append(f"{name} ({exc})")
+                continue
             accepted.append(
                 DiscoveredFile(origin="upload", path=target, filename=name,
                                origin_path=str(target))
@@ -114,6 +127,8 @@ async def upload(request: Request, files: list[UploadFile] = File(default=[])):
         context["message"] = f"Queued {len(accepted)} file(s)."
         if rejected:
             context["message"] += f" Skipped {len(rejected)} non-video file(s)."
+        if rejected_full:
+            context["error"] = "Not uploaded, the disk is too full: " + "; ".join(rejected_full)
     finally:
         store.close()
     return templates.TemplateResponse(request=request, name="partials/queue.html", context=context)
@@ -137,6 +152,17 @@ async def ingest_path(request: Request, path: str = Form(...)):
     finally:
         store.close()
     return templates.TemplateResponse(request=request, name="partials/queue.html", context=context)
+
+
+def _has_room(config) -> bool:
+    """Is there still more than the disk headroom free? Uploads stop before they fill the server."""
+    import shutil
+
+    try:
+        config.staging_dir.mkdir(parents=True, exist_ok=True)
+        return shutil.disk_usage(config.staging_dir).free > config.ingest.disk_headroom_gb * 1_000_000_000
+    except OSError:
+        return True
 
 
 def _unique_path(directory: Path, name: str) -> Path:

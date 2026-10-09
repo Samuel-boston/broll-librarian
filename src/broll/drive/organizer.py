@@ -161,9 +161,12 @@ class Organizer:
             report.errors.append(f"no source {source_id}")
             return report
 
+        # A clip the model could not describe has nothing to name it or file it by. Renaming the
+        # original "clip_<hash>.mov" and moving it away would be all cost: leave it where it is
+        # until it has been analysed.
         shots = [
             s for s in self.store.shots_for_source(source_id)
-            if s.status in ORGANISABLE_STATUSES
+            if s.status in ORGANISABLE_STATUSES and "analysis_failed" not in s.review_reasons
         ]
         if not shots:
             report.skipped += 1

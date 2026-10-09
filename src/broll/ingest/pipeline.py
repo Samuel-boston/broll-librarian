@@ -24,7 +24,8 @@ from ..analysis.analyzer import Analyzer
 from ..analysis.embedder import Embedder
 from ..analysis.prompt import PROMPT_VERSION
 from ..analysis.schema import ShotContext
-from ..analysis.segmentation import Segment
+from ..analysis.providers.base import TransientProviderError
+from ..analysis.segmentation import Segment, cap_usable
 from ..config import WorkspaceConfig
 from ..db.models import Shot, Source
 from ..db.store import Store, new_id
@@ -161,9 +162,12 @@ class IngestPipeline:
         if size is None and discovered.path and discovered.path.exists():
             size = discovered.path.stat().st_size
         stream = self._streams(discovered)
+        on_disk = bool(discovered.path and discovered.path.exists())
         verdict = check_limits(
             ingest, size_bytes=None if stream else size, duration_s=discovered.duration_s,
-            is_image=is_image, forced=allow_long, free_bytes=self._free_bytes(),
+            is_image=is_image, forced=allow_long,
+            # A file already on the disk takes no more of it; only a download needs room.
+            free_bytes=None if (on_disk or stream) else self._free_bytes(),
         )
         if verdict:
             return self._turn_away(discovered, verdict, result, size, discovered.duration_s)
@@ -227,6 +231,8 @@ class IngestPipeline:
             result.source_id = existing.id
             result.status = existing.status
             result.deduped = True
+            self.store.resolve_attention(attention.key_for(discovered))
+            self._cleanup(None, video, discovered, existing.id)  # a duplicate's download is not kept
             return result
 
         try:
@@ -241,9 +247,12 @@ class IngestPipeline:
             meta.filesize_bytes = video.stat().st_size  # the RAW's size, not its preview's
 
         # The length is known for certain now: a file Drive gave no length for is caught here.
+        remote = isinstance(video, RemoteDriveVideo)
         verdict = check_limits(
-            self.config.ingest, size_bytes=meta.filesize_bytes, duration_s=meta.duration_s,
-            is_image=meta.media_kind == "image", forced=allow_long, free_bytes=self._free_bytes(),
+            self.config.ingest,
+            # Read in place from Drive, a file takes no disk: its size is no reason to turn it away.
+            size_bytes=None if remote else meta.filesize_bytes, duration_s=meta.duration_s,
+            is_image=meta.media_kind == "image", forced=allow_long, free_bytes=None,
         )
         if verdict:
             self._cleanup(None, video, discovered, None)
@@ -313,6 +322,13 @@ class IngestPipeline:
             frames: list[Frame] = await asyncio.to_thread(
                 self.analyzer.extract_timed, working, context, work_dir
             )
+            if not frames and isinstance(working, RemoteDriveVideo):
+                # Drive stopped answering: nothing is wrong with the clip, so do not write it down as
+                # one that could not be described. The queue tries the file again.
+                raise TransientProviderError(
+                    f"could not read any frames of {discovered.filename} from Drive "
+                    f"({seg.start_s:.0f}s-{seg.end_s:.0f}s)"
+                )
             context = context.model_copy(update={"frame_times": [round(f.t, 2) for f in frames]})
             outcome = await self.analyzer.analyse_frames([f.path for f in frames], context)
             result.cost_usd += outcome.cost_usd
@@ -421,6 +437,13 @@ class IngestPipeline:
             segments.extend(plan.segments)
         if not segments:
             segments = [Segment(0.0, duration, "usable")]
+        cap_usable(segments, ingest.max_segments_per_source)
+        left_out = sum(1 for s in segments if s.kind == "skipped")
+        if left_out:
+            messages.append(
+                f"{left_out} shorter stretch(es) were not indexed: a file keeps at most "
+                f"{ingest.max_segments_per_source} shots (the longest)."
+            )
         return {"segments": segments, "cost": cost, "messages": messages}
 
     def _is_complete(self, source) -> bool:
@@ -433,9 +456,12 @@ class IngestPipeline:
         if source.status not in ("indexed", "needs_review"):
             return False
         shots = self.store.shots_for_source(source.id)
-        planned = sum(1 for s in source.segments if s.get("kind") == "usable")
-        # A plan that calls for more shots than exist means the run was cut short.
-        return bool(shots) and len(shots) >= planned
+        planned = {int(s.get("index", 0)) for s in source.segments if s.get("kind") == "usable"}
+        have = {s.shot_index for s in shots}
+        # A planned shot with no row means the run was cut short; so does one the model never
+        # managed to describe (it is tried again, not left as the file's history).
+        retry = any("analysis_failed" in s.review_reasons for s in shots)
+        return bool(shots) and planned <= have and not retry
 
     # -- stages -------------------------------------------------------------
 

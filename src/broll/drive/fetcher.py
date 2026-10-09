@@ -17,7 +17,9 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from ..config import WorkspaceConfig
@@ -48,18 +50,44 @@ def sweep_partial_downloads(config: WorkspaceConfig, now: float | None = None) -
     return removed
 
 
-def ensure_room(directory: Path, needed_bytes: int | None, headroom_gb: float) -> None:
-    """Raise DiskSpaceError unless `needed_bytes` fits with `headroom_gb` to spare."""
+# Bytes promised to downloads that are running. Two files starting together would each see the same free
+# space and together overshoot it, so a download reserves its room before it starts.
+_reserved = 0
+_reserved_lock = threading.Lock()
+
+
+@contextmanager
+def reserve_room(directory: Path, needed_bytes: int | None, headroom_gb: float):
+    """Hold `needed_bytes` of the disk for a download, or raise DiskSpaceError if it does not fit.
+
+    "Fit" counts the downloads already running, not just what is free this instant.
+    """
+    global _reserved
     if not needed_bytes:
+        yield
         return
     directory.mkdir(parents=True, exist_ok=True)
-    free = shutil.disk_usage(directory).free
-    if free - needed_bytes < headroom_gb * GB:
-        raise DiskSpaceError(
-            f"Not enough free disk to download this file: it needs {needed_bytes / GB:.1f} GB and "
-            f"only {free / GB:.1f} GB is free (keeping {headroom_gb:.0f} GB spare). "
-            "It will be tried again when space frees up."
-        )
+    with _reserved_lock:
+        free = shutil.disk_usage(directory).free
+        available = free - _reserved
+        if available - needed_bytes < headroom_gb * GB:
+            raise DiskSpaceError(
+                f"Not enough free disk to download this file: it needs {needed_bytes / GB:.1f} GB and "
+                f"only {max(0.0, available) / GB:.1f} GB is free (keeping {headroom_gb:.0f} GB spare). "
+                "It will be tried again when space frees up."
+            )
+        _reserved += needed_bytes
+    try:
+        yield
+    finally:
+        with _reserved_lock:
+            _reserved -= needed_bytes
+
+
+def ensure_room(directory: Path, needed_bytes: int | None, headroom_gb: float) -> None:
+    """Raise DiskSpaceError unless `needed_bytes` fits with `headroom_gb` to spare (nothing is held)."""
+    with reserve_room(directory, needed_bytes, headroom_gb):
+        pass
 
 
 def fetch_drive_file(
@@ -91,22 +119,21 @@ def fetch_drive_file(
                     destination.name, destination.stat().st_size, expected_size)
         destination.unlink(missing_ok=True)
 
-    ensure_room(config.temp_dir, expected_size, config.ingest.disk_headroom_gb)
-
     partial = destination.with_name(destination.name + ".part")
-    partial.unlink(missing_ok=True)
-    log.info("downloading %s from Drive", filename)
-    try:
-        client.download(file_id, partial)
-        got = partial.stat().st_size if partial.exists() else 0
-        if expected_size and got != expected_size:
-            raise IncompleteDownloadError(
-                f"{filename}: the download stopped at {got} of {expected_size} bytes"
-            )
-        if got == 0:
-            raise IncompleteDownloadError(f"{filename}: the download was empty")
-        os.replace(partial, destination)
-    except BaseException:
+    with reserve_room(config.temp_dir, expected_size, config.ingest.disk_headroom_gb):
         partial.unlink(missing_ok=True)
-        raise
+        log.info("downloading %s from Drive", filename)
+        try:
+            client.download(file_id, partial)
+            got = partial.stat().st_size if partial.exists() else 0
+            if expected_size and got != expected_size:
+                raise IncompleteDownloadError(
+                    f"{filename}: the download stopped at {got} of {expected_size} bytes"
+                )
+            if got == 0:
+                raise IncompleteDownloadError(f"{filename}: the download was empty")
+            os.replace(partial, destination)
+        except BaseException:
+            partial.unlink(missing_ok=True)
+            raise
     return destination

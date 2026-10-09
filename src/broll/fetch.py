@@ -387,8 +387,13 @@ def fetch_shot(
     handles_s: float = DEFAULT_HANDLES_S,
     copy: bool = False,
     drive=None,
+    best_part: bool = False,
 ) -> FetchResult:
-    """A local file for one shot. See the module docstring for the order."""
+    """A local file for one shot. See the module docstring for the order.
+
+    `best_part` cuts (and reports in and out points for) the strongest stretch the library found inside
+    the shot, when there is one, instead of the whole shot.
+    """
     shot = store.get_shot(shot_id)
     if shot is None:
         raise FetchError(f"No shot {shot_id!r} in client {config.id!r}.", status=404)
@@ -403,8 +408,11 @@ def fetch_shot(
     original, via = locate(config, source, None if trim else dest_dir, drive)
     is_image = source.media_kind == "image"
     duration = source.duration_s or 0.0
-    start = max(0.0, shot.start_s - handles_s)
-    end = min(duration, shot.end_s + handles_s) if duration else shot.end_s + handles_s
+    first, last = shot.start_s, shot.end_s
+    if best_part and shot.best_start_s is not None and shot.best_end_s is not None:
+        first, last = shot.best_start_s, shot.best_end_s
+    start = max(0.0, first - handles_s)
+    end = min(duration, last + handles_s) if duration else last + handles_s
     whole_file = start <= 0.05 and (not duration or end >= duration - 0.05)
 
     if trim and not is_image and not whole_file:
@@ -425,8 +433,8 @@ def fetch_shot(
             shot_id=shot.id, client=config.id, source_id=source.id,
             filename=source.original_filename, media=source.media_kind, path=str(dest),
             via=via, source_path=str(original), trimmed=True, trim_mode=mode,
-            offset_s=offset, shot_start_s=shot.start_s, shot_end_s=shot.end_s,
-            in_s=round(shot.start_s - offset, 6), out_s=round(shot.end_s - offset, 6),
+            offset_s=offset, shot_start_s=first, shot_end_s=last,
+            in_s=round(first - offset, 6), out_s=round(last - offset, 6),
             handles_s=handles_s, duration_s=info["duration"], bytes=dest.stat().st_size,
             verified=True,
         )
@@ -446,7 +454,7 @@ def fetch_shot(
         shot_id=shot.id, client=config.id, source_id=source.id,
         filename=source.original_filename, media=source.media_kind, path=str(path),
         via=via, source_path=str(original), trimmed=False, trim_mode=None, offset_s=0.0,
-        shot_start_s=shot.start_s, shot_end_s=shot.end_s, in_s=shot.start_s, out_s=shot.end_s,
+        shot_start_s=first, shot_end_s=last, in_s=first, out_s=last,
         handles_s=handles_s, duration_s=None if is_image else source.duration_s,
         bytes=path.stat().st_size, verified=True,
     )

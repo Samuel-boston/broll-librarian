@@ -54,7 +54,7 @@ nudges the ranking.
 
 ## 5. Get the clip into the edit
 
-* `POST /api/fetch` turns a shot into a local file, cut down to the shot (or its best part) when asked.
+* `POST /api/fetch` turns a shot into a local file. `trim: true` cuts it down to the shot; add `best_part: true` to cut to the strongest stretch instead (`best_start_s`..`best_end_s`).
 * The **Script to B-roll** page exports a Premiere (FCP7 XML), Resolve (EDL) or CSV timeline.
 * `POST /api/usage` records which video a shot went into, so the next shortlist doesn't offer it again.
 

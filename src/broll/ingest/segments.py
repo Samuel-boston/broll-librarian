@@ -11,6 +11,7 @@ before it looked inside clips at all.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -36,8 +37,8 @@ log = logging.getLogger(__name__)
 SEGMENT_FRAME_EDGE = 512
 
 
-def _whole(start_s: float, end_s: float, reason: str) -> SegmentPlan:
-    return SegmentPlan(segments=[Segment(start_s, end_s, "usable")], fallback_reason=reason)
+def _whole(start_s: float, end_s: float, reason: str, cost: float = 0.0) -> SegmentPlan:
+    return SegmentPlan(segments=[Segment(start_s, end_s, "usable")], fallback_reason=reason, cost_usd=cost)
 
 
 async def plan_segments(
@@ -64,12 +65,21 @@ async def plan_segments(
     per_window: list[list[Segment]] = []
     cost = 0.0
     for number, window in enumerate(windows):
-        frames = extract_frames_timed(
+        # ffmpeg and Pillow block: off the event loop, which is the web app's too.
+        frames = await asyncio.to_thread(
+            extract_frames_timed,
             video, work_dir, start_s=window.start_s, duration_s=window.end_s - window.start_s,
             count=window.frames, max_edge=min(ingest.frame_max_edge, SEGMENT_FRAME_EDGE),
             prefix=f"{prefix}{number:03d}", centred=True,
         )
         try:
+            if getattr(video, "is_remote", False) and not frames:
+                # Drive stopped answering. That says nothing about the clip: try the whole file again
+                # later rather than write down "no frames" as its history.
+                raise TransientProviderError(
+                    f"could not read any frames of {filename} from Drive between "
+                    f"{window.start_s:.0f}s and {window.end_s:.0f}s"
+                )
             if len(frames) < 2:
                 # One frame cannot show a change, and no frame at all cannot show anything.
                 per_window.append([Segment(window.start_s, window.end_s, "usable")])
@@ -98,13 +108,13 @@ async def plan_segments(
                     raise  # the queue retries the whole file with backoff
                 except ProviderError as exc:
                     log.warning("could not look through %s (%s)", filename, exc)
-                    return _whole(start_s, end_s, str(exc))
+                    return _whole(start_s, end_s, str(exc), cost)
             if proposed is None:
-                return _whole(start_s, end_s, retry_error or "no usable answer")
+                return _whole(start_s, end_s, retry_error or "no usable answer", cost)
             per_window.append(
                 normalise_segments(
                     proposed.segments, window.start_s, window.end_s,
-                    min_segment_s=MIN_SEGMENT_S, max_usable=10_000,
+                    min_segment_s=MIN_SEGMENT_S, max_usable=10_000, unsure_if_none=False,
                 )
             )
         finally:
