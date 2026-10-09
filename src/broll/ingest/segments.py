@@ -28,7 +28,7 @@ from ..analysis.segmentation import (
     plan_windows,
 )
 from ..config import WorkspaceConfig
-from .frames import extract_frames_timed
+from .frames import extract_frames_timed, wants_fast_seek
 
 log = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ async def plan_segments(
             extract_frames_timed,
             video, work_dir, start_s=window.start_s, duration_s=window.end_s - window.start_s,
             count=window.frames, max_edge=min(ingest.frame_max_edge, SEGMENT_FRAME_EDGE),
-            prefix=f"{prefix}{number:03d}", centred=True,
+            prefix=f"{prefix}{number:03d}", centred=True, fast=wants_fast_seek(width, height),
         )
         try:
             if getattr(video, "is_remote", False) and not frames:

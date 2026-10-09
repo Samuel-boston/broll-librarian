@@ -7,6 +7,7 @@ camera-setting words ("static", "wide", "slow") sitting in the search text of mo
 from __future__ import annotations
 
 import hashlib
+import subprocess
 import math
 import re
 import sqlite3
@@ -372,3 +373,61 @@ def test_the_background_sample_reaches_the_whole_library(store):
     rowids = [r[0] for r in store.conn.execute(
         f"SELECT rowid FROM shots WHERE id IN ({','.join('?' for _ in ids)})", ids)]
     assert max(rowids) > 700, "the newest clips are sampled too, not just the oldest 400"
+
+
+# -- spelling: a real word the library has not seen is not a typo ---------------------------------
+
+
+def test_ordinary_words_are_never_corrected_to_something_else(store):
+    """Found on real footage: "waking up" became "walking up", "wide shot" "side shot", "a band" "a sand"."""
+    add_shot(store, "a.mp4", caption="Adam walks along a sandy beach, drinking water.", subjects=["man", "beach"],
+             tags=["walking", "sand", "side", "low", "drinking"])
+    engine = SearchEngine(store)
+    for query in ("waking up in bed", "wide shot of a dock", "slow", "a band playing", "a dentist drilling a tooth"):
+        corrected, changes = engine.correct_query(query)
+        assert changes == [] and corrected == query, (query, changes)
+
+
+def test_a_real_typo_is_still_fixed(store):
+    add_shot(store, "a.mp4", caption="A woman meditating on a beach.", subjects=["woman", "beach"], tags=["meditating"])
+    corrected, changes = SearchEngine(store).correct_query("meditaing on a beech")
+    assert ("meditaing", "meditating") in changes and corrected.startswith("meditating")
+
+
+def test_the_word_list_ships_with_the_package_and_knows_inflections():
+    from broll.search.spelling import common_words, is_common_word
+
+    assert len(common_words()) > 100_000
+    for word in ("waking", "drilling", "trumpets", "frustrated", "firefighter", "sauna", "handheld"):
+        assert is_common_word(word), word
+    for typo in ("meditaing", "meditaiton", "sunsrise"):
+        assert not is_common_word(typo), typo
+
+
+def test_people_words_are_not_flagged_as_over_used_tags(store):
+    from broll.audit import tag_audit
+
+    for i in range(30):
+        add_shot(store, f"c{i}.mp4", caption=f"Clip {i}.", tags=["man", "lamp", f"thing{i}"], confidence=0.9)
+    flagged = {t["tag"] for t in tag_audit(store)["too_common_tags"]}
+    assert flagged == {"lamp"}
+
+
+def test_big_footage_is_read_keyframe_by_keyframe_small_footage_exactly():
+    from broll.ingest.frames import wants_fast_seek
+
+    assert wants_fast_seek(3840, 2160) and wants_fast_seek(2160, 3840)
+    assert not wants_fast_seek(1920, 1080) and not wants_fast_seek(0, 0)
+
+
+def test_fast_seek_still_produces_the_frames_asked_for(tmp_path):
+    from broll.ingest.frames import extract_frames_timed
+
+    clip = tmp_path / "c.mp4"
+    subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "lavfi", "-i",
+                    "testsrc2=size=320x240:rate=30:duration=12", "-g", "15", "-pix_fmt", "yuv420p", "-y", str(clip)],
+                   check=True)
+    exact = extract_frames_timed(clip, tmp_path / "a", 0, 12, 4, 320, "e", centred=True)
+    fast = extract_frames_timed(clip, tmp_path / "b", 0, 12, 4, 320, "f", centred=True, fast=True)
+    assert len(exact) == len(fast) == 4
+    assert all(f.path.stat().st_size > 0 for f in fast)

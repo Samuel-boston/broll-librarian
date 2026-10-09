@@ -56,6 +56,12 @@ def test_worker_drains_the_queue(store, workspace):
     assert len(store.list_sources()) == len(files)
 
 
+@pytest.fixture(autouse=True)
+def _cut_detection_on(workspace):
+    """Cut detection is off by default (the model looks through clips instead); these tests are about it."""
+    workspace.ingest.scene_detect_max_s = 60.0
+
+
 def test_multi_shot_file_produces_one_shot_row_per_shot(store, workspace):
     multi = [f for f in _files() if f.filename == "multi_shot_three_cuts.mp4"]
     single = [f for f in _files() if f.filename == "single_static_bars.mp4"]

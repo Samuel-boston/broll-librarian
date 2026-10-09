@@ -284,9 +284,10 @@ class IngestConfig(BaseModel):
     max_forced_duration_s: float = 10800.0
     # Never let a download leave less than this much of the disk free.
     disk_headroom_gb: float = 6.0
-    # Cut detection decodes every frame, so it is only run on short files. Longer files are
-    # split by looking at frames spread through them instead.
-    scene_detect_max_s: float = 60.0
+    # Cut detection decodes every frame: 226 s for a 14 s clip of 4K HEVC. Looking through a clip with
+    # the model (segment_min_s, below) finds the scenes and the setup without it, so it is off. Set
+    # this to a length in seconds to run it on files up to that long as well.
+    scene_detect_max_s: float = 0.0
     # Look inside any clip at least this long for setup, dead air and separate scenes.
     segment_min_s: float = 8.0
     max_segments_per_source: int = 8

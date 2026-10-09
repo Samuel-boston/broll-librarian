@@ -410,7 +410,7 @@ class IngestPipeline:
             return {"segments": [Segment(0.0, 0.0, "usable")], "cost": 0.0, "messages": messages}
 
         duration = meta.duration_s
-        if 0 < duration <= ingest.scene_detect_max_s and isinstance(working, Path):
+        if ingest.scene_detect_max_s and 0 < duration <= ingest.scene_detect_max_s and isinstance(working, Path):
             spans = await asyncio.to_thread(
                 detect_shots, working, duration,
                 ingest.min_shot_length_s, ingest.min_average_shot_length_s,

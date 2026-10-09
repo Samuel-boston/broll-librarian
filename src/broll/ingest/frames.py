@@ -73,7 +73,7 @@ def ffmpeg_input(video) -> list[str]:
 
 
 def _extract_one(
-    video, timestamp: float, out_path: Path, max_edge: int, seek: bool = True
+    video, timestamp: float, out_path: Path, max_edge: int, seek: bool = True, fast: bool = False
 ) -> bool:
     ffmpeg, _ = check_ffmpeg()
     scale = (
@@ -83,6 +83,11 @@ def _extract_one(
     # A still has exactly one frame, and seeking - even to 0 - lands past it:
     # ffmpeg then exits 0 having written nothing. So don't seek into a still.
     seek_args = ["-ss", f"{max(timestamp, 0):.3f}"] if seek else []
+    if fast and seek:
+        # Decode only keyframes: the frame is the first keyframe after the time asked for, up to a
+        # second or so late. Seeking exactly means decoding every frame since the last keyframe, and in
+        # 4K at 120 fps that is sixty frames (5 s) for one picture; this is 0.7 s.
+        seek_args += ["-skip_frame", "nokey"]
     try:
         proc = subprocess.run(
             [
@@ -154,6 +159,7 @@ def extract_frames_timed(
     max_edge: int = 768,
     prefix: str = "frame",
     centred: bool = False,
+    fast: bool = False,
 ) -> list[Frame]:
     """Extract ``count`` usable frames spread across a stretch, each with where it came from.
 
@@ -162,6 +168,7 @@ def extract_frames_timed(
     kept rather than dropping the position entirely - an all-dark clip should
     still be analysed and flagged, not silently skipped.
 
+    ``fast`` reads only keyframes (see `_extract_one`): for sources too big to decode frame by frame.
     ``centred`` puts each frame in the middle of an equal slice (so the first and last frames sit
     close to the two ends), which is what finding a setup at the start needs. The default keeps the
     old 20/50/80% positions for a shot that is analysed as a whole.
@@ -182,7 +189,7 @@ def extract_frames_timed(
             if duration and not (start_s <= timestamp <= start_s + duration):
                 continue
             candidate = out_dir / f"{prefix}_{index:02d}_{attempt}.jpg"
-            if not _extract_one(video, timestamp, candidate, max_edge, seek):
+            if not _extract_one(video, timestamp, candidate, max_edge, seek, fast):
                 continue
             stats = frame_stats(candidate)
             frame = Frame(candidate, max(0.0, timestamp))
@@ -274,3 +281,11 @@ def best_frame_timed(frames: list[Frame], prefer: tuple[float, float] | None = N
         inside = [f for f in frames if prefer[0] <= f.t <= prefer[1]]
         pool = inside or frames
     return max(pool, key=lambda f: frame_stats(f.path).stddev).path
+
+
+#: Footage at least this many pixels on its long edge is read keyframe by keyframe.
+FAST_SEEK_EDGE = 2500
+
+
+def wants_fast_seek(width: int, height: int) -> bool:
+    return max(width or 0, height or 0) >= FAST_SEEK_EDGE

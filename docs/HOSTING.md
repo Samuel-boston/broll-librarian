@@ -151,8 +151,8 @@ stretches.
 **Big videos in Drive are read in place.** A video in Drive of `ingest.stream_above_gb` (default 2 GB) or more
 is not downloaded. The server reads the few seconds around each frame it needs straight from Drive over HTTPS
 (a few megabytes a frame), so a 30 GB camera file costs the 40 GB disk nothing. Its length is then read from the
-file itself, and if it is past the length limit it goes on the Needs attention list like any other. Reading a 4K
-HEVC file this way takes several seconds a frame, so a very large library of such files is slow, not impossible.
+file itself, and if it is past the length limit it goes on the Needs attention list like any other. Footage 2.5K or bigger is read keyframe by keyframe (a frame can be up to a second late),
+which is what makes a 4K clip at 120 fps take under a second a frame instead of five.
 
 The same list holds files whose download stopped short (the half-file is deleted and the download tried
 again, never mistaken for the clip), files that can't be read, and files the model couldn't describe. A download

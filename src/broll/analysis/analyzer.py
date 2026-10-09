@@ -17,7 +17,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from ..config import WorkspaceConfig
-from ..ingest.frames import Frame, extract_frames_timed, extract_still, frame_count_for
+from ..ingest.frames import Frame, extract_frames_timed, extract_still, frame_count_for, wants_fast_seek
 from .limiter import RateLimiter
 from .prompt import PROMPT_VERSION, render_client_context
 from .providers.base import ProviderError, TransientProviderError, VisionProvider
@@ -215,6 +215,7 @@ class Analyzer:
             ),
             max_edge=ingest.frame_max_edge,
             prefix=f"shot{context.shot_index:03d}",
+            fast=wants_fast_seek(context.width, context.height),
         )
 
     def extract(self, video, context: ShotContext, work_dir: Path) -> list[Path]:

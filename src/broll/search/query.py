@@ -36,7 +36,7 @@ from ..analysis.embedder import Embedder
 from ..db.models import Shot, Source
 from ..db.store import Store
 from .filters import SearchFilters
-from .spelling import suggest
+from .spelling import is_common_word, suggest
 
 log = logging.getLogger(__name__)
 
@@ -59,8 +59,9 @@ CALIBRATION: dict[str, tuple[float, float]] = {
     # embedder name -> (floor, gap)
     "local": (0.25, 0.12),
     # Measured with gemini-embedding-001 (768 dims, document/query task types): unrelated clips
-    # score 0.57 +/- 0.03, a clip that is about the query 0.66-0.79.
-    "gemini": (0.64, 0.08),
+    # score 0.57 +/- 0.03 (best of them 0.62), a clip that is about the query 0.72-0.79 (0.66 for a
+    # one-word query, which the keyword side finds anyway). Pilot on real footage: 0.65 was a near miss.
+    "gemini": (0.67, 0.08),
     "openai": (0.30, 0.10),
 }
 DEFAULT_CALIBRATION = (0.25, 0.12)
@@ -306,7 +307,7 @@ class SearchEngine:
             suffix = ""
             if word.endswith("'s"):
                 word, suffix = word[:-2], "'s"
-            if not word or word in STOPWORDS or word in vocabulary:
+            if not word or word in STOPWORDS or word in vocabulary or is_common_word(word):
                 return typed
             if self._document_frequency(word):
                 return typed  # a stemmed form is in the library ("meditate")

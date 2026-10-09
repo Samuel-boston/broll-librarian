@@ -5,7 +5,9 @@ One wrong character used to mean no results: "meditaing" matched nothing.
 The rule is deliberately narrow, so a correction never makes a search worse:
 
 * only a word the library has never seen is corrected (a word it knows, in
-  any stemmed form, is left alone), and
+  any stemmed form, is left alone), and never an ordinary English word: a small
+  library has not seen "band" or "waking" or "wide", and turning them into "sand",
+  "walking" and "side" would change what was asked for, and
 * only to a word the library *has*, within one or two keystrokes, and
 * never a very short word - at three letters, one edit usually lands on a
   different real word.
@@ -17,6 +19,8 @@ so a wrong guess is visible and undone in one click.
 from __future__ import annotations
 
 from collections import Counter
+from functools import lru_cache
+from pathlib import Path
 
 
 def max_edits(word: str) -> int:
@@ -76,3 +80,44 @@ def suggest(word: str, vocabulary: Counter) -> str | None:
         if best is None or key < best[0]:
             best = (key, candidate)
     return best[1] if best else None
+
+
+# A few thousand ordinary English words, so a real word the library simply has not seen yet is never mistaken for
+# a typo. Derived from the whole words of the BERT (uncased) vocabulary, Apache License 2.0, Google.
+_COMMON_WORDS = Path(__file__).with_name("common_words.txt")
+# Words a B-roll search is likely to use that an ordinary word list lacks.
+_EXTRA_WORDS = frozenset({
+    "handheld", "aerial", "drone", "drones", "macro", "pov", "timelapse", "gimbal", "tripod", "bokeh", "vlog",
+    "broll", "firefighter", "firefighters", "sauna", "meditating", "meditate", "meditation", "mindfulness",
+    "breathwork", "journaling", "workout", "workouts", "sandboarding", "snowboarding", "skateboarding",
+    "kayaking", "kayak", "skydiving", "surfing", "paddleboard", "podcast", "podcasts", "livestream",
+})
+
+
+def _inflections(word: str) -> set[str]:
+    forms = {word, word + "s", word + "es", word + "ed", word + "ing", word + "er", word + "ers", word + "ly",
+             word + "d", word + "y"}
+    if word.endswith("e"):
+        forms |= {word[:-1] + "ing", word + "r", word + "rs"}
+    if word.endswith("y"):
+        forms |= {word[:-1] + "ies", word[:-1] + "ied", word[:-1] + "ier"}
+    if len(word) > 2 and word[-1] not in "aeiouwy" and word[-2] in "aeiou" and word[-3] not in "aeiou":
+        forms |= {word + word[-1] + "ing", word + word[-1] + "ed", word + word[-1] + "er"}
+    return forms
+
+
+@lru_cache(maxsize=1)
+def common_words() -> frozenset[str]:
+    """Ordinary English words, with their plurals and -ed/-ing forms. Empty if the list is missing."""
+    try:
+        base = _COMMON_WORDS.read_text(encoding="utf-8").split()
+    except OSError:
+        return frozenset(_EXTRA_WORDS)
+    words: set[str] = set(_EXTRA_WORDS)
+    for word in base:
+        words |= _inflections(word)
+    return frozenset(words)
+
+
+def is_common_word(word: str) -> bool:
+    return word.lower() in common_words()

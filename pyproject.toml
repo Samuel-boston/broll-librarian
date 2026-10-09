@@ -35,7 +35,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-broll = ["db/*.sql", "web/templates/*", "web/templates/partials/*", "web/static/*"]
+broll = ["db/*.sql", "search/*.txt", "web/templates/*", "web/templates/partials/*", "web/static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

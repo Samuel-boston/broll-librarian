@@ -17,6 +17,10 @@ from .db.store import Store
 
 #: A tag on more than this share of the library does not tell clips apart.
 COMMON_SHARE = 0.12
+#: Words for who is in the shot. A library of one man's life has a man in most of it; that is true, not noise,
+#: and a search for one of these should return a lot.
+PEOPLE_WORDS = frozenset({"man", "men", "woman", "women", "person", "people", "group", "child", "children",
+                          "boy", "girl", "baby", "crowd"})
 #: ...but only judged once the library is big enough for the share to mean something.
 MIN_SHOTS = 25
 
@@ -56,7 +60,7 @@ def tag_audit(store: Store, top: int = 25, examples: int = 15) -> dict[str, Any]
     common = [
         {"tag": t, "shots": n, "share": round(n / total, 3)}
         for t, n in tag_counts.most_common()
-        if judged and n / total > COMMON_SHARE
+        if judged and n / total > COMMON_SHARE and t not in PEOPLE_WORDS
     ]
     unsupported: list[dict[str, Any]] = []
     for shot in shots:

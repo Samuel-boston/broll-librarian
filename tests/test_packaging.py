@@ -14,7 +14,7 @@ def test_every_template_sql_and_static_file_is_packaged():
     config = tomllib.loads((ROOT / "pyproject.toml").read_text())
     patterns = config["tool"]["setuptools"]["package-data"]["broll"]
     package = ROOT / "src" / "broll"
-    shipped = [p for pattern in ("db/*.sql", "web/templates/*.html", "web/templates/partials/*.html")
+    shipped = [p for pattern in ("db/*.sql", "search/*.txt", "web/templates/*.html", "web/templates/partials/*.html")
                for p in package.glob(pattern)]
     static = [p for p in (package / "web" / "static").glob("*") if p.is_file()] if (package / "web" / "static").exists() else []
     assert shipped, "no templates found - the test is looking in the wrong place"
