@@ -190,10 +190,15 @@ database, and never written to `config.yaml`.
 
 Hybrid retrieval, because neither half is good enough alone:
 
-* **Keyword** — FTS5 over a single denormalised `shots.search_text` column
-  (caption + facets + tags), recomputed in exactly one place. Every user token is
-  quoted before it reaches FTS5, so `person's wide-shot`, `NEAR(a b)` and a stray
-  `"` are searches, not syntax errors.
+* **Keyword** — FTS5 over two denormalised columns, recomputed in exactly one place:
+  `search_text` (what is in the picture: caption, subjects, action, place, visible
+  tags) and `concept_text` (what it stands for: themes, mood, emotions, folder).
+  A match on the picture counts in full, one on a concept for 70%. Shot type,
+  camera movement, colour, people count and pace are not words in the index (they sit
+  on most clips and only add noise); asking for one ("close up of coffee") nudges
+  matching clips up. Every user token is quoted before it reaches FTS5, so
+  `person's wide-shot`, `NEAR(a b)` and a stray `"` are searches, not syntax errors.
+  See `docs/TAGGING.md`.
 * **Vector** — KNN over shot embeddings. Because a vector index cannot pre-filter
   against a join, the vector side over-fetches `limit x 10` and applies the
   filters afterwards; the keyword side applies them as ordinary SQL.
@@ -227,6 +232,9 @@ broll review                       # what needs a human look, and why
 broll fix <shot-id> --set setting=beach --set "tags=surf, ocean, dawn"
 broll vocab --min-count 3          # terms the model keeps inventing
 broll vocab --promote subjects=hydrofoil
+broll audit-tags                   # tags on too many clips, themes in use, how sure the model was
+broll attention                    # files that were set aside (too long, unreadable...), with links
+broll folders                      # new folders the model suggested; approve or dismiss
 broll costs --project 5000         # measured cost, and what 5,000 more would cost
 broll reanalyse --dry-run          # re-run rows analysed with an older prompt
 ```
@@ -244,11 +252,15 @@ Search quality is entirely determined by this. Every provider must return an
 `AnalysisResult` (see `src/broll/analysis/schema.py`), using its native
 structured-output mode — no free-text parsing anywhere.
 
+The model works in a fixed order: `observations` (what it can literally see), then
+the caption, the vocabularies, `tags` (only things that are visibly there) and
+`themes` (only from the client's own list, usually none). See `docs/TAGGING.md`.
+
 Closed enums: `shot_type`, `camera_movement`, `time_of_day`, `colour_profile`,
 `people_count`, `pace`. Controlled vocabularies (130 subjects, 107 actions, 99
 settings, 82 moods, plus editorial uses and quality flags) for `subjects`,
 `action`, `setting`, `mood`, `usable_for`, `quality_flags`. One open field,
-`tags`, where synonyms and specifics belong — it is what keyword search hits.
+`tags`, for what is visibly in the shot and its everyday synonyms.
 
 Out-of-vocabulary terms are **kept on the row** and also recorded in
 `vocabulary_candidates`, so you can promote the ones that keep coming up rather
@@ -678,7 +690,10 @@ Every removal is local: **nothing in Google Drive is ever deleted**, and the sho
 | `broll doctor` | Check ffmpeg, SQLite features, embeddings, credentials |
 | `broll analyse <clip>` | Analyse one clip, print JSON, write nothing |
 | `broll index <path> [--dry-run] [--organise]` | Queue footage and work the queue |
-| `broll index --drive-folder <id>` | Index footage already in Drive |
+| `broll index --drive-folder <id> [--sample N] [--dry-run]` | Index footage already in Drive; `--sample` for a pilot, `--dry-run` to see what would be set aside |
+| `broll attention [index/dismiss/sync <id>]` | Files that were not indexed (too long, unreadable...), with a link each |
+| `broll folders [approve/dismiss <id>]` | New folders the model suggested |
+| `broll audit-tags` | Is the tagging healthy? No model calls |
 | `broll work [--follow]` | Work the queue; safe to kill and restart |
 | `broll status` | Queue, counts, vector backend, cost |
 | `broll search "..." [--json]` | Hybrid search with filters |
