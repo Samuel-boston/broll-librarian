@@ -15,7 +15,7 @@ this order:
    called the same thing.
 4. **tags** - search keywords for things that are visibly there. Each must be one of the observations or an
    everyday synonym of one. Feelings, ideas and "what it represents" are not allowed here.
-5. **themes** - only from the client's own list (Settings > client themes), and only when the footage clearly
+5. **themes** - only from the client's own list (`client.themes` in the library's config), and only when the footage clearly
    shows one. Most clips have none. This is where "nervous system", "breathwork" and the like live.
 6. **confidence** and, when the client has folders, **which folder** and how sure it is of that.
 
