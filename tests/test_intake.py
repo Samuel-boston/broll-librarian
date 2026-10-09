@@ -360,3 +360,17 @@ async def test_a_raw_that_cannot_be_read_is_listed_not_failed(workspace, store, 
     result = await IngestPipeline(workspace, store).ingest(discovered)
     assert result.skipped_kind == "unreadable"
     assert store.list_attention()[0]["kind"] == "unreadable" and raw.exists()
+
+
+def test_two_files_with_the_same_name_in_one_folder_are_both_found(workspace):
+    """Camera footage is full of them; a listing keyed by name silently lost one of each pair."""
+    from broll.ingest.scanner import scan_drive_folder
+
+    client = FakeDriveClient()
+    folder = client.add_folder("Day 1", "root")
+    client.add_file("IMG_0001.MOV", folder.id)
+    client.add_file("IMG_0001.MOV", folder.id)
+    client.add_file("IMG_0002.MOV", folder.id)
+    found = scan_drive_folder(client, folder.id)
+    assert [f.filename for f in found] == ["IMG_0001.MOV", "IMG_0001.MOV", "IMG_0002.MOV"]
+    assert len({f.drive_file_id for f in found}) == 3

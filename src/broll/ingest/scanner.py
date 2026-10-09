@@ -117,7 +117,9 @@ def scan_drive_folder(client, folder_id: str, recursive: bool = True) -> list[Di
         if current in seen:
             continue
         seen.add(current)
-        for entry in client.list_children(current).values():
+        # list_all, not list_children: that one is keyed by name, so two files called the same
+        # thing in one folder (common in camera footage) would collapse into one.
+        for entry in client.list_all(current):
             if entry.is_folder:
                 if recursive:
                     stack.append(entry.id)

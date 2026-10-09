@@ -178,7 +178,8 @@ class DriveClient:
                 return self.service.files().list(
                     q=f"'{parent_id}' in parents and trashed = false",
                     fields=("nextPageToken, files(id,name,mimeType,parents,"
-                            "webViewLink,shortcutDetails,size,md5Checksum,appProperties)"),
+                            "webViewLink,shortcutDetails,size,md5Checksum,appProperties,"
+                            "videoMediaMetadata(durationMillis))"),
                     pageSize=self.page_size,
                     pageToken=page_token,
                     supportsAllDrives=True,
