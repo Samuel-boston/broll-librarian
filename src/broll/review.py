@@ -22,7 +22,7 @@ from .analysis.schema import (
     TimeOfDay,
     normalise_term,
 )
-from .config import WorkspaceConfig
+from .config import CategoryNode, WorkspaceConfig
 from .db.models import Shot
 from .db.store import Store
 
@@ -275,3 +275,110 @@ def dismiss_folder_proposal(store: Store, proposal_id: int) -> bool:
 
 def _is_corrected(shot: Shot) -> bool:
     return bool((shot.raw_analysis or {}).get("corrected_by_operator"))
+
+
+# --------------------------------------------------------------------------
+# Changing the client's folder tree
+# --------------------------------------------------------------------------
+
+
+def _under(path: str | None, prefix: str) -> bool:
+    return bool(path) and (path == prefix or path.startswith(prefix + "/"))
+
+
+def _swap_prefix(path: str, old: str, new: str) -> str:
+    return new + path[len(old):]
+
+
+def rename_folder(
+    config: WorkspaceConfig,
+    store: Store,
+    path: str,
+    new_name: str,
+    embedder: Embedder | None = None,
+) -> dict[str, Any]:
+    """Rename a folder in the client's tree, and carry every clip filed in or under it along.
+
+    Clips remember their folder by path, so a rename that only touched the tree would leave them
+    pointing at a folder that no longer exists. Also updates folder suggestions and the search text of
+    the clips that moved. In Drive nothing is renamed: the next `broll organise` files each clip under the
+    new name, and the old, now empty, folder is left for a person to delete.
+
+    Returns {"old", "new", "clips"}.
+    """
+    node = config.taxonomy.find_node(path)
+    if node is None:
+        raise CorrectionError(f"There is no folder {path!r}.")
+    new_name = new_name.strip().strip("/")
+    if not new_name or "/" in new_name:
+        raise CorrectionError("A folder name can't be empty or contain a slash.")
+    parent, _, _old_name = path.rpartition("/")
+    new_path = f"{parent}/{new_name}" if parent else new_name
+    if new_path == path:
+        return {"old": path, "new": new_path, "clips": 0}
+    if config.taxonomy.find_node(new_path) is not None:
+        raise CorrectionError(f"There is already a folder {new_path!r}.")
+
+    node.name = new_name
+    config.save()
+
+    moved = 0
+    rows = store.conn.execute(
+        "SELECT id, category, secondary_categories_json FROM shots WHERE workspace_id = ?",
+        (store.workspace_id,),
+    ).fetchall()
+    for row in rows:
+        category = row["category"]
+        secondary = json.loads(row["secondary_categories_json"] or "[]")
+        if not (_under(category, path) or any(_under(c, path) for c in secondary)):
+            continue
+        if _under(category, path):
+            category = _swap_prefix(category, path, new_path)
+        secondary = [_swap_prefix(c, path, new_path) if _under(c, path) else c for c in secondary]
+        store.set_shot_fields(row["id"], category=category, secondary_categories_json=json.dumps(secondary))
+        text = store.recompute_search_text(row["id"])
+        if embedder is not None and text:
+            try:
+                store.vectors.upsert(row["id"], embedder.embed_documents([text])[0])
+            except Exception as exc:  # noqa: BLE001 - the rename matters more than the vector
+                log.warning("re-embedding %s after a folder rename failed: %s", row["id"], exc)
+        moved += 1
+    for proposal in store.conn.execute(
+        "SELECT id, path FROM folder_proposals WHERE workspace_id = ?", (store.workspace_id,)
+    ).fetchall():
+        if _under(proposal["path"], path):
+            store.conn.execute(
+                "UPDATE folder_proposals SET path = ? WHERE id = ?",
+                (_swap_prefix(proposal["path"], path, new_path), proposal["id"]),
+            )
+    return {"old": path, "new": new_path, "clips": moved}
+
+
+def add_folder(config: WorkspaceConfig, parent: str, name: str, note: str = "") -> str:
+    """Add a folder under `parent` ("" for the top level). Returns its path."""
+    name = name.strip().strip("/")
+    if not name or "/" in name:
+        raise CorrectionError("A folder name can't be empty or contain a slash.")
+    if parent:
+        if config.taxonomy.find_node(parent) is None:
+            raise CorrectionError(f"There is no folder {parent!r} to put it in.")
+        path = f"{parent}/{name}"
+    else:
+        path = name
+    if config.taxonomy.find_node(path) is not None:
+        raise CorrectionError(f"There is already a folder {path!r}.")
+    if parent:
+        config.taxonomy.add_folder(parent, name, note)
+    else:
+        config.taxonomy.tree.append(CategoryNode(name=name, description=note))
+    config.save()
+    return path
+
+
+def set_folder_note(config: WorkspaceConfig, path: str, note: str) -> None:
+    """Change what a folder is for. The model reads this note when it files a clip."""
+    node = config.taxonomy.find_node(path)
+    if node is None:
+        raise CorrectionError(f"There is no folder {path!r}.")
+    node.description = note.strip()
+    config.save()

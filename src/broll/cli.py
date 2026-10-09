@@ -1857,6 +1857,65 @@ def folders_approve(
     _echo("Run `broll organise` to move the files in Drive too.")
 
 
+@folders_app.command("rename")
+def folders_rename(
+    path: str = typer.Argument(..., help='The folder, e.g. "08_Life Chapters".'),
+    new_name: str = typer.Argument(..., help="Its new name (just the name, not a path)."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+) -> None:
+    """Rename a folder, and carry the clips filed in it along."""
+    from .review import rename_folder
+
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        embedder = _load_embedder(workspace_config)
+        try:
+            done = rename_folder(workspace_config, store, path, new_name, embedder)
+        except CorrectionError as exc:
+            _fail(str(exc))
+    finally:
+        store.close()
+    _echo(f"Renamed {done['old']} to {done['new']}; {done['clips']} clip(s) followed it.")
+    _echo("Run `broll organise` to file clips under the new name in Drive.")
+
+
+@folders_app.command("add")
+def folders_add(
+    parent: str = typer.Argument(..., help='Where to put it, e.g. "08_Adam\'s Journey". Use "" for the top level.'),
+    name: str = typer.Argument(...),
+    note: str = typer.Option("", "--note", "-n", help="What belongs in it. The model reads this."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+) -> None:
+    """Add a folder to the client's tree."""
+    from .review import add_folder
+
+    workspace_config = resolve_workspace(workspace)
+    try:
+        path = add_folder(workspace_config, parent, name, note)
+    except CorrectionError as exc:
+        _fail(str(exc))
+    _echo(f"Added {path}. New clips are offered it straight away; existing clips stay where they are "
+          "until they are re-analysed (`broll reanalyse`).")
+
+
+@folders_app.command("note")
+def folders_note(
+    path: str = typer.Argument(...),
+    note: str = typer.Argument(..., help="What the folder is for."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+) -> None:
+    """Change what a folder is for."""
+    from .review import set_folder_note
+
+    workspace_config = resolve_workspace(workspace)
+    try:
+        set_folder_note(workspace_config, path, note)
+    except CorrectionError as exc:
+        _fail(str(exc))
+    _echo(f"Updated the note on {path}.")
+
+
 @folders_app.command("dismiss")
 def folders_dismiss(
     proposal_id: int = typer.Argument(...),
