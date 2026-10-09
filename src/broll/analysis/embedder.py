@@ -33,8 +33,17 @@ class Embedder(ABC):
     @abstractmethod
     def embed(self, texts: list[str]) -> list[list[float]]: ...
 
-    def embed_one(self, text: str) -> list[float]:
+    # A model that tells documents and queries apart (Gemini's does) searches better when it is told
+    # which is which. The others treat them alike.
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self.embed(texts)
+
+    def embed_query(self, text: str) -> list[float]:
         return self.embed([text])[0]
+
+    def embed_one(self, text: str) -> list[float]:
+        """Legacy name: embeds `text` as a search query."""
+        return self.embed_query(text)
 
     def warm_up(self) -> None:
         """Load the model once, up front, before any worker thread needs it."""
@@ -97,7 +106,7 @@ class GeminiEmbedder(Embedder):
         self.dimensions = config.dimensions if config.dimensions != 384 else dimensions
         self.api_key = api_key
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def _embed(self, texts: list[str], task_type: str) -> list[list[float]]:
         from google import genai
         from google.genai import types
 
@@ -105,9 +114,20 @@ class GeminiEmbedder(Embedder):
         result = client.models.embed_content(
             model=self.model,
             contents=texts,
-            config=types.EmbedContentConfig(output_dimensionality=self.dimensions),
+            config=types.EmbedContentConfig(
+                output_dimensionality=self.dimensions, task_type=task_type
+            ),
         )
         return [list(e.values) for e in result.embeddings]
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return self._embed(texts, "RETRIEVAL_DOCUMENT")
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._embed(texts, "RETRIEVAL_DOCUMENT")
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed([text], "RETRIEVAL_QUERY")[0]
 
 
 class OpenAIEmbedder(Embedder):

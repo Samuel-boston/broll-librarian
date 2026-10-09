@@ -43,16 +43,44 @@ log = logging.getLogger(__name__)
 RRF_K = 60
 VECTOR_OVERFETCH = 10
 
-# The relevance gate. Calibrated for all-MiniLM-L6-v2 against real client
-# footage and the fixture library: a clearly relevant clip scores 0.33-0.71
-# cosine, and the closest *irrelevant* clip trails the best match by 0.13 or
-# more. Re-calibrate if the embedder changes - other models score differently.
-VECTOR_FLOOR = 0.25       # below this a clip is not about the query at all
-VECTOR_GAP = 0.12         # ...and it must sit close to the best match
+# The relevance gate. A clip is kept if enough of the query is literally in it, or if it
+# means the same thing and sits near the best match. "Means the same thing" is a cosine
+# similarity, and how big a similarity must be to mean anything depends entirely on the
+# embedding model: MiniLM scores unrelated clips near 0.05, Gemini's near 0.5. So the floor
+# is not a fixed number. It is measured, per query, against how the query scores on a sample
+# of the library itself: a clip has to stand clear of that background (BACKGROUND_Z standard
+# deviations) to count. Only a library too small to sample falls back to the fixed numbers,
+# which are per embedder (CALIBRATION).
+#
+# Fixed fallback, calibrated against real client footage: a clearly relevant clip scores
+# 0.33-0.71 cosine on MiniLM, and the closest *irrelevant* clip trails the best match by 0.13
+# or more.
+CALIBRATION: dict[str, tuple[float, float]] = {
+    # embedder name -> (floor, gap)
+    "local": (0.25, 0.12),
+    "gemini": (0.62, 0.07),
+    "openai": (0.30, 0.10),
+}
+DEFAULT_CALIBRATION = (0.25, 0.12)
+VECTOR_FLOOR = 0.25       # kept for callers/tests that read it: the MiniLM floor
+VECTOR_GAP = 0.12
+BACKGROUND_MIN = 60       # shots needed before the background can be measured
+BACKGROUND_SAMPLE = 400   # shots sampled to measure it
+BACKGROUND_Z = 3.0        # standard deviations above the background to count as on topic
+GAP_Z = 1.5               # ...and how close to the best match, in the same units
+MIN_GAP = 0.04
 KEYWORD_COVERAGE = 0.5    # half the (weighted) meaningful words present: keep
 KEYWORD_PARTIAL = 0.25    # a quarter present: keep only if also on topic
 NEAR_MISS_GAP = 0.18      # a hidden clip is a "near match" only if this close
 NEAR_MISS_FLOOR = 0.20    # ...and related in its own right, not just "least bad"
+# A word found only in the concept column (a theme, a feeling, a folder name) is an interpretation,
+# so it counts for less than one found in the description of what is on screen.
+CONCEPT_ONLY_WEIGHT = 0.7
+# How much more the picture's own words matter than the concept words when ranking.
+FTS_WEIGHTS = (1.0, 0.6)
+# A clip whose shot type / camera movement is what the query asked for ("close up of ...") rises a
+# little. It is a nudge, never a filter: the model's shot-type label can be wrong.
+STRUCTURE_BOOST = 0.004
 
 _TOKEN = re.compile(r"[\w']+", re.UNICODE)
 
@@ -79,6 +107,52 @@ def meaningful_tokens(text: str) -> list[str]:
         if token and token not in STOPWORDS and token not in out:
             out.append(token)
     return out
+
+
+@dataclass(frozen=True)
+class Structure:
+    """A phrase that asks for a kind of shot rather than a subject."""
+
+    pattern: re.Pattern
+    field: str
+    values: tuple[str, ...]
+    #: Take the phrase out of the words searched for. Off for words that also describe content.
+    strip: bool = True
+
+
+def _s(pattern: str, field: str, values: tuple[str, ...], strip: bool = True) -> Structure:
+    return Structure(re.compile(pattern, re.I), field, values, strip)
+
+
+# Shot type, camera movement and pace are not in the searchable text (see broll.searchtext), because
+# as words they sit on most clips. Said as a *request* they still mean something, so they are read
+# here and become a nudge on the ranking.
+STRUCTURES: tuple[Structure, ...] = (
+    _s(r"\b(?:extreme[- ])?close[- ]?ups?\b", "shot_type", ("close_up", "extreme_close_up", "macro")),
+    _s(r"\bmacro\b", "shot_type", ("macro", "extreme_close_up"), strip=False),
+    _s(r"\b(?:wide|establishing)(?:[- ]angle)?[- ]shots?\b|\bwide[- ]angle\b",
+       "shot_type", ("wide", "extreme_wide")),
+    _s(r"\b(?:aerial|drone|bird'?s[- ]eye)\b", "shot_type", ("aerial", "top_down"), strip=False),
+    _s(r"\b(?:overhead|top[- ]down)\b", "shot_type", ("top_down",), strip=False),
+    _s(r"\bover[- ]the[- ]shoulder\b", "shot_type", ("over_the_shoulder",)),
+    _s(r"\bpov\b|\bpoint of view\b", "shot_type", ("pov",)),
+    _s(r"\bhand[- ]?held\b", "camera_movement", ("handheld",)),
+    _s(r"\b(?:locked[- ]off|tripod)\b|\bstatic shot\b", "camera_movement", ("static",)),
+    _s(r"\b(?:slow )?push[- ]in\b|\bdolly in\b", "camera_movement", ("push_in",)),
+    _s(r"\bpull[- ]out\b|\bdolly out\b", "camera_movement", ("pull_out",)),
+    _s(r"\b(?:orbit|orbiting)\b", "camera_movement", ("orbit",), strip=False),
+)
+
+
+def parse_structure(text: str) -> tuple[str, dict[str, set[str]]]:
+    """Split a query into (what is left to search for, the kinds of shot it asked for)."""
+    wanted: dict[str, set[str]] = {}
+    for structure in STRUCTURES:
+        if structure.pattern.search(text or ""):
+            wanted.setdefault(structure.field, set()).update(structure.values)
+            if structure.strip:
+                text = structure.pattern.sub(" ", text)
+    return re.sub(r"\s+", " ", text or "").strip(), wanted
 
 
 def _quote(token: str) -> str:
@@ -260,7 +334,7 @@ class SearchEngine:
         clauses, params = filters.predicates()
         where = "".join(f" AND {clause}" for clause in clauses)
         sql = f"""
-            SELECT s.id AS shot_id, bm25(shots_fts) AS rank
+            SELECT s.id AS shot_id, bm25(shots_fts, {FTS_WEIGHTS[0]}, {FTS_WEIGHTS[1]}) AS rank
             FROM shots_fts
             JOIN shots s ON s.rowid = shots_fts.rowid
             JOIN sources src ON src.id = s.source_id
@@ -278,7 +352,7 @@ class SearchEngine:
         if self.embedder is None:
             return None
         try:
-            return self.embedder.embed_one(query)
+            return self.embedder.embed_query(query)
         except Exception as exc:  # a missing model must not break keyword search
             log.warning("embedding the query failed, keyword-only results: %s", exc)
             return None
@@ -323,29 +397,37 @@ class SearchEngine:
         "nervous system regulation" still finds a clip tagged "nervous system"
         (2 of 3 specific words), while "a mariachi band playing trumpets at a
         wedding" does not return a child playing in a park (1 of 5).
+
+        A word that is in the description of what is on screen counts in full; one found only
+        among the concepts (a theme, a feeling, a folder name) counts CONCEPT_ONLY_WEIGHT, so a
+        clip cannot earn a place on interpretation alone.
         """
         if not tokens or not shot_ids:
             return {}
         total = max(1, self.store.count_shots())
         placeholders = ", ".join("?" for _ in shot_ids)
         weights: dict[str, float] = {}
-        matched: dict[str, set[str]] = {sid: set() for sid in shot_ids}
+        credit: dict[str, dict[str, float]] = {sid: {} for sid in shot_ids}
         for token in tokens:
             frequency = self._document_frequency(token)
             weights[token] = math.log(1 + total / max(frequency, 1))
             if not frequency:
                 continue
-            rows = self.store.conn.execute(
-                f"""SELECT s.id FROM shots_fts JOIN shots s ON s.rowid = shots_fts.rowid
-                    WHERE shots_fts MATCH ? AND s.workspace_id = ? AND s.id IN ({placeholders})""",
-                (_quote(token), self.store.workspace_id, *shot_ids),
-            ).fetchall()
-            for row in rows:
-                matched[row["id"]].add(token)
+            for column, value in (("", CONCEPT_ONLY_WEIGHT), ("search_text:", 1.0)):
+                rows = self.store.conn.execute(
+                    f"""SELECT s.id FROM shots_fts JOIN shots s ON s.rowid = shots_fts.rowid
+                        WHERE shots_fts MATCH ? AND s.workspace_id = ? AND s.id IN ({placeholders})""",
+                    (column + _quote(token), self.store.workspace_id, *shot_ids),
+                ).fetchall()
+                for row in rows:
+                    credit[row["id"]][token] = value  # the second pass overwrites with the full credit
         weight = sum(weights.values())
         if not weight:
             return {}
-        return {sid: sum(weights[t] for t in words) / weight for sid, words in matched.items()}
+        return {
+            sid: sum(weights[t] * c for t, c in earned.items()) / weight
+            for sid, earned in credit.items()
+        }
 
     def _similarities(self, query_vector: list[float], shot_ids: list[str]) -> dict[str, float]:
         query = _unit(query_vector)
@@ -353,6 +435,26 @@ class SearchEngine:
             sid: sum(a * b for a, b in zip(_unit(vector), query))
             for sid, vector in self.store.vectors.get_many(shot_ids).items()
         }
+
+    def _thresholds(self, query_vector: list[float]) -> tuple[float, float, float, float]:
+        """(floor, gap, near-miss floor, near-miss gap) for this query against this library.
+
+        Measured when the library is big enough to sample: the floor is BACKGROUND_Z standard
+        deviations above how this query scores on a spread of the library's own clips, whatever
+        the embedding model. Otherwise the fixed numbers for the model in use.
+        """
+        sample_ids = self.store.sample_shot_ids(BACKGROUND_SAMPLE)
+        if len(sample_ids) >= BACKGROUND_MIN:
+            sims = list(self._similarities(query_vector, sample_ids).values())
+            if len(sims) >= BACKGROUND_MIN:
+                mean = sum(sims) / len(sims)
+                std = math.sqrt(sum((x - mean) ** 2 for x in sims) / len(sims))
+                floor = mean + BACKGROUND_Z * std
+                gap = max(MIN_GAP, GAP_Z * std)
+                return floor, gap, floor - std, gap * 1.5
+        name = getattr(self.embedder, "name", "local")
+        floor, gap = CALIBRATION.get(name, DEFAULT_CALIBRATION)
+        return floor, gap, floor - 0.05, gap + 0.06
 
     def _relevant(
         self,
@@ -373,6 +475,9 @@ class SearchEngine:
         coverage = self._coverage(tokens, [c for c in candidates if c in keyword_hits])
         sims = self._similarities(query_vector, candidates) if query_vector else {}
         best = max(sims.values(), default=None)
+        floor, gap, near_floor, near_gap = (
+            self._thresholds(query_vector) if query_vector else (0.0, 0.0, 0.0, 0.0)
+        )
 
         keep: set[str] = set()
         near: set[str] = set()
@@ -385,12 +490,12 @@ class SearchEngine:
                 (keep if cov >= KEYWORD_PARTIAL else near if cov > 0 else set()).add(sid)
             elif cov >= KEYWORD_COVERAGE:
                 keep.add(sid)
-            elif cov >= KEYWORD_PARTIAL and sim >= VECTOR_FLOOR:
+            elif cov >= KEYWORD_PARTIAL and sim >= floor:
                 keep.add(sid)
-            elif best is not None and sim >= VECTOR_FLOOR and sim >= best - VECTOR_GAP:
+            elif best is not None and sim >= floor and sim >= best - gap:
                 keep.add(sid)
             elif cov >= KEYWORD_PARTIAL or (
-                best is not None and sim >= NEAR_MISS_FLOOR and sim >= best - NEAR_MISS_GAP
+                best is not None and sim >= near_floor and sim >= best - near_gap
             ):
                 # Close, but not close enough. When even the best match is
                 # irrelevant, "near the best" means nothing - hence the floor.
@@ -439,9 +544,15 @@ class SearchEngine:
         text, mentioned = self.split_person(query)
         if mentioned and person_filter:
             filters = filters.model_copy(update={"featured_person": True})
+        text, wanted = parse_structure(text)
         tokens = meaningful_tokens(text)
-        if mentioned and person_filter and not tokens:
+        if mentioned and person_filter and not tokens and not wanted:
             return self._browse(filters, limit)  # "Adam" alone: all of Adam's clips
+        if wanted and not tokens:
+            # "close up", on its own, is a kind of shot and nothing else: show those.
+            return self._browse(
+                filters.model_copy(update={k: sorted(v) for k, v in wanted.items()}), limit
+            )
 
         keyword = self._keyword_candidates(tokens, filters, limit * 2)
         # The meaning side gets the natural phrasing, minus only the name:
@@ -476,6 +587,10 @@ class SearchEngine:
                 self.hidden_count = len(near) if strict else 0
                 scores = {sid: value for sid, value in scores.items() if sid in shown}
 
+        if wanted and scores:
+            for shot_id, bonus in self._structure_bonus(list(scores), wanted).items():
+                scores[shot_id] += bonus
+
         ordered = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]
         results: list[SearchResult] = []
         for shot_id, score in ordered:
@@ -502,6 +617,21 @@ class SearchEngine:
                 )
             )
         return results
+
+    def _structure_bonus(self, shot_ids: list[str], wanted: dict[str, set[str]]) -> dict[str, float]:
+        """A nudge for clips whose shot type or camera movement is what the query asked for."""
+        placeholders = ", ".join("?" for _ in shot_ids)
+        rows = self.store.conn.execute(
+            f"""SELECT id, shot_type, camera_movement FROM shots
+                WHERE workspace_id = ? AND id IN ({placeholders})""",
+            (self.store.workspace_id, *shot_ids),
+        ).fetchall()
+        bonus: dict[str, float] = {}
+        for row in rows:
+            hits = sum(1 for field, values in wanted.items() if row[field] in values)
+            if hits:
+                bonus[row["id"]] = STRUCTURE_BOOST * hits
+        return bonus
 
     def browse(self, filters: SearchFilters, limit: int, offset: int = 0) -> list[SearchResult]:
         """Clips matching the filters, newest first - no query involved."""

@@ -42,6 +42,8 @@ class DriveFile:
     md5: str | None = None
     #: Custom key/values stored on the file (the copier stamps each copy with where it came from).
     app_properties: dict[str, str] | None = None
+    #: Length in seconds, for video Drive has finished processing (a file just uploaded may not have one yet).
+    duration_s: float | None = None
 
     @property
     def is_folder(self) -> bool:
@@ -123,7 +125,8 @@ class DriveClient:
         def call():
             return self.service.files().get(
                 fileId=file_id,
-                fields="id,name,mimeType,parents,webViewLink,shortcutDetails",
+                fields=("id,name,mimeType,parents,webViewLink,shortcutDetails,size,md5Checksum,"
+                        "videoMediaMetadata(durationMillis)"),
                 supportsAllDrives=True,
             ).execute()
 
@@ -146,7 +149,8 @@ class DriveClient:
                 return self.service.files().list(
                     q=f"'{parent_id}' in parents and trashed = false",
                     fields=("nextPageToken, files(id,name,mimeType,parents,"
-                            "webViewLink,shortcutDetails,size,md5Checksum,appProperties)"),
+                            "webViewLink,shortcutDetails,size,md5Checksum,appProperties,"
+                            "videoMediaMetadata(durationMillis))"),
                     pageSize=self.page_size,
                     pageToken=page_token,
                     supportsAllDrives=True,
@@ -360,6 +364,7 @@ class DriveClient:
 
 def _to_file(payload: dict[str, Any]) -> DriveFile:
     details = payload.get("shortcutDetails") or {}
+    millis = (payload.get("videoMediaMetadata") or {}).get("durationMillis")
     return DriveFile(
         id=payload["id"],
         name=payload.get("name", ""),
@@ -370,4 +375,5 @@ def _to_file(payload: dict[str, Any]) -> DriveFile:
         size=int(payload["size"]) if payload.get("size") else None,
         md5=payload.get("md5Checksum"),
         app_properties=payload.get("appProperties") or None,
+        duration_s=int(millis) / 1000.0 if millis else None,
     )

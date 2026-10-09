@@ -15,6 +15,12 @@ from pydantic import BaseModel
 from ...config import DEFAULT_MODELS
 from ..prompt import SYSTEM_PROMPT, build_user_prompt
 from ..schema import AnalysisResult, ShotContext
+from ..segmentation import (
+    SEGMENT_SYSTEM_PROMPT,
+    SegmentationResult,
+    SegmentContext,
+    build_segment_prompt,
+)
 from .base import (
     MissingCredentialsError,
     MissingDependencyError,
@@ -115,6 +121,48 @@ class GeminiVisionProvider(VisionProvider):
 
     def estimate_cost(self, frames: list[Path]) -> float:
         return self.pricing.cost(len(frames))
+
+    async def segment(
+        self,
+        frames: list[Path],
+        times: list[float],
+        context: SegmentContext,
+        retry_error: str | None = None,
+    ) -> SegmentationResult:
+        _, types = _sdk()
+        client = _client(self.api_key)
+
+        parts = []
+        for frame, t in zip(frames, times):
+            parts.append(types.Part.from_text(text=f"Frame at {t:.1f}s:"))
+            parts.append(types.Part.from_bytes(data=frame.read_bytes(), mime_type="image/jpeg"))
+        parts.append(types.Part.from_text(text=build_segment_prompt(context, times, retry_error)))
+
+        try:
+            response = await client.aio.models.generate_content(
+                model=self.model,
+                contents=[types.Content(role="user", parts=parts)],
+                config=types.GenerateContentConfig(
+                    system_instruction=SEGMENT_SYSTEM_PROMPT,
+                    response_mime_type="application/json",
+                    response_schema=SegmentationResult,
+                    temperature=0.1,
+                ),
+            )
+        except Exception as exc:
+            raise classify_error(str(exc))(f"gemini request failed: {exc}") from exc
+
+        parsed = getattr(response, "parsed", None)
+        if isinstance(parsed, SegmentationResult):
+            return parsed
+        if parsed is not None:
+            return SegmentationResult.model_validate(parsed)
+        if response.text:
+            return SegmentationResult.model_validate_json(response.text)
+        raise ProviderError("gemini returned no structured output")
+
+    def estimate_segment_cost(self, frame_count: int) -> float:
+        return self.pricing.segment_cost(frame_count)
 
 
 class GeminiTextProvider(TextProvider):

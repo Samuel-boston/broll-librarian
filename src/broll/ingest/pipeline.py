@@ -12,23 +12,30 @@ Stages: fetch -> dedupe -> probe -> detect shots -> frames -> analyse -> embed
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from .. import attention
 from ..analysis.analyzer import Analyzer
 from ..analysis.embedder import Embedder
 from ..analysis.prompt import PROMPT_VERSION
 from ..analysis.schema import ShotContext
+from ..analysis.segmentation import Segment
 from ..config import WorkspaceConfig
 from ..db.models import Shot, Source
 from ..db.store import Store, new_id
-from .frames import best_frame, save_thumbnail
+from .frames import Frame, best_frame_timed, save_thumbnail
 from .hashing import content_hash
+from .limits import Verdict, check_limits
 from .probe import NotAVideoError, ProbeResult, probe
-from .scanner import DiscoveredFile
-from .shots import DetectedShot, detect_shots, primary_index
+from .raw import extract_preview, is_raw, rawpy_available
+from .scanner import DiscoveredFile, media_kind
+from .segments import number_usable, plan_segments, primary_segment_index
+from .shots import detect_shots
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +56,8 @@ class IngestResult:
     organised: bool = False
     error: str | None = None
     messages: list[str] = field(default_factory=list)
+    #: Set when the file was turned away, not failed: the kind it was listed under.
+    skipped_kind: str | None = None
 
 
 class IngestPipeline:
@@ -79,10 +88,11 @@ class IngestPipeline:
         discovered: DiscoveredFile,
         force: bool = False,
         overwrite_corrections: bool = False,
+        allow_long: bool = False,
     ) -> IngestResult:
         progress: dict[str, str] = {}
         try:
-            return await self._ingest(discovered, force, overwrite_corrections, progress)
+            return await self._ingest(discovered, force, overwrite_corrections, progress, allow_long)
         except BaseException:
             # A failure partway through a source - a 503, a kill - must not
             # strand it at "analysing": the shots already written decide its
@@ -91,14 +101,49 @@ class IngestPipeline:
                 self.store.recompute_source_status(progress["source_id"])
             raise
 
+    def _turn_away(
+        self, discovered: DiscoveredFile, verdict: Verdict, result: IngestResult,
+        size_bytes: int | None = None, duration_s: float | None = None,
+    ) -> IngestResult:
+        """Not indexed, and not a failure either: listed for a person, with a link."""
+        attention.flag_file(
+            self.store, discovered, verdict.kind, verdict.detail,
+            size_bytes=size_bytes, duration_s=duration_s,
+        )
+        result.status = "skipped"
+        result.skipped_kind = verdict.kind
+        result.messages.append(f"{attention.heading(verdict.kind)}: {verdict.detail}")
+        return result
+
+    def _free_bytes(self) -> int | None:
+        try:
+            self.config.temp_dir.mkdir(parents=True, exist_ok=True)
+            return shutil.disk_usage(self.config.temp_dir).free
+        except OSError:
+            return None
+
     async def _ingest(
         self,
         discovered: DiscoveredFile,
         force: bool,
         overwrite_corrections: bool,
         progress: dict[str, str],
+        allow_long: bool = False,
     ) -> IngestResult:
         result = IngestResult(filename=discovered.filename)
+        ingest = self.config.ingest
+        is_image = media_kind(discovered.filename) == "image"
+
+        # 1. Turn away what Drive already says is too long or too big - before downloading a byte.
+        size = discovered.size_bytes
+        if size is None and discovered.path and discovered.path.exists():
+            size = discovered.path.stat().st_size
+        verdict = check_limits(
+            ingest, size_bytes=size, duration_s=discovered.duration_s, is_image=is_image,
+            forced=allow_long, free_bytes=self._free_bytes(),
+        )
+        if verdict:
+            return self._turn_away(discovered, verdict, result, size, discovered.duration_s)
 
         video = await self._fetch(discovered)
         if video is None:
@@ -106,6 +151,43 @@ class IngestPipeline:
             result.error = "could not obtain the file's bytes"
             return result
 
+        # 2. A RAW photograph is read through the JPEG inside it; the RAW itself is never touched.
+        working = video
+        raw_dir: Path | None = None
+        if is_raw(video):
+            raw_dir = self.config.temp_dir / f"raw-{new_id()[:8]}"
+            preview = await asyncio.to_thread(extract_preview, video, raw_dir)
+            if preview is None:
+                kind = "unreadable" if rawpy_available() else "unsupported"
+                detail = (
+                    "The photo inside this RAW file could not be read."
+                    if kind == "unreadable"
+                    else "RAW photos need the 'raw' extra installed on the server."
+                )
+                self._cleanup_raw(raw_dir)
+                self._cleanup(None, video, discovered, None)
+                return self._turn_away(discovered, Verdict(kind, detail), result, size)
+            working = preview
+
+        try:
+            return await self._index(
+                discovered, video, working, force, overwrite_corrections, progress, result,
+                allow_long,
+            )
+        finally:
+            self._cleanup_raw(raw_dir)
+
+    async def _index(
+        self,
+        discovered: DiscoveredFile,
+        video: Path,
+        working: Path,
+        force: bool,
+        overwrite_corrections: bool,
+        progress: dict[str, str],
+        result: IngestResult,
+        allow_long: bool,
+    ) -> IngestResult:
         digest = await asyncio.to_thread(content_hash, video)
         existing = self.store.source_by_hash(digest)
         if existing and not force and self._is_complete(existing):
@@ -115,11 +197,22 @@ class IngestPipeline:
             return result
 
         try:
-            meta: ProbeResult = await asyncio.to_thread(probe, video)
+            meta: ProbeResult = await asyncio.to_thread(probe, working)
         except NotAVideoError as exc:
             result.status = "failed"
             result.error = str(exc)
             return result
+        if working is not video:
+            meta.filesize_bytes = video.stat().st_size  # the RAW's size, not its preview's
+
+        # The length is known for certain now: a file Drive gave no length for is caught here.
+        verdict = check_limits(
+            self.config.ingest, size_bytes=meta.filesize_bytes, duration_s=meta.duration_s,
+            is_image=meta.media_kind == "image", forced=allow_long, free_bytes=self._free_bytes(),
+        )
+        if verdict:
+            self._cleanup(None, video, discovered, None)
+            return self._turn_away(discovered, verdict, result, meta.filesize_bytes, meta.duration_s)
 
         source = existing or self._create_source(discovered, video, digest, meta)
         result.source_id = source.id
@@ -127,23 +220,22 @@ class IngestPipeline:
         self.store.update_source(
             source.id, status="analysing", analysis_version=PROMPT_VERSION, error_message=None
         )
-
-        if meta.media_kind == "image":
-            # Nothing to detect: a still is one "shot" of no duration.
-            spans = [DetectedShot(index=0, start_s=0.0, end_s=0.0)]
-        else:
-            spans = await asyncio.to_thread(
-                detect_shots,
-                video,
-                meta.duration_s,
-                self.config.ingest.min_shot_length_s,
-                self.config.ingest.min_average_shot_length_s,
-            )
-        primary = primary_index(spans)
         work_dir = self.config.temp_dir / f"src-{source.id[:8]}"
 
-        for span in spans:
-            shot_id = f"{source.id}-{span.index}"
+        # 3. Decide which stretches of the file are shots. A plan made once is kept, so a run killed
+        #    half way resumes with the same shots instead of asking the model again and getting a
+        #    different answer.
+        plan = await self._plan(source, working, meta, force, work_dir, allow_long)
+        result.cost_usd += plan["cost"]
+        result.messages.extend(plan["messages"])
+        segments: list[Segment] = plan["segments"]
+        usable = number_usable(segments)
+        self.store.update_source(source.id, segments_json=json.dumps([s.to_dict() for s in segments]))
+        self.store.prune_shots(source.id, keep=len(usable))
+        primary = primary_segment_index(usable)
+
+        for seg in usable:
+            shot_id = f"{source.id}-{seg.index}"
             existing_shot = self.store.get_shot(shot_id)
             if existing_shot and existing_shot.status == "indexed" and not force:
                 result.shots_skipped += 1
@@ -153,7 +245,7 @@ class IngestPipeline:
                 # throw that away; --overwrite-corrections is the explicit opt-in.
                 result.shots_skipped += 1
                 result.messages.append(
-                    f"kept operator correction for shot {span.index} of {discovered.filename}"
+                    f"kept operator correction for shot {seg.index} of {discovered.filename}"
                 )
                 continue
 
@@ -161,28 +253,33 @@ class IngestPipeline:
                 id=shot_id,
                 workspace_id=self.config.id,
                 source_id=source.id,
-                shot_index=span.index,
+                shot_index=seg.index,
             )
-            shot.is_primary = span.index == primary
-            shot.start_s = span.start_s
-            shot.end_s = span.end_s
-            shot.duration_s = span.duration_s
+            shot.is_primary = seg.index == primary
+            shot.start_s = seg.start_s
+            shot.end_s = seg.end_s
+            shot.duration_s = seg.duration_s
+            shot.best_start_s = seg.best_start_s
+            shot.best_end_s = seg.best_end_s
 
             context = ShotContext(
                 source_filename=discovered.filename,
-                duration_s=span.duration_s,
+                duration_s=seg.duration_s,
                 width=meta.width,
                 height=meta.height,
                 media_kind=meta.media_kind,
                 fps=meta.fps,
-                shot_index=span.index,
-                shot_count=len(spans),
-                start_s=span.start_s,
-                end_s=span.end_s,
+                shot_index=seg.index,
+                shot_count=len(usable),
+                start_s=seg.start_s,
+                end_s=seg.end_s,
             )
 
-            frames = await asyncio.to_thread(self.analyzer.extract, video, context, work_dir)
-            outcome = await self.analyzer.analyse_frames(frames, context)
+            frames: list[Frame] = await asyncio.to_thread(
+                self.analyzer.extract_timed, working, context, work_dir
+            )
+            context = context.model_copy(update={"frame_times": [round(f.t, 2) for f in frames]})
+            outcome = await self.analyzer.analyse_frames([f.path for f in frames], context)
             result.cost_usd += outcome.cost_usd
 
             if outcome.result is not None:
@@ -192,8 +289,17 @@ class IngestPipeline:
             else:
                 shot.status = "needs_review"
                 shot.error_message = outcome.error
+            reasons = list(outcome.review_reasons)
+            if seg.unsure and "no_usable_part" not in reasons:
+                # The model found nothing usable in this file; the whole of it is kept for a person.
+                reasons.append("no_usable_part")
+                shot.status = "needs_review"
+            shot.review_reasons = reasons
 
-            keyframe = await asyncio.to_thread(best_frame, frames)
+            keyframe = await asyncio.to_thread(
+                best_frame_timed, frames,
+                (seg.best_start_s, seg.best_end_s) if seg.best_start_s is not None else None,
+            )
             if keyframe:
                 thumbnail = self.config.thumbnails_dir / f"{shot.id}.jpg"
                 await asyncio.to_thread(
@@ -208,14 +314,17 @@ class IngestPipeline:
                 self.store.insert_shot(shot)
             if outcome.oov:
                 self.store.record_vocabulary_candidates(outcome.oov)
+            if outcome.proposal:
+                self.store.record_folder_proposal(outcome.proposal[0], outcome.proposal[1], shot.id)
 
             await self._embed(shot.id)
             result.shots_analysed += 1
 
             for frame in frames:
-                frame.unlink(missing_ok=True)
+                frame.path.unlink(missing_ok=True)
 
         result.status = self.store.recompute_source_status(source.id)
+        self.store.resolve_attention(attention.key_for(discovered))
 
         # Step 10: organise into Drive, *before* cleanup. For an upload the
         # staged file is the only copy, so it has to reach Drive first.
@@ -230,6 +339,54 @@ class IngestPipeline:
 
         self._cleanup(work_dir, video, discovered, source.id)
         return result
+
+    async def _plan(
+        self, source: Source, working: Path, meta: ProbeResult, force: bool, work_dir: Path,
+        allow_long: bool,
+    ) -> dict:
+        """The stretches of this file that are shots."""
+        ingest = self.config.ingest
+        messages: list[str] = []
+        stored = [] if force else source.segments
+        if stored:
+            try:
+                return {"segments": [Segment.from_dict(d) for d in stored], "cost": 0.0, "messages": messages}
+            except (KeyError, ValueError, TypeError):
+                log.warning("stored segments for %s are unreadable; planning again", source.id)
+
+        if meta.media_kind == "image":
+            # Nothing to detect: a still is one "shot" of no duration.
+            return {"segments": [Segment(0.0, 0.0, "usable")], "cost": 0.0, "messages": messages}
+
+        duration = meta.duration_s
+        if 0 < duration <= ingest.scene_detect_max_s:
+            spans = await asyncio.to_thread(
+                detect_shots, working, duration,
+                ingest.min_shot_length_s, ingest.min_average_shot_length_s,
+            )
+            ranges = [(sp.start_s, sp.end_s) for sp in spans]
+        else:
+            ranges = [(0.0, duration)]
+
+        segments: list[Segment] = []
+        cost = 0.0
+        for start, end in ranges:
+            if end - start < ingest.segment_min_s:
+                segments.append(Segment(start, end, "usable"))
+                continue
+            plan = await plan_segments(
+                self.analyzer.provider, working, filename=source.original_filename,
+                start_s=start, end_s=end, file_duration_s=duration, width=meta.width,
+                height=meta.height, config=self.config, work_dir=work_dir,
+                limiter=self.analyzer.limiter, prefix=f"seg{len(segments):02d}-",
+            )
+            cost += plan.cost_usd
+            if plan.fallback_reason:
+                messages.append(f"Looked at the whole of it as one shot: {plan.fallback_reason}")
+            segments.extend(plan.segments)
+        if not segments:
+            segments = [Segment(0.0, duration, "usable")]
+        return {"segments": segments, "cost": cost, "messages": messages}
 
     def _is_complete(self, source) -> bool:
         """Only a finished source short-circuits the pipeline.
@@ -252,7 +409,8 @@ class IngestPipeline:
             from ..drive.fetcher import fetch_drive_file
 
             return await asyncio.to_thread(
-                fetch_drive_file, self.config, discovered.drive_file_id, discovered.filename
+                fetch_drive_file, self.config, discovered.drive_file_id, discovered.filename,
+                None, discovered.size_bytes,
             )
         return None
 
@@ -283,11 +441,17 @@ class IngestPipeline:
         text = self.store.recompute_search_text(shot_id)
         if not text:
             return
-        vector = await asyncio.to_thread(self._embedder.embed_one, text)
-        self.store.vectors.upsert(shot_id, vector)
+        vector = await asyncio.to_thread(self._embedder.embed_documents, [text])
+        self.store.vectors.upsert(shot_id, vector[0])
 
-    def _cleanup(self, work_dir: Path, video: Path, discovered: DiscoveredFile,
-                 source_id: str) -> None:
+    def _cleanup_raw(self, raw_dir: Path | None) -> None:
+        if raw_dir is not None and raw_dir.exists():
+            for leftover in raw_dir.glob("*"):
+                leftover.unlink(missing_ok=True)
+            raw_dir.rmdir()
+
+    def _cleanup(self, work_dir: Path | None, video: Path, discovered: DiscoveredFile,
+                 source_id: str | None) -> None:
         """Only ever delete inside the workspace temp and staging directories,
         and never delete the only copy of an uploaded file.
 
@@ -295,14 +459,14 @@ class IngestPipeline:
         upload's staged copy only goes once it has reached Drive; until then it
         is the footage, and a later `broll organise` needs it.
         """
-        if work_dir.exists():
+        if work_dir is not None and work_dir.exists():
             for leftover in work_dir.glob("*"):
                 leftover.unlink(missing_ok=True)
             work_dir.rmdir()
         if discovered.origin not in ("upload", "drive"):
             return
         if discovered.origin == "upload":
-            source = self.store.get_source(source_id)
+            source = self.store.get_source(source_id) if source_id else None
             if not (source and source.drive_file_id):
                 return  # not in Drive yet - keep it
         staging = self.config.staging_dir.resolve()

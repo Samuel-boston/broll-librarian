@@ -111,7 +111,7 @@ def apply_correction(
 
     if embedder is not None and text:
         try:
-            store.vectors.upsert(shot.id, embedder.embed_one(text))
+            store.vectors.upsert(shot.id, embedder.embed_documents([text])[0])
         except Exception as exc:  # a correction must land even if embedding fails
             log.warning("re-embedding %s after correction failed: %s", shot.id, exc)
 

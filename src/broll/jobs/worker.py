@@ -13,6 +13,7 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Callable
 
+from .. import attention
 from ..config import WorkspaceConfig
 from ..db.models import Job
 from ..db.store import Store
@@ -32,6 +33,7 @@ class WorkerStats:
     failed: int = 0
     retried: int = 0
     deduped: int = 0
+    skipped: int = 0
     shots: int = 0
     cost_usd: float = 0.0
     started_at: float = field(default_factory=time.monotonic)
@@ -70,6 +72,14 @@ class Worker:
     async def run(self, drain: bool = True, poll_interval: float | None = None) -> WorkerStats:
         """Work the queue until it is empty (drain) or until stopped."""
         poll_interval = self.idle_poll_s if poll_interval is None else poll_interval
+        try:
+            from ..drive.fetcher import sweep_partial_downloads
+
+            swept = sweep_partial_downloads(self.config)
+            if swept:
+                log.info("removed %d unfinished download(s) left by a previous run", swept)
+        except Exception as exc:  # noqa: BLE001 - tidying up must never stop the worker
+            log.debug("could not sweep partial downloads: %s", exc)
         requeued = self.store.reset_stale_jobs()
         if requeued:
             log.info("requeued %d job(s) left running by a previous worker", requeued)
@@ -144,6 +154,12 @@ class Worker:
                 )
                 return
 
+            if result.status == "skipped":
+                # Not a failure: it is on the "Needs attention" list, with the reason.
+                self.store.finish_job(job.id, "done", error="; ".join(result.messages) or None)
+                self.stats.skipped += 1
+                self._notify("finished", job, result)
+                return
             self.store.finish_job(job.id, "done", cost=result.cost_usd)
             self.stats.done += 1
             self.stats.shots += result.shots_analysed
@@ -156,17 +172,27 @@ class Worker:
         if job.kind != KIND_INDEX_SOURCE:
             raise ValueError(f"Unknown job kind {job.kind!r}")
         payload = job.payload
-        discovered = DiscoveredFile(
+        # Only passed when asked for, so a pipeline that predates it (or a test double) still works.
+        extra = {"allow_long": True} if payload.get("allow_long") else {}
+        return await self.pipeline.ingest(
+            self._discovered(job),
+            force=bool(payload.get("force")),
+            overwrite_corrections=bool(payload.get("overwrite_corrections")),
+            **extra,
+        )
+
+    @staticmethod
+    def _discovered(job: Job) -> DiscoveredFile:
+        payload = job.payload
+        return DiscoveredFile(
             origin=payload.get("origin", "local"),
             path=Path(payload["path"]) if payload.get("path") else None,
             filename=payload.get("filename", ""),
             drive_file_id=payload.get("drive_file_id"),
             origin_path=payload.get("origin_path"),
-        )
-        return await self.pipeline.ingest(
-            discovered,
-            force=bool(payload.get("force")),
-            overwrite_corrections=bool(payload.get("overwrite_corrections")),
+            size_bytes=payload.get("size_bytes"),
+            duration_s=payload.get("duration_s"),
+            link=payload.get("link"),
         )
 
     def _handle_failure(self, job: Job, error: str, transient: bool = False) -> None:
@@ -182,6 +208,13 @@ class Worker:
         self.store.finish_job(job.id, "failed", error=error)
         self.stats.failed += 1
         log.error("job %s failed permanently: %s", job.id[:8], error)
+        try:
+            # Listed with a link, not just left as a red line in the queue.
+            attention.flag_file(
+                self.store, self._discovered(job), attention.classify_failure(error), error
+            )
+        except Exception as exc:  # noqa: BLE001 - the list is a courtesy
+            log.warning("could not list %s as needing attention: %s", job.id[:8], exc)
         self._notify("failed", job, None)
 
     def _notify(self, event: str, job: Job, result: IngestResult | None) -> None:

@@ -11,7 +11,7 @@ from pathlib import Path
 
 SQL_DIR = Path(__file__).parent
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 def _apply_sql_file(conn: sqlite3.Connection, name: str) -> None:
@@ -131,6 +131,109 @@ def _v7_shot_usage(conn: sqlite3.Connection) -> None:
     )
 
 
+def _add_column(conn: sqlite3.Connection, ddl: str) -> None:
+    try:
+        conn.execute(ddl)
+    except sqlite3.OperationalError as exc:
+        if "duplicate column" not in str(exc):
+            raise
+
+
+def _v8_precision_intake_and_segments(conn: sqlite3.Connection) -> None:
+    """Precise tags, segments inside a clip, and a list of files that need a person.
+
+    * Search text is split in two (what is in the picture / what it stands for) so a match on the
+      first counts for more. The old single column mixed camera-setting words into everything.
+    * A shot can be one usable stretch of a longer file, with a "best part" inside it.
+    * `attention` lists files the library did not index (too long, too big, a download that did not
+      finish...) so none of them disappears quietly. `folder_proposals` holds the new folders the
+      model suggested, for a person to approve.
+    """
+    for ddl in (
+        "ALTER TABLE shots ADD COLUMN concept_text TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE shots ADD COLUMN observations_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE shots ADD COLUMN themes_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE shots ADD COLUMN category_confidence REAL",
+        "ALTER TABLE shots ADD COLUMN review_reasons_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE shots ADD COLUMN best_start_s REAL",
+        "ALTER TABLE shots ADD COLUMN best_end_s REAL",
+        "ALTER TABLE sources ADD COLUMN segments_json TEXT",
+    ):
+        _add_column(conn, ddl)
+
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS attention (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id  TEXT NOT NULL,
+            kind          TEXT NOT NULL,
+            key           TEXT NOT NULL,
+            filename      TEXT NOT NULL,
+            origin        TEXT NOT NULL DEFAULT 'drive',
+            drive_file_id TEXT,
+            origin_path   TEXT,
+            link          TEXT,
+            size_bytes    INTEGER,
+            duration_s    REAL,
+            detail        TEXT,
+            status        TEXT NOT NULL DEFAULT 'open',
+            shortcut_id   TEXT,
+            first_seen    TEXT NOT NULL DEFAULT (datetime('now')),
+            last_seen     TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (workspace_id, key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_attention_status ON attention (workspace_id, status, kind);
+
+        CREATE TABLE IF NOT EXISTS folder_proposals (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id  TEXT NOT NULL,
+            path          TEXT NOT NULL,
+            note          TEXT,
+            status        TEXT NOT NULL DEFAULT 'open',
+            created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (workspace_id, path)
+        );
+        CREATE TABLE IF NOT EXISTS folder_proposal_shots (
+            proposal_id   INTEGER NOT NULL REFERENCES folder_proposals(id) ON DELETE CASCADE,
+            shot_id       TEXT NOT NULL,
+            PRIMARY KEY (proposal_id, shot_id)
+        );
+
+        DROP TRIGGER IF EXISTS shots_ai;
+        DROP TRIGGER IF EXISTS shots_ad;
+        DROP TRIGGER IF EXISTS shots_au;
+        DROP TABLE IF EXISTS shots_fts;
+        CREATE VIRTUAL TABLE shots_fts USING fts5(
+            search_text,
+            concept_text,
+            content='shots',
+            content_rowid='rowid',
+            tokenize='porter unicode61 remove_diacritics 2'
+        );
+        CREATE TRIGGER shots_ai AFTER INSERT ON shots BEGIN
+            INSERT INTO shots_fts(rowid, search_text, concept_text)
+            VALUES (new.rowid, new.search_text, new.concept_text);
+        END;
+        CREATE TRIGGER shots_ad AFTER DELETE ON shots BEGIN
+            INSERT INTO shots_fts(shots_fts, rowid, search_text, concept_text)
+            VALUES ('delete', old.rowid, old.search_text, old.concept_text);
+        END;
+        CREATE TRIGGER shots_au AFTER UPDATE ON shots BEGIN
+            INSERT INTO shots_fts(shots_fts, rowid, search_text, concept_text)
+            VALUES ('delete', old.rowid, old.search_text, old.concept_text);
+            INSERT INTO shots_fts(rowid, search_text, concept_text)
+            VALUES (new.rowid, new.search_text, new.concept_text);
+        END;
+        """
+    )
+    # Shots indexed under the old rules have the old, noisier text. Rewrite it so the keyword index
+    # is right straight away (embeddings need `broll reembed`).
+    from .searchrows import rewrite_all_search_text
+
+    rewrite_all_search_text(conn)
+    conn.execute("INSERT INTO shots_fts(shots_fts) VALUES ('rebuild')")
+
+
 MIGRATIONS = {
     1: _v1_base_schema,
     2: _v2_drive_shortcuts,
@@ -139,6 +242,7 @@ MIGRATIONS = {
     5: _v5_stemmed_keyword_index,
     6: _v6_media_kind,
     7: _v7_shot_usage,
+    8: _v8_precision_intake_and_segments,
 }
 
 

@@ -137,8 +137,12 @@ class TaxonomyConfig(BaseModel):
     # Tokens: {setting} {action} {time_of_day} {shot_type} {leaf} {emotion}
     # {mood} {subject}. The 8-character content hash is always appended.
     filename_template: str = "{setting}_{action}_{time_of_day}_{shot_type}"
-    # Let the model add a folder when nothing in the tree genuinely fits.
+    # Let the model suggest a folder when nothing in the tree genuinely fits...
     allow_new_folders: bool = True
+    # ...and create it straight away, instead of holding the suggestion for a person to approve.
+    # Off: a model inventing "Jet Ski", "Jetski" and "Jet Skiing" would otherwise reshape the
+    # client's own folder structure on its own.
+    auto_create_folders: bool = False
     # Split the whole tree by media at the top level, so photographs and clips
     # never sit in the same folder: Videos/<tree> and Images/<tree>. The tree
     # itself is written once and used for both.
@@ -236,7 +240,10 @@ class EmbedderConfig(BaseModel):
 
 
 class IngestConfig(BaseModel):
+    # A shot gets one frame per `frame_every_s` seconds, between these two numbers.
     frames_per_shot: int = 3
+    max_frames_per_shot: int = 8
+    frame_every_s: float = 4.0
     frame_max_edge: int = 768
     thumbnail_max_edge: int = 640
     min_shot_length_s: float = 1.5
@@ -258,6 +265,24 @@ class IngestConfig(BaseModel):
     # this. Clean footage comes back at 0.95+, so anything under this really is
     # the model hedging - and a wrong caption is worse than a minute of review.
     review_below_confidence: float = 0.7
+    # ...or when it is unsure which folder the clip belongs in. Such a clip is filed in the
+    # review folder, not guessed into the wrong one.
+    review_below_category_confidence: float = 0.6
+    # Files past these limits are not downloaded or analysed. They are listed, with a link, on the
+    # "Needs attention" page, where a person can still choose to index one. 0 turns a limit off.
+    max_duration_s: float = 600.0
+    max_file_gb: float = 8.0
+    # A person can force a flagged file through, up to this much video.
+    max_forced_duration_s: float = 10800.0
+    # Never let a download leave less than this much of the disk free.
+    disk_headroom_gb: float = 6.0
+    # Cut detection decodes every frame, so it is only run on short files. Longer files are
+    # split by looking at frames spread through them instead.
+    scene_detect_max_s: float = 120.0
+    # Look inside any clip at least this long for setup, dead air and separate scenes.
+    segment_min_s: float = 8.0
+    max_segments_per_source: int = 8
+    segment_frames: int = 12
     # File each source into Drive as soon as it is indexed, when Drive is
     # connected. This has to happen inside the pipeline: an uploaded file's
     # only copy is in staging, and cleanup would otherwise delete it first.

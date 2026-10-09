@@ -294,6 +294,17 @@ EMOTIONS: tuple[str, ...] = (
     "tense", "numb", "burnt out", "stuck", "defeated",
 )
 
+# Words that say nothing about what is in a clip. As tags they would match every search that
+# happens to use them: "video", "footage", "cinematic" are on everything.
+TAG_STOPLIST: frozenset[str] = frozenset({
+    "video", "videos", "footage", "clip", "clips", "shot", "shots", "scene", "image", "images",
+    "photo", "photograph", "picture", "b-roll", "broll", "b roll", "stock", "content", "visual",
+    "visuals", "cinematic", "beautiful", "nice", "good", "great", "aesthetic", "vibe", "vibes",
+    "mood", "moody", "hd", "4k", "high quality", "professional", "natural", "close up", "close-up",
+    "closeup", "wide shot", "medium shot", "static", "handheld", "slow motion", "time lapse",
+    "timelapse", "pan", "tilt", "zoom", "tracking shot", "establishing shot", "no people",
+})
+
 VOCABULARIES: dict[str, tuple[str, ...]] = {
     "subjects": SUBJECTS,
     "action": ACTIONS,
@@ -342,6 +353,16 @@ def coerce_enum(field: str, value: str, enum_cls: type[Enum]) -> str:
 class AnalysisResult(BaseModel):
     """What every vision provider must return for a single shot."""
 
+    # Written first on purpose: the model fills the fields in order, so everything after this
+    # is grounded in what it said it could see rather than in what the footage is "about".
+    observations: list[str] = Field(
+        default_factory=list,
+        description=(
+            "4-10 short, literal observations of what is visible across the frames "
+            "(people, objects, place, light, movement). Only what you can actually see: "
+            "no interpretation, no feelings, no themes."
+        ),
+    )
     caption: str = Field(description="One vivid sentence: what an editor would say out loud.")
     subjects: list[str] = Field(default_factory=list, description="What is in frame.")
     action: str | None = Field(default=None, description="The primary verb.")
@@ -360,13 +381,33 @@ class AnalysisResult(BaseModel):
     has_recognisable_faces: bool = False
     has_text_on_screen: bool = False
     pace: Pace
-    tags: list[str] = Field(default_factory=list, description="Open vocabulary, 5-15 terms.")
+    tags: list[str] = Field(
+        default_factory=list,
+        description=(
+            "6-12 search keywords for things that are visibly present or plainly happening. "
+            "Each one must be something you listed in observations, or a common synonym of it."
+        ),
+    )
+    themes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Only from the client's THEMES list, exactly as written: themes this footage clearly "
+            "shows or is a direct visual stand-in for. Usually 0-2. Empty is normal."
+        ),
+    )
     usable_for: list[str] = Field(default_factory=list)
     quality_flags: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     category: str | None = Field(
         default=None,
         description="Best-fit folder from the client's category list, exactly as written.",
+    )
+    category_confidence: float | None = Field(
+        default=None,
+        description=(
+            "How sure you are of `category` alone, 0 to 1. Low when two folders fit about "
+            "equally well or none fits well."
+        ),
     )
     secondary_categories: list[str] = Field(
         default_factory=list,
@@ -419,7 +460,10 @@ class AnalysisResult(BaseModel):
     def _pace(cls, v):
         return coerce_enum("pace", v, Pace) if isinstance(v, str) else v
 
-    @field_validator("subjects", "mood", "emotions", "tags", "usable_for", "quality_flags", mode="before")
+    @field_validator(
+        "observations", "subjects", "mood", "emotions", "tags", "themes", "usable_for", "quality_flags",
+        mode="before",
+    )
     @classmethod
     def _clean_list(cls, v):
         if v is None:
@@ -481,7 +525,27 @@ class AnalysisResult(BaseModel):
     @field_validator("tags", mode="after")
     @classmethod
     def _cap_tags(cls, v: list[str]) -> list[str]:
-        return v[:15]
+        return v[:12]
+
+    @field_validator("observations", mode="after")
+    @classmethod
+    def _cap_observations(cls, v: list[str]) -> list[str]:
+        return v[:12]
+
+    @field_validator("themes", mode="after")
+    @classmethod
+    def _cap_themes(cls, v: list[str]) -> list[str]:
+        return v[:4]
+
+    @field_validator("category_confidence", mode="before")
+    @classmethod
+    def _clamp_category_confidence(cls, v):
+        if v is None or v == "":
+            return None
+        try:
+            return min(1.0, max(0.0, float(v)))
+        except (TypeError, ValueError):
+            return None
 
     @field_validator("confidence", mode="before")
     @classmethod
@@ -495,29 +559,22 @@ class AnalysisResult(BaseModel):
     # -- derived ------------------------------------------------------------
 
     def embedding_text(self) -> str:
-        """Text handed to the embedder. Caption first: it carries the most signal."""
-        parts = [self.caption]
-        if self.action:
-            parts.append(self.action)
-        parts.append(self.setting)
-        if self.setting_detail:
-            parts.append(self.setting_detail)
-        for category in (self.category, *self.secondary_categories):
-            if category:
-                parts.append(category.split("/")[-1])
-        parts.extend(self.subjects)
-        parts.extend(self.mood)
-        parts.extend(self.emotions)
-        parts.extend(self.usable_for)
-        parts.extend(self.tags)
-        parts.extend([
-            self.shot_type.value.replace("_", " "),
-            self.camera_movement.value.replace("_", " "),
-            self.time_of_day.value.replace("_", " "),
-            self.colour_profile.value.replace("_", " "),
-            f"{self.pace.value} pace",
-        ])
-        return ", ".join(p for p in parts if p)
+        """Text handed to the embedder. See broll.searchtext for what is in it, and why."""
+        from ..searchtext import embedding_text
+
+        return embedding_text(
+            caption=self.caption,
+            action=self.action,
+            setting=self.setting,
+            setting_detail=self.setting_detail,
+            subjects=self.subjects,
+            tags=self.tags,
+            time_of_day=self.time_of_day.value,
+            themes=self.themes,
+            mood=self.mood,
+            emotions=self.emotions,
+            categories=(self.category, *self.secondary_categories),
+        )
 
     def search_text(self) -> str:
         """Denormalised FTS5 payload. See store.recompute_search_text."""
@@ -542,6 +599,10 @@ class ShotContext(BaseModel):
     client_context: str = ""
     emotion_vocab: list[str] = Field(default_factory=list)
     category_options: list[str] = Field(default_factory=list)
+    theme_options: list[str] = Field(default_factory=list)
+    # Where each attached frame sits, in seconds from the start of the file. Filled in by whoever
+    # extracted the frames, so the model can tell a setup at the start from the shot itself.
+    frame_times: list[float] = Field(default_factory=list)
 
     def describe(self) -> str:
         if self.media_kind == "image":
@@ -560,11 +621,16 @@ class ShotContext(BaseModel):
             else "the whole file is a single continuous shot"
         )
         fps = f"{self.fps:.2f}" if self.fps else "unknown"
+        times = (
+            "\nFrame times, in order (seconds from the start of the file): "
+            + ", ".join(f"{t:.1f}" for t in self.frame_times)
+            if self.frame_times else ""
+        )
         return (
             f"Original filename: {self.source_filename}\n"
             f"Shot duration: {self.duration_s:.2f}s\n"
             f"Resolution: {self.width}x{self.height} at {fps} fps\n"
-            f"Position: {pos}"
+            f"Position: {pos}" + times
         )
 
 

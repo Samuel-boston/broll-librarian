@@ -25,6 +25,7 @@ from typing import Any
 from ..config import WorkspaceConfig, broll_home, registry_path, workspace_dir
 from .migrations import migrate, migrate_registry
 from .models import Job, Shot, ShotFacets, Source, Workspace
+from .searchrows import embedding_for, search_columns
 from .vectors import VectorIndex, get_vector_index
 
 LIST_FACETS = ("subjects", "mood", "emotions", "usable_for", "quality_flags")
@@ -357,6 +358,12 @@ class Store:
             "analysed_at": shot.analysed_at,
             "search_text": shot.search_text,
             "raw_analysis_json": json.dumps(shot.raw_analysis) if shot.raw_analysis else None,
+            "observations_json": json.dumps(shot.observations),
+            "themes_json": json.dumps(shot.themes),
+            "category_confidence": shot.category_confidence,
+            "review_reasons_json": json.dumps(shot.review_reasons),
+            "best_start_s": shot.best_start_s,
+            "best_end_s": shot.best_end_s,
         }
 
     def get_shot(self, shot_id: str) -> Shot | None:
@@ -384,6 +391,18 @@ class Store:
         rows = self.conn.execute(sql, params).fetchall()
         return [Shot.from_row(r, self.shot_tags(r["id"])) for r in rows]
 
+    def sample_shot_ids(self, n: int) -> list[str]:
+        """About `n` shot ids spread evenly through the library, the same ones every time."""
+        total = self.count_shots()
+        if total <= 0:
+            return []
+        step = max(1, total // max(1, n))
+        rows = self.conn.execute(
+            "SELECT id FROM shots WHERE workspace_id = ? AND rowid % ? = 0 LIMIT ?",
+            (self.workspace_id, step, n),
+        ).fetchall()
+        return [r["id"] for r in rows]
+
     def count_shots(self, status: str | None = None) -> int:
         sql = "SELECT COUNT(*) FROM shots WHERE workspace_id = ?"
         params: list[Any] = [self.workspace_id]
@@ -391,6 +410,22 @@ class Store:
             sql += " AND status = ?"
             params.append(status)
         return int(self.conn.execute(sql, params).fetchone()[0])
+
+    def prune_shots(self, source_id: str, keep: int) -> int:
+        """Delete this source's shots numbered `keep` and above: the file was planned into fewer shots.
+
+        Returns how many were removed. Their vectors go with them.
+        """
+        rows = self.conn.execute(
+            "SELECT id FROM shots WHERE workspace_id = ? AND source_id = ? AND shot_index >= ?"
+            " AND (raw_analysis_json IS NULL OR raw_analysis_json NOT LIKE '%\"corrected_by_operator\": true%')",
+            (self.workspace_id, source_id, keep),
+        ).fetchall()
+        for row in rows:
+            self.vectors.delete(row["id"])
+            self.conn.execute("DELETE FROM shots WHERE workspace_id = ? AND id = ?",
+                              (self.workspace_id, row["id"]))
+        return len(rows)
 
     # -- tags ---------------------------------------------------------------
 
@@ -428,33 +463,31 @@ class Store:
     # -- search_text --------------------------------------------------------
 
     def recompute_search_text(self, shot_id: str) -> str:
-        """The one place search_text is built. FTS5 indexes only this column."""
+        """The one place the search columns are built. FTS5 indexes both of them.
+
+        Returns the embedding text, so a caller that is about to embed the shot has it.
+        """
         row = self.conn.execute(
             "SELECT * FROM shots WHERE workspace_id = ? AND id = ?",
             (self.workspace_id, shot_id),
         ).fetchone()
         if row is None:
             return ""
-        parts: list[str] = []
-        if row["caption"]:
-            parts.append(row["caption"])
-        for field in ("action", "setting", "setting_detail", "shot_type",
-                      "camera_movement", "time_of_day", "colour_profile",
-                      "people_count", "pace"):
-            value = row[field]
-            if value:
-                parts.append(str(value).replace("_", " "))
-        for field in ("subjects_json", "mood_json", "emotions_json", "usable_for_json"):
-            parts.extend(json.loads(row[field] or "[]"))
-        categories = [row["category"], *json.loads(row["secondary_categories_json"] or "[]")]
-        parts.extend(c.split("/")[-1] for c in categories if c)
-        parts.extend(self.shot_tags(shot_id))
-        text = ", ".join(str(p) for p in parts if p)
+        tags = self.shot_tags(shot_id)
+        primary, concept = search_columns(row, tags)
         self.conn.execute(
-            "UPDATE shots SET search_text = ? WHERE workspace_id = ? AND id = ?",
-            (text, self.workspace_id, shot_id),
+            "UPDATE shots SET search_text = ?, concept_text = ? WHERE workspace_id = ? AND id = ?",
+            (primary, concept, self.workspace_id, shot_id),
         )
-        return text
+        return embedding_for(row, tags)
+
+    def embedding_text(self, shot_id: str) -> str:
+        """What the embedder reads for this shot, from what is stored now."""
+        row = self.conn.execute(
+            "SELECT * FROM shots WHERE workspace_id = ? AND id = ?",
+            (self.workspace_id, shot_id),
+        ).fetchone()
+        return embedding_for(row, self.shot_tags(shot_id)) if row else ""
 
     # -- browsing -----------------------------------------------------------
 
@@ -462,7 +495,8 @@ class Store:
         """Every word in the library's search text, with how many shots use it."""
         counts: Counter = Counter()
         for (text,) in self.conn.execute(
-            "SELECT search_text FROM shots WHERE workspace_id = ?", (self.workspace_id,)
+            "SELECT search_text || ' ' || concept_text FROM shots WHERE workspace_id = ?",
+            (self.workspace_id,),
         ):
             counts.update(set(re.findall(r"[\w']+", (text or "").lower())))
         return counts
@@ -593,6 +627,147 @@ class Store:
         self.conn.execute(
             "DELETE FROM drive_shortcuts WHERE workspace_id = ? AND source_id = ?",
             (self.workspace_id, source_id),
+        )
+
+    # -- files that need a person -------------------------------------------
+
+    def flag_attention(
+        self,
+        *,
+        kind: str,
+        key: str,
+        filename: str,
+        origin: str = "drive",
+        drive_file_id: str | None = None,
+        origin_path: str | None = None,
+        link: str | None = None,
+        size_bytes: int | None = None,
+        duration_s: float | None = None,
+        detail: str | None = None,
+    ) -> int:
+        """Put a file on the "Needs attention" list, or refresh it if it is already there.
+
+        One row per file (`key`). A file a person dismissed stays dismissed; one they asked to have
+        indexed (`requeued`) comes back as `open` if it is turned away again, so it is never lost.
+        """
+        self.conn.execute(
+            """INSERT INTO attention (workspace_id, kind, key, filename, origin, drive_file_id,
+                                      origin_path, link, size_bytes, duration_s, detail)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (workspace_id, key) DO UPDATE SET
+                   kind = excluded.kind, filename = excluded.filename,
+                   link = COALESCE(excluded.link, attention.link),
+                   size_bytes = COALESCE(excluded.size_bytes, attention.size_bytes),
+                   duration_s = COALESCE(excluded.duration_s, attention.duration_s),
+                   detail = excluded.detail, last_seen = datetime('now'),
+                   status = CASE WHEN attention.status IN ('requeued', 'resolved') THEN 'open'
+                                 ELSE attention.status END""",
+            (self.workspace_id, kind, key, filename, origin, drive_file_id, origin_path, link,
+             size_bytes, duration_s, detail),
+        )
+        return int(self.conn.execute(
+            "SELECT id FROM attention WHERE workspace_id = ? AND key = ?",
+            (self.workspace_id, key),
+        ).fetchone()["id"])
+
+    def dismissed_attention_keys(self) -> set[str]:
+        return {
+            r["key"] for r in self.conn.execute(
+                "SELECT key FROM attention WHERE workspace_id = ? AND status = 'dismissed'",
+                (self.workspace_id,),
+            ).fetchall()
+        }
+
+    def list_attention(self, status: str | None = "open", limit: int = 500) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM attention WHERE workspace_id = ?"
+        params: list[Any] = [self.workspace_id]
+        if status:
+            sql += " AND status = ?"
+            params.append(status)
+        sql += " ORDER BY kind, filename LIMIT ?"
+        params.append(limit)
+        return [dict(r) for r in self.conn.execute(sql, params).fetchall()]
+
+    def get_attention(self, item_id: int) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            "SELECT * FROM attention WHERE workspace_id = ? AND id = ?",
+            (self.workspace_id, item_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def set_attention(self, item_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        assignments = ", ".join(f"{k} = ?" for k in fields)
+        self.conn.execute(
+            f"UPDATE attention SET {assignments} WHERE workspace_id = ? AND id = ?",
+            (*fields.values(), self.workspace_id, item_id),
+        )
+
+    def resolve_attention(self, key: str) -> None:
+        """A file that was on the list has now been indexed: take it off."""
+        self.conn.execute(
+            "UPDATE attention SET status = 'resolved', last_seen = datetime('now')"
+            " WHERE workspace_id = ? AND key = ? AND status != 'dismissed'",
+            (self.workspace_id, key),
+        )
+
+    def attention_counts(self) -> dict[str, int]:
+        rows = self.conn.execute(
+            "SELECT kind, COUNT(*) AS n FROM attention WHERE workspace_id = ? AND status = 'open'"
+            " GROUP BY kind",
+            (self.workspace_id,),
+        ).fetchall()
+        return {r["kind"]: r["n"] for r in rows}
+
+    # -- folders the model suggested ----------------------------------------
+
+    def record_folder_proposal(self, path: str, note: str | None, shot_id: str) -> int:
+        self.conn.execute(
+            """INSERT INTO folder_proposals (workspace_id, path, note) VALUES (?, ?, ?)
+               ON CONFLICT (workspace_id, path) DO NOTHING""",
+            (self.workspace_id, path, note),
+        )
+        row = self.conn.execute(
+            "SELECT id FROM folder_proposals WHERE workspace_id = ? AND path = ?",
+            (self.workspace_id, path),
+        ).fetchone()
+        self.conn.execute(
+            "INSERT OR IGNORE INTO folder_proposal_shots (proposal_id, shot_id) VALUES (?, ?)",
+            (row["id"], shot_id),
+        )
+        return int(row["id"])
+
+    def list_folder_proposals(self, status: str | None = "open") -> list[dict[str, Any]]:
+        sql = "SELECT * FROM folder_proposals WHERE workspace_id = ?"
+        params: list[Any] = [self.workspace_id]
+        if status:
+            sql += " AND status = ?"
+            params.append(status)
+        sql += " ORDER BY created_at, id"
+        out = []
+        for row in self.conn.execute(sql, params).fetchall():
+            item = dict(row)
+            item["shot_ids"] = [
+                r["shot_id"] for r in self.conn.execute(
+                    """SELECT p.shot_id FROM folder_proposal_shots p
+                       JOIN shots s ON s.id = p.shot_id AND s.workspace_id = ?
+                       WHERE p.proposal_id = ? ORDER BY p.shot_id""",
+                    (self.workspace_id, row["id"]),
+                ).fetchall()
+            ]
+            out.append(item)
+        return out
+
+    def get_folder_proposal(self, proposal_id: int) -> dict[str, Any] | None:
+        return next(
+            (p for p in self.list_folder_proposals(status=None) if p["id"] == proposal_id), None
+        )
+
+    def set_folder_proposal_status(self, proposal_id: int, status: str) -> None:
+        self.conn.execute(
+            "UPDATE folder_proposals SET status = ? WHERE workspace_id = ? AND id = ?",
+            (status, self.workspace_id, proposal_id),
         )
 
     # -- where shots have been used -----------------------------------------
@@ -852,7 +1027,7 @@ class Store:
             ).fetchone()[0],
         }
         for table in ("shot_tags", "drive_shortcuts", "vocabulary_candidates",
-                      "shot_usage", "jobs", "shots", "sources"):
+                      "shot_usage", "attention", "folder_proposals", "jobs", "shots", "sources"):
             if table == "shot_tags":
                 self.conn.execute(
                     """DELETE FROM shot_tags WHERE shot_id IN

@@ -31,6 +31,7 @@ from ..schema import (
     ShotType,
     TimeOfDay,
 )
+from ..segmentation import ModelSegment, SegmentationResult, SegmentContext, SegmentKind
 from .base import Pricing, TextProvider, VisionProvider
 
 FIXTURE_ENV = "BROLL_MOCK_FIXTURES"
@@ -97,6 +98,41 @@ class MockVisionProvider(VisionProvider):
         )
 
     def estimate_cost(self, frames) -> float:
+        return 0.0
+
+    async def segment(self, frames, times, context: SegmentContext, retry_error=None) -> SegmentationResult:
+        """Deterministic, driven by the file name so tests can ask for a shape:
+        `setup` - the first fifth is setup; `dead` - the last fifth is dead air;
+        `scenes` - two usable scenes. Anything else is one usable segment."""
+        name = context.source_filename.lower()
+        a, b = context.window_start_s, context.end_s
+        span = b - a
+        segments: list[ModelSegment] = []
+        cursor = a
+        if "setup" in name and context.is_first_window:
+            cut = a + span * 0.2
+            segments.append(ModelSegment(start_s=a, end_s=cut, kind=SegmentKind.setup,
+                                         summary="camera being set up"))
+            cursor = cut
+        end = b - span * 0.2 if ("dead" in name and context.is_last_window) else b
+        if "scenes" in name:
+            mid = cursor + (end - cursor) / 2
+            for lo, hi, label in ((cursor, mid, "first scene"), (mid, end, "second scene")):
+                segments.append(ModelSegment(
+                    start_s=lo, end_s=hi, kind=SegmentKind.usable, summary=label,
+                    best_start_s=lo + (hi - lo) * 0.25, best_end_s=lo + (hi - lo) * 0.75,
+                ))
+        else:
+            length = end - cursor
+            segments.append(ModelSegment(
+                start_s=cursor, end_s=end, kind=SegmentKind.usable, summary="the shot",
+                best_start_s=cursor + length * 0.2, best_end_s=cursor + length * 0.8,
+            ))
+        if end < b:
+            segments.append(ModelSegment(start_s=end, end_s=b, kind=SegmentKind.dead, summary="camera down"))
+        return SegmentationResult(segments=segments)
+
+    def estimate_segment_cost(self, frame_count: int) -> float:
         return 0.0
 
 

@@ -47,6 +47,17 @@ class Source(BaseModel):
     analysis_version: str | None = None
     status: SourceStatus = "pending"
     error_message: str | None = None
+    #: The plan for this file: every stretch the model found, including the ones left out (setup,
+    #: dead air). Stored so a run killed half way resumes with the same plan.
+    segments_json: str | None = None
+
+    @property
+    def segments(self) -> list[dict[str, Any]]:
+        try:
+            value = json.loads(self.segments_json or "[]")
+        except ValueError:
+            return []
+        return value if isinstance(value, list) else []
 
 
 class Shot(BaseModel):
@@ -81,10 +92,20 @@ class Shot(BaseModel):
     quality_flags: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     emotions: list[str] = Field(default_factory=list)
+    #: Literal things the model said it could see; the tags and caption are built from these.
+    observations: list[str] = Field(default_factory=list)
+    #: Client themes the footage clearly shows (a closed list, so never free-form noise).
+    themes: list[str] = Field(default_factory=list)
     category: str | None = None
+    category_confidence: float | None = None
     secondary_categories: list[str] = Field(default_factory=list)
     featured_person: bool = False
     top_pick: bool = False
+    #: The strongest stretch inside this shot, when the model picked one (seconds in the file).
+    best_start_s: float | None = None
+    best_end_s: float | None = None
+    #: Why this shot is waiting for a person (empty when nothing is wrong).
+    review_reasons: list[str] = Field(default_factory=list)
 
     status: ShotStatus = "pending"
     error_message: str | None = None
@@ -103,6 +124,9 @@ class Shot(BaseModel):
             ("quality_flags_json", "quality_flags"),
             ("emotions_json", "emotions"),
             ("secondary_categories_json", "secondary_categories"),
+            ("observations_json", "observations"),
+            ("themes_json", "themes"),
+            ("review_reasons_json", "review_reasons"),
         ):
             d[dst] = json.loads(d.pop(src, "[]") or "[]")
         raw = d.pop("raw_analysis_json", None)
@@ -114,6 +138,7 @@ class Shot(BaseModel):
             if d.get(key) is not None:
                 d[key] = bool(d[key])
         d.pop("rowid", None)
+        d.pop("concept_text", None)
         d["tags"] = tags or []
         return cls.model_validate(d)
 
@@ -137,7 +162,10 @@ class Shot(BaseModel):
         self.quality_flags = result.quality_flags
         self.tags = result.tags
         self.emotions = result.emotions
+        self.observations = result.observations
+        self.themes = result.themes
         self.category = result.category
+        self.category_confidence = result.category_confidence
         self.secondary_categories = result.secondary_categories
         self.featured_person = result.featured_person_in_shot
         # top_pick is an editor's choice, so a re-analysis never touches it.

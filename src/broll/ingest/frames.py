@@ -64,8 +64,14 @@ def frame_stats(path: Path) -> FrameStats:
     return FrameStats(mean=mean, stddev=stddev)
 
 
+def ffmpeg_input(video) -> list[str]:
+    """The ffmpeg arguments that open `video`: a local path, or a remote source that knows how."""
+    opener = getattr(video, "ffmpeg_input", None)
+    return list(opener()) if opener else ["-i", str(video)]
+
+
 def _extract_one(
-    video: Path, timestamp: float, out_path: Path, max_edge: int, seek: bool = True
+    video, timestamp: float, out_path: Path, max_edge: int, seek: bool = True
 ) -> bool:
     ffmpeg, _ = check_ffmpeg()
     scale = (
@@ -78,7 +84,7 @@ def _extract_one(
     proc = subprocess.run(
         [
             ffmpeg, "-nostdin", "-loglevel", "error",
-            *seek_args, "-i", str(video),
+            *seek_args, *ffmpeg_input(video),
             "-frames:v", "1", "-vf", scale, "-q:v", "3", "-y", str(out_path),
         ],
         capture_output=True, text=True,
@@ -123,32 +129,44 @@ def extract_still(
     return [frame]
 
 
-def extract_frames(
-    video: Path,
+@dataclass
+class Frame:
+    path: Path
+    #: Seconds from the start of the file.
+    t: float
+
+
+def extract_frames_timed(
+    video,
     out_dir: Path,
     start_s: float = 0.0,
     duration_s: float | None = None,
     count: int = 3,
     max_edge: int = 768,
     prefix: str = "frame",
-) -> list[Path]:
-    """Extract ``count`` usable frames spread across a shot.
+    centred: bool = False,
+) -> list[Frame]:
+    """Extract ``count`` usable frames spread across a stretch, each with where it came from.
 
     Returns the frames that passed the quality filter, in chronological order.
     If every sample at a position is rejected, the best of the rejected ones is
     kept rather than dropping the position entirely - an all-dark clip should
     still be analysed and flagged, not silently skipped.
+
+    ``centred`` puts each frame in the middle of an equal slice (so the first and last frames sit
+    close to the two ends), which is what finding a setup at the start needs. The default keeps the
+    old 20/50/80% positions for a shot that is analysed as a whole.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     duration = duration_s or 0.0
-    positions = _positions(count)
-    kept: list[Path] = []
+    positions = _centred_positions(count) if centred else _positions(count)
+    kept: list[Frame] = []
     seek = duration > 0
 
     for index, fraction in enumerate(positions):
         base = start_s + (duration * fraction if duration else 0.0)
-        chosen: Path | None = None
-        fallback: tuple[float, Path] | None = None
+        chosen: Frame | None = None
+        fallback: tuple[float, Frame] | None = None
 
         for attempt, offset in enumerate((0.0, *RESAMPLE_OFFSETS)):
             timestamp = base + offset * duration
@@ -158,12 +176,13 @@ def extract_frames(
             if not _extract_one(video, timestamp, candidate, max_edge, seek):
                 continue
             stats = frame_stats(candidate)
+            frame = Frame(candidate, max(0.0, timestamp))
             if stats.usable:
-                chosen = candidate
+                chosen = frame
                 break
             score = stats.stddev
             if fallback is None or score > fallback[0]:
-                fallback = (score, candidate)
+                fallback = (score, frame)
 
         if chosen is None and fallback is not None:
             chosen = fallback[1]
@@ -171,10 +190,44 @@ def extract_frames(
             kept.append(chosen)
 
     # Clean up rejected samples we did not keep.
+    keep_paths = {f.path for f in kept}
     for leftover in out_dir.glob(f"{prefix}_*.jpg"):
-        if leftover not in kept:
+        if leftover not in keep_paths:
             leftover.unlink(missing_ok=True)
-    return kept
+    return sorted(kept, key=lambda f: f.t)
+
+
+def extract_frames(
+    video,
+    out_dir: Path,
+    start_s: float = 0.0,
+    duration_s: float | None = None,
+    count: int = 3,
+    max_edge: int = 768,
+    prefix: str = "frame",
+) -> list[Path]:
+    """`extract_frames_timed`, when only the files are wanted."""
+    return [
+        f.path for f in extract_frames_timed(
+            video, out_dir, start_s, duration_s, count, max_edge, prefix
+        )
+    ]
+
+
+def frame_count_for(duration_s: float, minimum: int = 3, maximum: int = 8, every_s: float = 4.0) -> int:
+    """How many frames a stretch of this length deserves: one per `every_s`, within limits.
+
+    Three frames describe a 4-second clip well and a 40-second one badly: the middle of a long shot
+    is where the subject changes.
+    """
+    if duration_s <= 0:
+        return minimum
+    return max(minimum, min(maximum, round(duration_s / every_s)))
+
+
+def _centred_positions(count: int) -> tuple[float, ...]:
+    count = max(1, count)
+    return tuple((i + 0.5) / count for i in range(count))
 
 
 def _positions(count: int) -> tuple[float, ...]:
@@ -201,3 +254,14 @@ def best_frame(frames: list[Path]) -> Path | None:
     if not frames:
         return None
     return max(frames, key=lambda f: frame_stats(f).stddev)
+
+
+def best_frame_timed(frames: list[Frame], prefer: tuple[float, float] | None = None) -> Path | None:
+    """The frame to use as a thumbnail: the most varied one, from the best part when there is one."""
+    if not frames:
+        return None
+    pool = frames
+    if prefer is not None:
+        inside = [f for f in frames if prefer[0] <= f.t <= prefer[1]]
+        pool = inside or frames
+    return max(pool, key=lambda f: frame_stats(f.path).stddev).path

@@ -77,13 +77,13 @@ def test_unmappable_enum_is_a_validation_error():
         AnalysisResult.model_validate({**BASE, "shot_type": "banana"})
 
 
-def test_mood_capped_at_three_and_tags_at_fifteen():
+def test_mood_capped_at_three_and_tags_at_twelve():
     result = AnalysisResult.model_validate(
         {**BASE, "mood": ["calm", "peaceful", "serene", "quiet", "still"],
          "tags": [f"tag{i}" for i in range(30)]}
     )
     assert len(result.mood) == 3
-    assert len(result.tags) == 15
+    assert len(result.tags) == 12
 
 
 def test_lists_are_normalised_and_deduped():
@@ -128,8 +128,11 @@ def test_embedding_text_leads_with_the_caption():
     result = AnalysisResult.model_validate(BASE)
     text = result.embedding_text()
     assert text.startswith(BASE["caption"])
-    for term in ("meditating", "beach", "mindfulness", "wide", "slow pace"):
+    for term in ("meditating", "beach", "mindfulness", "calm"):
         assert term in text
+    # Camera settings are filters, not words: they sit on most clips and only add noise.
+    for term in ("wide", "static", "slow pace", "one", "warm"):
+        assert term not in text.split(", ")
 
 
 def test_normalise_term():

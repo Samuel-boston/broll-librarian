@@ -19,6 +19,12 @@ from pydantic import BaseModel
 from ...config import DEFAULT_MODELS
 from ..prompt import SYSTEM_PROMPT, build_user_prompt
 from ..schema import AnalysisResult, ShotContext
+from ..segmentation import (
+    SEGMENT_SYSTEM_PROMPT,
+    SegmentationResult,
+    SegmentContext,
+    build_segment_prompt,
+)
 from .base import (
     MissingCredentialsError,
     MissingDependencyError,
@@ -101,6 +107,41 @@ class AnthropicVisionProvider(VisionProvider):
 
     def estimate_cost(self, frames: list[Path]) -> float:
         return self.pricing.cost(len(frames))
+
+    async def segment(
+        self,
+        frames: list[Path],
+        times: list[float],
+        context: SegmentContext,
+        retry_error: str | None = None,
+    ) -> SegmentationResult:
+        client = _client(self.api_key)
+        content: list[dict] = []
+        for frame, t in zip(frames, times):
+            media_type, data = encode_image(frame)
+            content.append({"type": "text", "text": f"Frame at {t:.1f}s:"})
+            content.append(
+                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
+            )
+        content.append({"type": "text", "text": build_segment_prompt(context, times, retry_error)})
+        try:
+            response = await client.messages.parse(
+                model=self.model,
+                max_tokens=MAX_TOKENS,
+                system=SEGMENT_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": content}],
+                output_format=SegmentationResult,
+            )
+        except Exception as exc:
+            raise classify_error(str(exc))(f"anthropic request failed: {exc}") from exc
+        if response.stop_reason == "refusal":
+            raise ProviderError("anthropic declined to look through this clip")
+        if response.parsed_output is None:
+            raise ProviderError("anthropic returned no structured output")
+        return response.parsed_output
+
+    def estimate_segment_cost(self, frame_count: int) -> float:
+        return self.pricing.segment_cost(frame_count)
 
 
 class AnthropicTextProvider(TextProvider):

@@ -147,7 +147,7 @@ def _analyzer(workspace, taxonomy, proposal):
 async def test_a_proposed_folder_is_created_under_its_parent_and_persisted(workspace, tmp_path):
     from broll.config import load_workspace_config
 
-    analyzer = _analyzer(workspace, tree_config(), {
+    analyzer = _analyzer(workspace, tree_config(auto_create_folders=True), {
         "new_category": "05_Travel & Adventure/wakeboarding",
         "new_category_note": "Wakeboarding and towed water sports.",
     })
@@ -158,6 +158,21 @@ async def test_a_proposed_folder_is_created_under_its_parent_and_persisted(works
     assert "05_Travel & Adventure/Wakeboarding" in dict(load_workspace_config(workspace.id).taxonomy.category_leaves())
     # ...and the next clip is offered it.
     assert any(o.startswith("05_Travel & Adventure/Wakeboarding") for o in analyzer.category_options)
+
+
+async def test_a_proposed_folder_is_held_for_approval_by_default(workspace, tmp_path):
+    """The model suggests; a person decides. Nothing reshapes the client's tree on its own."""
+    analyzer = _analyzer(workspace, tree_config(), {
+        "new_category": "05_Travel & Adventure/wakeboarding",
+        "new_category_note": "Wakeboarding and towed water sports.",
+    })
+    context = ShotContext(source_filename="a.mp4", duration_s=5, width=1920, height=1080)
+    outcome = await analyzer.analyse_frames([tmp_path / "f.jpg"], context)
+
+    assert outcome.proposal == ("05_Travel & Adventure/Wakeboarding", "Wakeboarding and towed water sports.")
+    assert outcome.result.category == "05_Travel & Adventure/Beach & Water"   # the closest existing folder
+    assert analyzer.new_folders == []
+    assert "05_Travel & Adventure/Wakeboarding" not in dict(workspace.taxonomy.category_leaves())
 
 
 async def test_a_near_duplicate_folder_reuses_the_existing_one(workspace, tmp_path):
@@ -192,7 +207,7 @@ def test_the_client_block_names_the_person_and_their_themes():
         name="Adam Kunder", featured_person="Adam Kunder", featured_person_description="a man",
         brief="Adam is a mindset coach.", themes=["nervous system", "breathwork"]))
     assert "Adam is a mindset coach." in block
-    assert "nervous system, breathwork" in block
+    assert "THEMES" in block and "nervous system; breathwork" in block
     assert 'call them "Adam"' in block and "Never name anyone else" in block
 
 

@@ -13,6 +13,12 @@ from pydantic import BaseModel
 from ...config import DEFAULT_MODELS
 from ..prompt import SYSTEM_PROMPT, build_user_prompt
 from ..schema import AnalysisResult, ShotContext
+from ..segmentation import (
+    SEGMENT_SYSTEM_PROMPT,
+    SegmentationResult,
+    SegmentContext,
+    build_segment_prompt,
+)
 from .base import (
     MissingCredentialsError,
     MissingDependencyError,
@@ -86,6 +92,38 @@ class OpenAIVisionProvider(VisionProvider):
 
     def estimate_cost(self, frames: list[Path]) -> float:
         return self.pricing.cost(len(frames))
+
+    async def segment(
+        self,
+        frames: list[Path],
+        times: list[float],
+        context: SegmentContext,
+        retry_error: str | None = None,
+    ) -> SegmentationResult:
+        client = _client(self.api_key)
+        content: list[dict] = []
+        for frame, t in zip(frames, times):
+            media_type, data = encode_image(frame)
+            content.append({"type": "input_text", "text": f"Frame at {t:.1f}s:"})
+            content.append({"type": "input_image", "image_url": f"data:{media_type};base64,{data}"})
+        content.append(
+            {"type": "input_text", "text": build_segment_prompt(context, times, retry_error)}
+        )
+        try:
+            response = await client.responses.parse(
+                model=self.model,
+                instructions=SEGMENT_SYSTEM_PROMPT,
+                input=[{"role": "user", "content": content}],
+                text_format=SegmentationResult,
+            )
+        except Exception as exc:
+            raise classify_error(str(exc))(f"openai request failed: {exc}") from exc
+        if response.output_parsed is None:
+            raise ProviderError("openai returned no structured output")
+        return response.output_parsed
+
+    def estimate_segment_cost(self, frame_count: int) -> float:
+        return self.pricing.segment_cost(frame_count)
 
 
 class OpenAITextProvider(TextProvider):

@@ -17,7 +17,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from ..config import WorkspaceConfig
-from ..ingest.frames import extract_frames, extract_still
+from ..ingest.frames import Frame, extract_frames_timed, extract_still, frame_count_for
 from .limiter import RateLimiter
 from .prompt import PROMPT_VERSION, render_client_context
 from .providers.base import ProviderError, TransientProviderError, VisionProvider
@@ -25,11 +25,14 @@ from .providers.registry import get_vision_provider
 from .schema import (
     DEFECT_FLAGS,
     EMOTIONS,
+    MOODS,
+    TAG_STOPLIST,
     AnalysisResult,
     CameraMove,
     Pace,
     ShotContext,
     find_oov,
+    normalise_term,
 )
 
 log = logging.getLogger(__name__)
@@ -45,6 +48,10 @@ class AnalysisOutcome:
     cost_usd: float = 0.0
     frames: list[Path] = field(default_factory=list)
     analysis_version: str = PROMPT_VERSION
+    #: Why a person should look at this shot (empty when nothing is in doubt).
+    review_reasons: list[str] = field(default_factory=list)
+    #: A new folder the model suggested: (path, note). Held for approval, not created.
+    proposal: tuple[str, str] | None = None
 
     @property
     def ok(self) -> bool:
@@ -78,6 +85,17 @@ def _clean_folder_name(name: str) -> str:
     return " ".join(words)[:40].strip()
 
 
+def _stem(word: str) -> str:
+    return word[:5] if len(word) > 5 else word
+
+
+def _mentioned(term: str, text: str) -> bool:
+    """Whether every word of `term` (loosely stemmed) appears in `text`."""
+    have = {_stem(w) for w in re.findall(r"[a-z0-9']+", text.lower())}
+    words = re.findall(r"[a-z0-9']+", term.lower())
+    return bool(words) and all(_stem(w) in have for w in words)
+
+
 def _near(a: str, b: str) -> bool:
     """Same folder in all but spelling: identical, plural, or one inside the other."""
     a, b = _squash(a), _squash(b)
@@ -103,6 +121,14 @@ class Analyzer:
                            if parts else set())
         self.emotion_vocab = list(config.client.emotions) or list(EMOTIONS)
         self.client_context = render_client_context(config.client)
+        # Themes are a closed list: the model may only pick from it. Compared in normalised form.
+        self.theme_options = list(config.client.themes)
+        self._themes = {normalise_term(t): normalise_term(t) for t in self.theme_options}
+        # Words that name a feeling, a look or an idea. As a *visible* tag they are interpretation.
+        self._concept_words = (
+            set(MOODS) | set(EMOTIONS) | {normalise_term(e) for e in config.client.emotions}
+            | set(self._themes)
+        )
 
         overrides = {k: list(v) for k, v in config.vocabulary_overrides.items()}
         overrides.setdefault("emotions", []).extend(config.client.emotions)
@@ -113,50 +139,65 @@ class Analyzer:
         self.leaves = [path for path, _ in tree]
         self.category_options = [f"{path} — {note}" if note else path for path, note in tree]
 
-    def _create_folder(self, proposal: str, note: str | None) -> str | None:
-        """Add the folder the model proposed, if it is sound; return its path.
+    def _resolve_proposal(self, proposal: str, note: str | None):
+        """Sort a suggested folder into: an existing near-match, or a genuinely new one.
 
-        Guard rails, because an unchecked model invents "Jet Ski", "Jetski" and
-        "Jet Skiing" on three consecutive clips: the folder must sit under an
-        existing one, and a near-match to an existing sibling reuses it.
+        Guard rails, because an unchecked model invents "Jet Ski", "Jetski" and "Jet Skiing" on
+        three consecutive clips: the folder must sit under an existing one, and a near-match to an
+        existing sibling reuses it. Returns (existing path, None) or (None, (new path, note)),
+        or (None, None) when the suggestion is unusable.
         """
         taxonomy = self.config.taxonomy
         parent_raw, _, name_raw = proposal.strip().strip("/").rpartition("/")
         name = _clean_folder_name(name_raw)
         parent = match_category(parent_raw, taxonomy.parent_folders()) if parent_raw else None
         if not parent or not name:
-            return None
+            return None, None
         node = taxonomy.find_node(parent)
         for child in node.children:
             if _near(child.name, name):
-                return f"{parent}/{child.name}"
-        path = taxonomy.add_folder(parent, name, (note or "").strip() or "Added automatically.")
+                return f"{parent}/{child.name}", None
+        return None, (f"{parent}/{name}", (note or "").strip() or "Added automatically.")
+
+    def _create_folder(self, path: str, note: str) -> str:
+        """Add a folder to the client's tree now (only when auto-creation is on)."""
+        taxonomy = self.config.taxonomy
+        parent, _, name = path.rpartition("/")
+        created = taxonomy.add_folder(parent, name, note)
         self.config.save()  # persisted, so the next clip is offered this folder
         self._load_tree()
-        self.new_folders.append(path)
-        log.info("created a new folder: %s", path)
-        return path
+        self.new_folders.append(created)
+        log.info("created a new folder: %s", created)
+        return created
 
     # -- frames -------------------------------------------------------------
 
-    def extract(self, video: Path, context: ShotContext, work_dir: Path) -> list[Path]:
+    def extract_timed(self, video, context: ShotContext, work_dir: Path) -> list[Frame]:
         # A photograph has one frame, and sending it three times would only
         # triple the bill. ffmpeg does the decode either way, HEIC included.
         if context.media_kind == "image":
-            return extract_still(
+            paths = extract_still(
                 video, work_dir,
                 max_edge=self.config.ingest.frame_max_edge,
                 prefix=f"shot{context.shot_index:03d}",
             )
-        return extract_frames(
+            return [Frame(p, 0.0) for p in paths]
+        ingest = self.config.ingest
+        return extract_frames_timed(
             video,
             work_dir,
             start_s=context.start_s,
             duration_s=context.duration_s,
-            count=self.config.ingest.frames_per_shot,
-            max_edge=self.config.ingest.frame_max_edge,
+            count=frame_count_for(
+                context.duration_s, ingest.frames_per_shot, ingest.max_frames_per_shot,
+                ingest.frame_every_s,
+            ),
+            max_edge=ingest.frame_max_edge,
             prefix=f"shot{context.shot_index:03d}",
         )
+
+    def extract(self, video, context: ShotContext, work_dir: Path) -> list[Path]:
+        return [f.path for f in self.extract_timed(video, context, work_dir)]
 
     # -- analysis -----------------------------------------------------------
 
@@ -166,12 +207,16 @@ class Analyzer:
                 "client_context": self.client_context,
                 "emotion_vocab": self.emotion_vocab,
                 "category_options": self.category_options,
+                "theme_options": self.theme_options,
             }
         )
 
-    def _normalise(self, result: AnalysisResult) -> list[tuple[str, str]]:
-        """Snap categories onto real folders; drop fields this workspace lacks."""
+    def _normalise(self, result: AnalysisResult) -> tuple[list[tuple[str, str]], tuple[str, str] | None]:
+        """Snap categories onto real folders, hold the model to its own evidence, and drop fields this
+        workspace lacks. Returns (unmatched terms, a folder proposal)."""
         unmatched: list[tuple[str, str]] = []
+        proposal: tuple[str, str] | None = None
+        taxonomy = self.config.taxonomy
         if self.leaves:
             raw = result.category
             result.category = match_category(raw, self.leaves)
@@ -183,22 +228,66 @@ class Analyzer:
                 if matched and matched != result.category and matched not in secondary:
                     secondary.append(matched)
             result.secondary_categories = secondary[:2]
-            if result.new_category and self.config.taxonomy.allow_new_folders:
-                created = self._create_folder(result.new_category, result.new_category_note)
-                if created:
-                    result.category = created
-                    result.secondary_categories = [
-                        c for c in result.secondary_categories if c != created
-                    ]
+            if result.new_category and taxonomy.allow_new_folders:
+                existing, new = self._resolve_proposal(result.new_category, result.new_category_note)
+                if existing and existing in self.leaves:
+                    result.category = existing
                     unmatched = [u for u in unmatched if u[0] != "category"]
+                elif new and taxonomy.auto_create_folders:
+                    result.category = self._create_folder(*new)
+                    unmatched = [u for u in unmatched if u[0] != "category"]
+                elif new:
+                    proposal = new  # held for a person to approve; the clip stays in the closest folder
+            result.secondary_categories = [c for c in result.secondary_categories if c != result.category]
         else:
             result.category = None
+            result.category_confidence = None
             result.secondary_categories = []
         if not self.config.client.featured_person:
             result.featured_person_in_shot = False
-        if self.name_terms:
-            result.tags = [t for t in result.tags if t not in self.name_terms]
-        return unmatched
+        self._hold_to_the_evidence(result)
+        return unmatched, proposal
+
+    def _hold_to_the_evidence(self, result: AnalysisResult) -> None:
+        """Keep tags to what is visible and themes to the client's list.
+
+        The prompt asks for this; this makes it so. A feeling or an idea in `tags` is
+        interpretation, and one on every calm clip is how a library starts returning half of itself
+        for a search that should find a few clips.
+        """
+        seen_text = " ".join(
+            [result.caption, *result.observations, *result.subjects, result.action or "",
+             result.setting, result.setting_detail or ""]
+        )
+        themes = [t for t in dict.fromkeys(result.themes) if t in self._themes]
+        tags: list[str] = []
+        for tag in result.tags:
+            if tag in TAG_STOPLIST or tag in self.name_terms or tag in tags:
+                continue
+            if tag in self._concept_words and not _mentioned(tag, seen_text):
+                # A theme the model put in the wrong field still says something: keep it as a theme.
+                if tag in self._themes and tag not in themes:
+                    themes.append(tag)
+                continue
+            tags.append(tag)
+        result.tags = tags
+        result.themes = themes[:4]
+
+    def _review_reasons(self, result: AnalysisResult, unmatched: list[tuple[str, str]]) -> list[str]:
+        ingest = self.config.ingest
+        reasons: list[str] = []
+        if result.confidence < ingest.review_below_confidence:
+            reasons.append("low_confidence")
+        if (
+            self.leaves and result.category_confidence is not None
+            and result.category_confidence < ingest.review_below_category_confidence
+        ):
+            reasons.append("low_category_confidence")
+        if any(field == "category" for field, _ in unmatched):
+            reasons.append("category_unmatched")
+        if DEFECT_FLAGS.intersection(result.quality_flags):
+            reasons.append("quality_defect")
+        return reasons
 
     async def analyse_frames(
         self, frames: list[Path], context: ShotContext
@@ -207,6 +296,7 @@ class Analyzer:
         outcome = AnalysisOutcome(context=context, frames=frames)
         if not frames:
             outcome.status = "needs_review"
+            outcome.review_reasons = ["analysis_failed"]
             outcome.error = "no usable frames could be extracted"
             return outcome
 
@@ -228,16 +318,17 @@ class Analyzer:
             except ProviderError as exc:
                 retry_error = str(exc)
             else:
-                unmatched = self._normalise(result)
+                unmatched, proposal = self._normalise(result)
                 if context.media_kind == "image":
                     # Not the model's to judge: a photograph cannot move, and a
                     # model that says it pans left is describing an illusion.
                     result.camera_movement = CameraMove.static
                     result.pace = Pace.still
                 outcome.result = result
+                outcome.proposal = proposal
                 outcome.oov = find_oov(result, self.vocab_overrides) + unmatched
-                defects = DEFECT_FLAGS.intersection(result.quality_flags)
-                if result.confidence < self.config.ingest.review_below_confidence or defects:
+                outcome.review_reasons = self._review_reasons(result, unmatched)
+                if outcome.review_reasons:
                     outcome.status = "needs_review"
                 return outcome
 
@@ -249,14 +340,16 @@ class Analyzer:
                 )
 
         outcome.status = "needs_review"
+        outcome.review_reasons = ["analysis_failed"]
         outcome.error = retry_error
         return outcome
 
     async def analyse_shot(
         self, video: Path, context: ShotContext, work_dir: Path
     ) -> AnalysisOutcome:
-        frames = self.extract(video, context, work_dir)
-        return await self.analyse_frames(frames, context)
+        frames = self.extract_timed(video, context, work_dir)
+        context = context.model_copy(update={"frame_times": [round(f.t, 2) for f in frames]})
+        return await self.analyse_frames([f.path for f in frames], context)
 
 
 def _validation_summary(exc: ValidationError) -> str:

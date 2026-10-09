@@ -53,11 +53,14 @@ def enqueue_files(
 ) -> list[Job]:
     """Queue one job per discovered file, skipping files already queued."""
     pending = _pending_paths(store)
+    dismissed = store.dismissed_attention_keys()
     jobs: list[Job] = []
     for discovered in files:
         key = discovered.origin_path or discovered.filename
         if key in pending:
             continue
+        if key in dismissed and not force:
+            continue  # a person already said this one is not wanted
         payload = discovered.payload()
         payload["force"] = force
         payload["overwrite_corrections"] = overwrite_corrections

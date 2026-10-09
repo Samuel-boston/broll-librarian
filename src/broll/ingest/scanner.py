@@ -20,6 +20,10 @@ VIDEO_SUFFIXES = {
 IMAGE_SUFFIXES = {
     ".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".tif", ".tiff", ".avif", ".bmp",
 }
+# Camera RAW is a photograph too. It is read through the preview inside it (see raw.py).
+from .raw import RAW_SUFFIXES  # noqa: E402
+
+IMAGE_SUFFIXES |= RAW_SUFFIXES
 MEDIA_SUFFIXES = VIDEO_SUFFIXES | IMAGE_SUFFIXES
 
 Origin = Literal["upload", "local", "drive"]
@@ -43,6 +47,11 @@ class DiscoveredFile:
     filename: str
     drive_file_id: str | None = None
     origin_path: str | None = None
+    # What Drive already says about the file, so a file that is too long or too big can be turned
+    # away before a single byte of it is downloaded.
+    size_bytes: int | None = None
+    duration_s: float | None = None
+    link: str | None = None
 
     def payload(self) -> dict:
         return {
@@ -51,6 +60,9 @@ class DiscoveredFile:
             "filename": self.filename,
             "drive_file_id": self.drive_file_id,
             "origin_path": self.origin_path,
+            "size_bytes": self.size_bytes,
+            "duration_s": self.duration_s,
+            "link": self.link,
         }
 
 
@@ -121,6 +133,9 @@ def scan_drive_folder(client, folder_id: str, recursive: bool = True) -> list[Di
                     filename=entry.name,
                     drive_file_id=entry.id,
                     origin_path=f"drive:{entry.id}",
+                    size_bytes=entry.size,
+                    duration_s=entry.duration_s,
+                    link=entry.web_view_link,
                 )
             )
     return sorted(found, key=lambda f: f.filename)

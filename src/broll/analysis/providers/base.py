@@ -16,6 +16,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from ..schema import AnalysisResult, ShotContext
+from ..segmentation import SegmentationResult, SegmentContext
 
 
 class ProviderError(RuntimeError):
@@ -70,6 +71,14 @@ class Pricing(BaseModel):
             + self.output_tokens / 1_000_000 * self.output_per_m
         )
 
+    def segment_cost(self, image_count: int) -> float:
+        """Looking through a clip: a short prompt, many small frames, a short answer."""
+        input_tokens = 900 + tokens_per_image_total(self, image_count)
+        return (
+            input_tokens / 1_000_000 * self.input_per_m
+            + 250 / 1_000_000 * self.output_per_m
+        )
+
     def text_cost(self, prompt_tokens: int, output_tokens: int | None = None) -> float:
         out = self.output_tokens if output_tokens is None else output_tokens
         return (
@@ -110,6 +119,19 @@ class VisionProvider(ABC):
 
     @abstractmethod
     def estimate_cost(self, frames: list[Path]) -> float: ...
+
+    async def segment(
+        self,
+        frames: list[Path],
+        times: list[float],
+        context: SegmentContext,
+        retry_error: str | None = None,
+    ) -> SegmentationResult:
+        """Split a stretch of a clip into usable / setup / dead segments. See segmentation.py."""
+        raise ProviderError(f"{self.name} cannot look through a clip for its usable parts yet")
+
+    def estimate_segment_cost(self, frame_count: int) -> float:
+        return 0.0
 
 
 class TextProvider(ABC):

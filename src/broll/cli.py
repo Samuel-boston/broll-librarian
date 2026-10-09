@@ -637,7 +637,7 @@ def reembed(
         for start in range(0, len(indexable), batch_size):
             batch = indexable[start:start + batch_size]
             texts = [store.recompute_search_text(s.id) for s in batch]
-            vectors = embedder.embed(texts)
+            vectors = embedder.embed_documents(texts)
             for shot, vector in zip(batch, vectors):
                 store.vectors.upsert(shot.id, vector)
             _echo(f"  embedded {min(start + batch_size, len(indexable))}/{len(indexable)}")
