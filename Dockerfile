@@ -10,7 +10,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN pip install --no-cache-dir ".[gemini,drive,shots,web]"
+RUN pip install --no-cache-dir ".[gemini,drive,shots,web,raw]"
 
 RUN useradd --create-home --uid 10001 broll && mkdir -p /data && chown broll /data
 COPY deploy/entrypoint.sh /entrypoint.sh

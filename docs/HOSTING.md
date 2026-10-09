@@ -130,3 +130,33 @@ Settings pages fail with a permission error.
 
 Deleting the whole library keeps a snapshot of the database in the `backups` folder first, and keeps any
 staged uploads, because one may be the only copy of a clip that has not reached Drive yet.
+
+
+## Files that need a decision
+
+A folder of footage always holds things that are not B-roll clips: a podcast recording, a camera left running
+at an event. Indexing one is slow, can fill the server's disk, and gives a handful of tags for two hours of
+video. So the library does not download or analyse a file that is:
+
+* **too long** - over `ingest.max_duration_s` (default 600 s, ten minutes), or
+* **too big** - over `ingest.max_file_gb` (default 8 GB).
+
+It decides from what Google Drive already reports, so nothing is downloaded to find out. Set a limit to 0 to
+turn it off. These files go on the **Needs attention** page with a link to open each one, and as shortcuts in
+a `_Needs Attention` folder in Drive. **Index anyway** lifts the length limit for that one file (up to
+`ingest.max_forced_duration_s`, default 3 hours) and the library then looks through it for the usable
+stretches. A file bigger than the server can hold at once still can't be forced through: the page says so.
+
+The same list holds files whose download stopped short (the half-file is deleted and the download tried
+again, never mistaken for the clip), files that can't be read, and files the model couldn't describe. A download
+never leaves less than `ingest.disk_headroom_gb` (default 6) of the disk free: a file that would is retried later.
+
+Camera RAW photos (.NEF, .CR2, .ARW, .DNG and others) are read through the full-size JPEG inside them. The RAW
+file is never changed.
+
+### Checking tag quality before filing anything
+
+Set `ingest.auto_organise: false` for the first run. Files are then indexed (tags, folders, search) but **not**
+renamed or moved in Drive. Look at the result (Library, Review, `broll audit-tags`), fix what is wrong, then
+file everything in one go with `broll organise` (or `broll organise --dry-run` to see what it would do). Turn
+`auto_organise` back on once the tags look right.

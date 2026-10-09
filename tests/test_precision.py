@@ -139,8 +139,8 @@ async def test_a_folder_that_is_not_the_clients_is_a_reason(workspace, tmp_path)
 def add_shot(store, name, **fields):
     source = store.insert_source(Source(
         id=new_id(), workspace_id=store.workspace_id, content_hash=name, original_filename=name, origin="local"))
-    shot = Shot(id=f"{source.id}-0", workspace_id=store.workspace_id, source_id=source.id,
-                status="indexed", **fields)
+    fields.setdefault("status", "indexed")
+    shot = Shot(id=f"{source.id}-0", workspace_id=store.workspace_id, source_id=source.id, **fields)
     store.insert_shot(shot)
     return shot.id
 
