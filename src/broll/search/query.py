@@ -58,7 +58,9 @@ VECTOR_OVERFETCH = 10
 CALIBRATION: dict[str, tuple[float, float]] = {
     # embedder name -> (floor, gap)
     "local": (0.25, 0.12),
-    "gemini": (0.62, 0.07),
+    # Measured with gemini-embedding-001 (768 dims, document/query task types): unrelated clips
+    # score 0.57 +/- 0.03, a clip that is about the query 0.66-0.79.
+    "gemini": (0.64, 0.08),
     "openai": (0.30, 0.10),
 }
 DEFAULT_CALIBRATION = (0.25, 0.12)
