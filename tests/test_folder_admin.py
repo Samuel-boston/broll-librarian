@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 from broll.cli import app
 from broll.config import load_workspace_config
 from broll.db.store import Store
-from broll.review import CorrectionError, add_folder, rename_folder, set_folder_note
+from broll.review import CorrectionError, add_folder, remove_folder, rename_folder, set_folder_note
 from tests.test_client_tree import tree_config
 from tests.test_precision import add_shot
 
@@ -93,3 +93,37 @@ def cli_workspace_with_tree(broll_home):
     ws.taxonomy = tree_config()
     ws.save()
     return ws
+
+
+def test_removing_a_folder_moves_its_clips_where_asked(tree, store):
+    a = add_shot(store, "a.mp4", caption="x", category="07_Cinematic & Mood/Reflective", status="indexed")
+    b = add_shot(store, "b.mp4", caption="y", category="02_Gym & Training",
+                 secondary_categories=["07_Cinematic & Mood/Reflective"])
+    done = remove_folder(tree, store, "07_Cinematic & Mood/Reflective", move_to="05_Travel & Adventure/Beach & Water")
+    assert done["clips"] == 2
+    assert store.get_shot(a).category == "05_Travel & Adventure/Beach & Water"
+    assert store.get_shot(a).status == "indexed"
+    assert store.get_shot(b).category == "02_Gym & Training"
+    assert store.get_shot(b).secondary_categories == ["05_Travel & Adventure/Beach & Water"]
+    assert "07_Cinematic & Mood/Reflective" not in dict(load_workspace_config(tree.id).taxonomy.category_leaves())
+
+
+def test_removing_a_folder_without_a_destination_flags_its_clips_for_a_person(tree, store):
+    a = add_shot(store, "a.mp4", caption="x", category="07_Cinematic & Mood/Reflective", status="indexed")
+    remove_folder(tree, store, "07_Cinematic & Mood/Reflective")
+    shot = store.get_shot(a)
+    assert shot.category is None and shot.status == "needs_review" and "category_unmatched" in shot.review_reasons
+
+
+def test_a_folder_with_folders_inside_it_cannot_be_removed_and_so_cannot_be_a_destination(tree, store):
+    with pytest.raises(CorrectionError, match="has folders inside"):
+        remove_folder(tree, store, "05_Travel & Adventure")
+    with pytest.raises(CorrectionError, match="not a folder clips can be filed in"):
+        remove_folder(tree, store, "07_Cinematic & Mood/Reflective", move_to="01_Nervous System Practices")
+    with pytest.raises(CorrectionError, match="no folder"):
+        remove_folder(tree, store, "Nope")
+
+
+def test_a_top_level_folder_can_be_removed(tree, store):
+    remove_folder(tree, store, "02_Gym & Training")
+    assert "02_Gym & Training" not in dict(load_workspace_config(tree.id).taxonomy.category_leaves())

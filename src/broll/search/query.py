@@ -255,6 +255,8 @@ class SearchEngine:
         self.embedder = embedder
         # How many near matches the last strict search held back.
         self.hidden_count = 0
+        # Whether the last search judged meaning against a measured floor (see _thresholds).
+        self.adaptive = False
         # In a client's library their name is on nearly every clip, so as a
         # search word it matches everything: "clip of Adam meditating" pulled
         # in "Adam yawns in bed". It is a filter, not a search term.
@@ -456,6 +458,7 @@ class SearchEngine:
         """
         known = CALIBRATION.get(getattr(self.embedder, "name", "local"))
         fixed_floor, fixed_gap = known or DEFAULT_CALIBRATION
+        self.adaptive = False
         sample_ids = self.store.sample_shot_ids(BACKGROUND_SAMPLE)
         if len(sample_ids) >= BACKGROUND_MIN:
             sims = sorted(self._similarities(query_vector, sample_ids).values())
@@ -467,6 +470,7 @@ class SearchEngine:
                 if known:
                     floor = min(floor, fixed_floor + FLOOR_HEADROOM)
                 gap = max(MIN_GAP, GAP_Z * spread)
+                self.adaptive = True
                 return floor, gap, floor - spread, gap * 1.5
         return fixed_floor, fixed_gap, fixed_floor - 0.05, fixed_gap + 0.06
 
@@ -506,7 +510,10 @@ class SearchEngine:
                 keep.add(sid)
             elif cov >= KEYWORD_PARTIAL and sim >= floor:
                 keep.add(sid)
-            elif best is not None and sim >= floor and sim >= best - gap:
+            elif best is not None and sim >= floor and (self.adaptive or sim >= best - gap):
+                # With a measured floor, everything above it is about the query, and a broad query
+                # ("speaking") has hundreds of such clips at every strength: all of them are kept, best
+                # first. Without one (a library too small to measure) only the best match's company is.
                 keep.add(sid)
             elif cov >= KEYWORD_PARTIAL or (
                 best is not None and sim >= near_floor and sim >= best - near_gap

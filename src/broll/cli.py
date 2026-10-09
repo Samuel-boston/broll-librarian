@@ -1916,6 +1916,28 @@ def folders_note(
     _echo(f"Updated the note on {path}.")
 
 
+@folders_app.command("remove")
+def folders_remove(
+    path: str = typer.Argument(...),
+    into: Optional[str] = typer.Option(None, "--into", help="File its clips in this folder instead."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+) -> None:
+    """Take a folder out of the tree. Its clips go to --into, or are flagged for review."""
+    from .review import remove_folder
+
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        try:
+            done = remove_folder(workspace_config, store, path, into)
+        except CorrectionError as exc:
+            _fail(str(exc))
+    finally:
+        store.close()
+    where = f"moved to {into}" if into else "left without a folder, flagged for review"
+    _echo(f"Removed {done['removed']}; {done['clips']} clip(s) {where}.")
+
+
 @folders_app.command("dismiss")
 def folders_dismiss(
     proposal_id: int = typer.Argument(...),

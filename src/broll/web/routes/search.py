@@ -25,6 +25,10 @@ from ..app import client_state, templates
 log = logging.getLogger(__name__)
 router = APIRouter()
 
+#: Results per page. "Show more" asks for another page's worth.
+PAGE = 48
+MAX_LIMIT = 960
+
 
 def _opt_float(value: str | None) -> float | None:
     """An untouched number input posts "", which must mean "no filter"."""
@@ -77,7 +81,8 @@ async def search_page(
     top_picks: bool = False,
     loose: bool = False,
     exact: bool = False,
-    limit: int = 48,
+    limit: int = PAGE,
+    view: str = "",
 ):
     state = client_state(request)
     config = state.config
@@ -95,7 +100,28 @@ async def search_page(
             featured_person=True if featured else None,
             top_pick=True if top_picks else None,
         )
-        results = engine.search(q, filters, limit, strict=not loose, correct=not exact)
+        limit = max(PAGE, min(limit, MAX_LIMIT))
+        # Videos and photos are always two separate lists, each with its own count, even when one of them is
+        # empty: a photo and a clip are not the same kind of thing to cut with.
+        searched: dict[str, list] = {}
+        hidden = 0
+        for kind in ("video", "image"):
+            wanted = limit if view == kind else PAGE
+            kind_filters = filters.model_copy(update={"media_kind": [kind]})
+            searched[kind] = engine.search(q, kind_filters, wanted, strict=not loose, correct=not exact)
+            hidden += engine.hidden_count
+        if view not in searched:
+            view = "video" if searched["video"] or not searched["image"] else "image"
+            if view == "image" and limit != PAGE:
+                searched["image"] = engine.search(
+                    q, filters.model_copy(update={"media_kind": ["image"]}), limit,
+                    strict=not loose, correct=not exact)
+        results = searched[view]
+        tabs = [
+            {"key": kind, "label": label, "count": len(searched[kind]),
+             "more": len(searched[kind]) >= (limit if view == kind else PAGE)}
+            for kind, label in (("video", "Videos"), ("image", "Photos"))
+        ]
         counts = store.facet_counts()
         context = {
             "request": request,
@@ -125,7 +151,12 @@ async def search_page(
                 "usable_for": _available(list(USABLE_FOR), counts, "usable_for"),
             },
             "total_shots": store.count_shots(),
-            "hidden_count": engine.hidden_count,
+            "hidden_count": hidden,
+            "tabs": tabs,
+            "view": view,
+            "limit": limit,
+            "page": PAGE,
+            "can_show_more": len(results) >= limit and limit < MAX_LIMIT,
             "loose": loose,
             "corrections": engine.corrections,
             "corrected_query": engine.corrected_query,
@@ -133,7 +164,7 @@ async def search_page(
     finally:
         store.close()
 
-    template = "partials/results.html" if request.headers.get("hx-request") else "search.html"
+    template = "partials/search_results.html" if request.headers.get("hx-request") else "search.html"
     return templates.TemplateResponse(request=request, name=template, context=context)
 
 

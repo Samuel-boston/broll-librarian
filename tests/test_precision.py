@@ -7,6 +7,7 @@ camera-setting words ("static", "wide", "slow") sitting in the search text of mo
 from __future__ import annotations
 
 import hashlib
+import random
 import subprocess
 import math
 import re
@@ -483,3 +484,44 @@ async def test_the_frames_for_a_shot_follow_its_best_part(workspace, tmp_path):
     frames = analyzer.extract_timed(clip, ctx, tmp_path / "f")
     inside = [f for f in frames if 12 <= f.t <= 22]
     assert len(frames) == 8 and len(inside) == 5
+
+
+class QueryVector(HashEmbedder):
+    """An embedder whose query always lands on one fixed direction."""
+
+    name = "gemini"
+
+    def __init__(self, query):
+        super().__init__()
+        self._query = query
+
+    def embed_query(self, text):
+        return list(self._query)
+
+
+def test_a_broad_query_shows_every_clip_about_it_not_just_the_best_ones_company(store):
+    """'speaking' in a 5,000-clip library: every presenting shot, not only those near the single best."""
+    rng = random.Random(5)
+    dims = 32
+    query = [1.0] + [0.0] * (dims - 1)
+    on_topic = []
+    for i in range(60):                                   # 60 clips about it, from a weak match to a strong one
+        on_topic.append(_shot_with_similarity(store, f"on{i}", query, rng.uniform(0.74, 0.92), rng))
+    off_topic = [_shot_with_similarity(store, f"off{i}", query, rng.gauss(0.57, 0.03), rng) for i in range(300)]
+    engine = SearchEngine(store, QueryVector(query))
+    results = engine.search("speaking", limit=200)
+    found = {r.shot.id for r in results}
+    assert engine.adaptive
+    assert len(found & set(on_topic)) == 60, "every clip about the query is shown"
+    assert len(found & set(off_topic)) <= 3, "and almost nothing that is not"
+    assert [r.shot.id for r in results[:5]] != [], "best first"
+
+
+def test_a_small_library_still_keeps_only_the_best_matchs_company(store):
+    rng = random.Random(6)
+    query = [1.0] + [0.0] * 31
+    near = _shot_with_similarity(store, "near", query, 0.80, rng)
+    far = _shot_with_similarity(store, "far", query, 0.70, rng)       # above the floor, but well behind the best
+    engine = SearchEngine(store, QueryVector(query))
+    found = {r.shot.id for r in engine.search("anything", limit=10)}
+    assert not engine.adaptive and near in found and far not in found

@@ -30,7 +30,7 @@ from .schema import (
     TimeOfDay,
 )
 
-PROMPT_VERSION = "2.1.0"
+PROMPT_VERSION = "2.2.0"
 
 SYSTEM_PROMPT = """\
 You are a video editor's assistant cataloguing raw B-roll footage. You are shown still \
@@ -63,7 +63,10 @@ lowercase, singular. Each tag must be one of your observations or a common synon
 ("sofa" for "couch", "ocean" for "sea"). Never put in tags: feelings, ideas, themes, what \
 the clip "represents", camera or shot terms, or anything you cannot see. A man sitting \
 still on a beach is tagged man, sitting, beach, sand, ocean, sunrise - not "mindfulness", \
-"wellness" or "breathwork". An activity is visible only when the pose, equipment or \
+"wellness" or "breathwork". Do include what the body and face are doing and where the gaze \
+goes, when you can see it - staring, gazing out, head in hands, slumped, hand on chin, \
+rubbing the face, pacing, walking alone, sitting on the edge of a bed - because that is what \
+people search for. An activity is visible only when the pose, equipment or \
 setting makes it unmistakable: eyes closed in a meditation posture is meditation; a \
 person who is merely sitting is not.
 6. themes - only from the client's THEMES list, when one is given, copied exactly. Include \

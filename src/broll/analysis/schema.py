@@ -215,6 +215,7 @@ ACTIONS: tuple[str, ...] = (
     "collaborating", "brainstorming", "shaking hands", "pointing", "gesturing",
     "watching", "observing", "searching", "opening", "closing", "carrying",
     "throwing", "catching", "falling", "flying", "floating", "flowing",
+    "staring", "gazing", "head in hands", "slumped", "rubbing face", "pacing",
     "growing", "burning", "glowing", "raining", "snowing", "rising", "setting",
     "none",
 )

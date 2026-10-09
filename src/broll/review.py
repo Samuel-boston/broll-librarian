@@ -382,3 +382,60 @@ def set_folder_note(config: WorkspaceConfig, path: str, note: str) -> None:
         raise CorrectionError(f"There is no folder {path!r}.")
     node.description = note.strip()
     config.save()
+
+
+def remove_folder(
+    config: WorkspaceConfig,
+    store: Store,
+    path: str,
+    move_to: str | None = None,
+) -> dict[str, Any]:
+    """Take a folder out of the client's tree.
+
+    Clips filed in it go to `move_to` when one is given. Otherwise they are left without a folder and
+    flagged for review, so a person (or `broll reanalyse`) files them again: a clip is never left
+    pointing at a folder that no longer exists. Nothing is deleted in Drive; the next `broll organise`
+    re-files the clips, and the old folder is left for a person to delete.
+
+    Refuses a folder with folders inside it: remove or move those first.
+    """
+    node = config.taxonomy.find_node(path)
+    if node is None:
+        raise CorrectionError(f"There is no folder {path!r}.")
+    if node.children:
+        raise CorrectionError(f"{path!r} has folders inside it. Remove those first.")
+    if move_to is not None:
+        target = config.taxonomy.find_node(move_to)
+        if target is None or not target.accepts_clips() or move_to == path:
+            raise CorrectionError(f"{move_to!r} is not a folder clips can be filed in.")
+
+    parent_path, _, name = path.rpartition("/")
+    siblings = config.taxonomy.find_node(parent_path).children if parent_path else config.taxonomy.tree
+    siblings[:] = [n for n in siblings if n.name != name]
+    config.save()
+
+    moved = 0
+    for row in store.conn.execute(
+        "SELECT id, category, secondary_categories_json FROM shots WHERE workspace_id = ?",
+        (store.workspace_id,),
+    ).fetchall():
+        secondary = json.loads(row["secondary_categories_json"] or "[]")
+        if row["category"] != path and path not in secondary:
+            continue
+        shot = store.get_shot(row["id"])
+        secondary = [c for c in secondary if c != path]
+        if row["category"] == path:
+            shot.category = move_to
+            if move_to is None:
+                shot.review_reasons = [*shot.review_reasons, "category_unmatched"]
+                shot.status = "needs_review"
+        elif move_to and move_to != shot.category and move_to not in secondary and len(secondary) < 2:
+            secondary.append(move_to)
+        shot.secondary_categories = secondary
+        store.update_shot(shot)
+        store.recompute_source_status(shot.source_id)
+        moved += 1
+    for proposal in store.list_folder_proposals("open"):
+        if _under(proposal["path"], path):
+            store.set_folder_proposal_status(proposal["id"], "dismissed")
+    return {"removed": path, "clips": moved, "moved_to": move_to}
