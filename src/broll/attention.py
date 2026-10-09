@@ -94,6 +94,8 @@ def flag_file(
 def classify_failure(error: str) -> str:
     """Which list a permanently failed file belongs on, from its last error."""
     lowered = (error or "").lower()
+    if "free disk" in lowered:
+        return "too_big"
     if "download" in lowered and ("stopped" in lowered or "empty" in lowered or "incomplete" in lowered):
         return "download_incomplete"
     if any(m in lowered for m in ("ffprobe could not read", "contains no image or video", "could not decode",

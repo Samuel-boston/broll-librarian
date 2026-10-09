@@ -230,6 +230,7 @@ def test_failures_are_sorted_into_the_right_list():
     assert attention.classify_failure("x: the download stopped at 5 of 9 bytes") == "download_incomplete"
     assert attention.classify_failure("ffprobe could not read a.mp4: Invalid data") == "unreadable"
     assert attention.classify_failure("gemini returned no structured output") == "analysis_failed"
+    assert attention.classify_failure("Not enough free disk to download this file: it needs 9 GB") == "too_big"
 
 
 def test_flagging_twice_keeps_one_row_and_dismissal_sticks(store):
