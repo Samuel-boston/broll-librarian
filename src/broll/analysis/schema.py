@@ -363,9 +363,23 @@ class AnalysisResult(BaseModel):
             "no interpretation, no feelings, no themes."
         ),
     )
-    caption: str = Field(description="One vivid sentence: what an editor would say out loud.")
+    # Before the caption on purpose: the caption has to agree with it, not the other way round.
+    action: str | None = Field(
+        default=None,
+        description=(
+            "The main thing the person visibly does (or shows) for most of the shot, or in its best "
+            "part: one term. Not everything that happens in it. An object in frame is not an action: "
+            "a laptop at the edge of the picture is not 'working', a mug on a table is not 'drinking'. "
+            "A person who is mostly still, thinking or visibly feeling something: that is the action."
+        ),
+    )
+    caption: str = Field(
+        description=(
+            "One vivid sentence: what an editor would say out loud. It leads with the main action. "
+            "A secondary action only if it fills a real share of the shot; never one you did not see."
+        )
+    )
     subjects: list[str] = Field(default_factory=list, description="What is in frame.")
-    action: str | None = Field(default=None, description="The primary verb.")
     setting: str = Field(description="Where it is.")
     setting_detail: str | None = Field(default=None, description="Free text, e.g. 'rocky coastline'.")
     shot_type: ShotType
@@ -594,6 +608,9 @@ class ShotContext(BaseModel):
     shot_count: int = 1
     start_s: float = 0.0
     end_s: float | None = None
+    # The strongest stretch inside this shot, when it has been found (seconds in the file).
+    best_start_s: float | None = None
+    best_end_s: float | None = None
     # Workspace context, filled in by the Analyzer, so every provider sends the
     # same prompt without having to know what a workspace is.
     client_context: str = ""
@@ -626,6 +643,13 @@ class ShotContext(BaseModel):
             + ", ".join(f"{t:.1f}" for t in self.frame_times)
             if self.frame_times else ""
         )
+        if self.best_start_s is not None and self.best_end_s is not None and self.frame_times:
+            times += (
+                f"\nThe strongest stretch of this shot, the part an editor would cut first, runs from "
+                f"{self.best_start_s:.1f}s to {self.best_end_s:.1f}s. Most of the frames come from it. "
+                "Judge the shot by what happens there and for most of the time: something that happens "
+                "for a few seconds only is incidental."
+            )
         return (
             f"Original filename: {self.source_filename}\n"
             f"Shot duration: {self.duration_s:.2f}s\n"

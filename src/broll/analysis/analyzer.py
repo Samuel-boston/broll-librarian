@@ -17,7 +17,14 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from ..config import WorkspaceConfig
-from ..ingest.frames import Frame, extract_frames_timed, extract_still, frame_count_for, wants_fast_seek
+from ..ingest.frames import (
+    Frame,
+    extract_frames_timed,
+    extract_still,
+    frame_count_for,
+    times_weighted_to,
+    wants_fast_seek,
+)
 from .limiter import RateLimiter
 from .prompt import PROMPT_VERSION, render_client_context
 from .providers.base import ProviderError, TransientProviderError, VisionProvider
@@ -204,18 +211,25 @@ class Analyzer:
             )
             return [Frame(p, 0.0) for p in paths]
         ingest = self.config.ingest
+        count = frame_count_for(
+            context.duration_s, ingest.frames_per_shot, ingest.max_frames_per_shot, ingest.frame_every_s,
+        )
+        best = (
+            (context.best_start_s, context.best_end_s)
+            if context.best_start_s is not None and context.best_end_s is not None else None
+        )
         return extract_frames_timed(
             video,
             work_dir,
             start_s=context.start_s,
             duration_s=context.duration_s,
-            count=frame_count_for(
-                context.duration_s, ingest.frames_per_shot, ingest.max_frames_per_shot,
-                ingest.frame_every_s,
-            ),
+            count=count,
             max_edge=ingest.frame_max_edge,
             prefix=f"shot{context.shot_index:03d}",
             fast=wants_fast_seek(context.width, context.height),
+            # Most of the frames from the part an editor would cut first, the rest from either side.
+            times=times_weighted_to(context.start_s, context.end_s or context.start_s + context.duration_s,
+                                    count, best),
         )
 
     def extract(self, video, context: ShotContext, work_dir: Path) -> list[Path]:

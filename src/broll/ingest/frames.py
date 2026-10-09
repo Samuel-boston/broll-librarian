@@ -160,6 +160,7 @@ def extract_frames_timed(
     prefix: str = "frame",
     centred: bool = False,
     fast: bool = False,
+    times: list[float] | None = None,
 ) -> list[Frame]:
     """Extract ``count`` usable frames spread across a stretch, each with where it came from.
 
@@ -168,6 +169,7 @@ def extract_frames_timed(
     kept rather than dropping the position entirely - an all-dark clip should
     still be analysed and flagged, not silently skipped.
 
+    ``times`` takes frames at those moments (seconds in the file) instead of spreading `count` of them.
     ``fast`` reads only keyframes (see `_extract_one`): for sources too big to decode frame by frame.
     ``centred`` puts each frame in the middle of an equal slice (so the first and last frames sit
     close to the two ends), which is what finding a setup at the start needs. The default keeps the
@@ -175,7 +177,11 @@ def extract_frames_timed(
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     duration = duration_s or 0.0
-    positions = _centred_positions(count) if centred else _positions(count)
+    if times and duration:
+        # Exact moments asked for: the fractions are where each falls in the stretch.
+        positions = tuple(min(1.0, max(0.0, (t - start_s) / duration)) for t in times)
+    else:
+        positions = _centred_positions(count) if centred else _positions(count)
     kept: list[Frame] = []
     seek = duration > 0
 
@@ -289,3 +295,35 @@ FAST_SEEK_EDGE = 2500
 
 def wants_fast_seek(width: int, height: int) -> bool:
     return max(width or 0, height or 0) >= FAST_SEEK_EDGE
+
+
+def times_weighted_to(
+    start_s: float, end_s: float, count: int, best: tuple[float, float] | None, share: float = 0.6
+) -> list[float] | None:
+    """Moments to take frames at, with most of them inside the shot's strongest stretch.
+
+    Describing a 34-second shot from eight evenly spaced frames lets a few seconds at the edges (someone
+    glancing at a laptop) weigh as much as the ten seconds that are the shot. With the best part known,
+    about `share` of the frames come from it, spread evenly, and the rest from before and after it, so
+    the description follows what an editor would actually use. None when there is no best part, or it
+    is most of the shot anyway.
+    """
+    duration = end_s - start_s
+    if not best or duration <= 0 or count < 4:
+        return None
+    lo, hi = max(start_s, best[0]), min(end_s, best[1])
+    if hi - lo < 1.0 or (hi - lo) >= 0.8 * duration:
+        return None
+    inside = max(2, round(count * share))
+    outside = count - inside
+    picked = [lo + (hi - lo) * (i + 0.5) / inside for i in range(inside)]
+    before, after = lo - start_s, end_s - hi
+    if outside:
+        # Split what is left between the two sides in proportion to how much shot there is on each.
+        total = before + after
+        n_before = round(outside * before / total) if total > 0 else 0
+        n_before = min(max(n_before, 1 if before > 0.5 else 0), outside)
+        n_after = outside - n_before
+        picked += [start_s + before * (i + 0.5) / n_before for i in range(n_before)] if n_before and before > 0 else []
+        picked += [hi + after * (i + 0.5) / n_after for i in range(n_after)] if n_after and after > 0 else []
+    return sorted(picked)

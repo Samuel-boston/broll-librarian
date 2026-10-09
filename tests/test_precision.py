@@ -431,3 +431,55 @@ def test_fast_seek_still_produces_the_frames_asked_for(tmp_path):
     fast = extract_frames_timed(clip, tmp_path / "b", 0, 12, 4, 320, "f", centred=True, fast=True)
     assert len(exact) == len(fast) == 4
     assert all(f.path.stat().st_size > 0 for f in fast)
+
+
+# -- say what the shot is about, not everything in it -----------------------------------------------
+
+
+def test_most_of_the_frames_come_from_the_strongest_stretch():
+    from broll.ingest.frames import times_weighted_to
+
+    times = times_weighted_to(0, 34, 8, (12, 22))
+    assert len(times) == 8 and times == sorted(times)
+    assert sum(1 for t in times if 12 <= t <= 22) == 5, "about 60% from the best part"
+    assert any(t < 12 for t in times) and any(t > 22 for t in times), "and some from either side"
+    assert all(0 <= t <= 34 for t in times)
+
+
+def test_an_even_spread_when_the_best_part_is_most_of_the_shot_or_there_are_few_frames():
+    from broll.ingest.frames import times_weighted_to
+
+    assert times_weighted_to(0, 34, 8, (2, 30)) is None
+    assert times_weighted_to(0, 34, 3, (12, 22)) is None
+    assert times_weighted_to(0, 34, 8, None) is None
+
+
+def test_the_best_part_is_told_to_the_model():
+    ctx = ShotContext(source_filename="a.mp4", duration_s=34, width=1, height=1, frame_times=[3.0, 13.0, 17.0],
+                      best_start_s=12.0, best_end_s=22.0)
+    text = ctx.describe()
+    assert "12.0s to 22.0s" in text and "something that happens for a few seconds only is incidental" in text
+    plain = ShotContext(source_filename="a.mp4", duration_s=34, width=1, height=1, frame_times=[3.0, 13.0])
+    assert "strongest stretch" not in plain.describe()
+
+
+def test_the_action_is_decided_before_the_caption_and_the_caption_follows_it():
+    from broll.analysis.prompt import CATEGORY_HEADER, SYSTEM_PROMPT
+
+    fields = list(AnalysisResult.model_fields)
+    assert fields.index("observations") < fields.index("action") < fields.index("caption") < fields.index("category")
+    assert "a laptop at the edge of the frame is not working" in SYSTEM_PROMPT
+    assert "An object in frame never decides the folder" in CATEGORY_HEADER
+
+
+async def test_the_frames_for_a_shot_follow_its_best_part(workspace, tmp_path):
+    clip = tmp_path / "c.mp4"
+    subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "lavfi", "-i",
+                    "testsrc2=size=320x240:rate=15:duration=34", "-pix_fmt", "yuv420p", "-y", str(clip)], check=True)
+    analyzer = Analyzer(workspace, provider=None) if False else Analyzer(workspace, provider=__import__(
+        "broll.analysis.providers.mock", fromlist=["MockVisionProvider"]).MockVisionProvider())
+    ctx = ShotContext(source_filename="c.mp4", duration_s=34, width=320, height=240, start_s=0, end_s=34,
+                      best_start_s=12.0, best_end_s=22.0)
+    frames = analyzer.extract_timed(clip, ctx, tmp_path / "f")
+    inside = [f for f in frames if 12 <= f.t <= 22]
+    assert len(frames) == 8 and len(inside) == 5

@@ -317,6 +317,8 @@ class IngestPipeline:
                 shot_count=len(usable),
                 start_s=seg.start_s,
                 end_s=seg.end_s,
+                best_start_s=seg.best_start_s,
+                best_end_s=seg.best_end_s,
             )
 
             frames: list[Frame] = await asyncio.to_thread(
