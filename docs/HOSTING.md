@@ -121,3 +121,12 @@ Leave `BROLL_ACCESS_PASSWORD` out so people don't log in twice. Start it with
 * The switch to Gemini embeddings is made when the library is created. To move an existing library from
   local embeddings to Gemini, run `broll reembed` after changing the setting; the sizes differ, so the
   vector index is rebuilt.
+
+## Editing files inside the data volume
+
+The container runs as user 10001, not root. If you edit a file in the volume by hand (for example
+`config.yaml`), run `chown -R 10001:10001` on the volume folder afterwards. A root-owned file makes the
+Settings pages fail with a permission error.
+
+Deleting the whole library keeps a snapshot of the database in the `backups` folder first, and keeps any
+staged uploads, because one may be the only copy of a clip that has not reached Drive yet.

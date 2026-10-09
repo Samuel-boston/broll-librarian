@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .backup import backup_database
 from .config import WorkspaceConfig
 from .db.models import Job
 from .db.store import Store
@@ -30,6 +31,8 @@ class RemoveResult:
     #: Set when the library was cleared but the dashboard couldn't be told; the next sync fixes a single file.
     dashboard_error: str | None = None
     filename: str | None = None
+    #: Staged uploads left in place on purpose (see clear_library).
+    staged_kept: int = 0
 
 
 @dataclass
@@ -88,16 +91,21 @@ def running_jobs(store: Store) -> int:
 
 
 def clear_library(config: WorkspaceConfig, store: Store) -> RemoveResult:
-    """Empty the library: every file, shot, job, vector, thumbnail and staged upload. Drive is untouched."""
+    """Empty the library: every file, shot, job, vector and thumbnail. Drive is untouched.
+
+    Staged uploads are kept: one may be the only copy of a clip that has not reached Drive yet.
+    The database is snapshotted first, so a mistaken delete can be undone from the backups folder.
+    """
+    try:
+        backup_database(config)
+    except Exception as exc:  # a failed snapshot must not make the delete impossible, but it is logged
+        log.warning("no snapshot before clearing the library: %s", exc)
     counts = store.clear_library()
     result = RemoveResult(sources=counts["sources"], shots=counts["shots"], jobs=counts["jobs"])
     for thumbnail in config.thumbnails_dir.glob("*.jpg"):
         thumbnail.unlink(missing_ok=True)
         result.thumbnails += 1
-    for staged in config.staging_dir.glob("*"):
-        if staged.is_file():
-            staged.unlink(missing_ok=True)
-            result.staged += 1
+    result.staged_kept = sum(1 for staged in config.staging_dir.glob("*") if staged.is_file())
     _tell_dashboard(config, None, result)
     return result
 

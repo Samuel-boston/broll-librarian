@@ -359,7 +359,7 @@ def create_studio_app(configs: list[WorkspaceConfig], run_worker: bool = True,
         for candidate in (active, *(s.config for s in studio.clients.values())):
             path = candidate.thumbnails_dir / name
             if path.is_file():
-                return FileResponse(path, headers={"Cache-Control": "public, max-age=86400"})
+                return FileResponse(path, headers={"Cache-Control": "private, max-age=86400"})
         return Response(status_code=404)
 
     from .routes import (

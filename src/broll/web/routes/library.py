@@ -7,6 +7,7 @@ not six arbitrary thumbnails.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from fastapi import APIRouter, HTTPException, Request
@@ -131,11 +132,16 @@ def _alert(text: str) -> Response:
 async def delete_source(request: Request, source_id: str):
     """Remove one file, and every shot from it, from the library. Drive is not touched."""
     state = client_state(request)
-    store = state.store()
-    try:
-        result = remove_source(state.config, store, source_id)
-    finally:
-        store.close()
+
+    def work():
+        # The database connection belongs to one thread, so it is opened where it is used.
+        store = state.store()
+        try:
+            return remove_source(state.config, store, source_id)
+        finally:
+            store.close()
+
+    result = await asyncio.to_thread(work)
     if result is None:
         raise HTTPException(status_code=404, detail="That file is no longer in the library.")
     headers = {}
@@ -151,13 +157,19 @@ async def delete_everything(request: Request):
     if request.headers.get("hx-prompt", "").strip() != "DELETE":
         return _alert("Nothing was deleted. You have to type DELETE exactly.")
     state = client_state(request)
-    store = state.store()
-    try:
-        if running_jobs(store):
-            return _alert("A file is being indexed right now. Let it finish, or clear the queue first, then try again.")
-        result = clear_library(state.config, store)
-    finally:
-        store.close()
+
+    def work():
+        store = state.store()
+        try:
+            if running_jobs(store):
+                return None
+            return clear_library(state.config, store)
+        finally:
+            store.close()
+
+    result = await asyncio.to_thread(work)
+    if result is None:
+        return _alert("A file is being indexed right now. Let it finish, or clear the queue first, then try again.")
     note = f" The dashboard wasn't updated: {result.dashboard_error}" if result.dashboard_error else ""
     return Response(
         status_code=200,

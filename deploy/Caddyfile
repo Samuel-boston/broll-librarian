@@ -5,6 +5,13 @@
     request_body {
         max_size 20GB
     }
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "same-origin"
+        -Server
+    }
     reverse_proxy librarian:8000 {
         flush_interval -1
     }

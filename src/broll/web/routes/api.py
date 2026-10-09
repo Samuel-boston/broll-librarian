@@ -24,6 +24,7 @@ served, which is the normal case for an agent on the same machine.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import os
 import time
 from collections import Counter
@@ -62,7 +63,7 @@ def _authorise(request: Request) -> None:
         header = request.headers.get("authorization", "")
         supplied = header[7:].strip() if header.lower().startswith("bearer ") else ""
         supplied = supplied or request.headers.get("x-broll-token", "").strip()
-        if supplied != token:
+        if not hmac.compare_digest(supplied.encode(), token.encode()):
             raise HTTPException(status_code=401, detail="Bad or missing API token.")
         return
     host = request.client.host if request.client else ""

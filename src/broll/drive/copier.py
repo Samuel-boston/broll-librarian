@@ -103,8 +103,10 @@ def _load_state(path: Path, source_id: str) -> dict:
         all_state = json.loads(path.read_text())
         state = all_state.get(source_id)
         if isinstance(state, dict) and isinstance(state.get("files"), dict) and isinstance(state.get("folders"), dict):
+            dest_root = state.get("dest_root")
+            state["dest_root"] = dest_root if isinstance(dest_root, str) and dest_root else None
             return state
-    except (OSError, ValueError):
+    except (OSError, ValueError, AttributeError):
         pass
     return {"dest_root": None, "folders": {}, "files": {}}
 

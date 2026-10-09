@@ -53,7 +53,7 @@ def valid_token(pw: str, token: str | None, now: float | None = None) -> bool:
     if not token or "." not in token:
         return False
     expires, _, signature = token.partition(".")
-    if not expires.isdigit() or int(expires) < (now if now is not None else time.time()):
+    if not (expires.isascii() and expires.isdigit()) or int(expires) < (now if now is not None else time.time()):
         return False
     expected = hmac.new(_key(pw), expires.encode(), hashlib.sha256).hexdigest()
     return hmac.compare_digest(signature, expected)
@@ -67,8 +67,10 @@ def safe_next(target: str | None) -> str:
 
 
 def _client(request: Request) -> str:
-    forwarded = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "")
-    return (forwarded.split(",")[0].strip() or (request.client.host if request.client else "?"))[:64]
+    # The reverse proxy appends the address it saw as the LAST entry. Earlier entries are whatever the
+    # caller sent, so trusting them would let anyone dodge the limit by changing a header.
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[-1].strip()
+    return (forwarded or (request.client.host if request.client else "?"))[:64]
 
 
 def _recent(key: str, now: float) -> list[float]:

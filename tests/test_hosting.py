@@ -315,3 +315,25 @@ def test_init_with_a_gemini_embedder_sizes_the_vector_table_to_match(broll_home)
 def test_init_rejects_an_unknown_embedder(broll_home):
     result = runner.invoke(cli.app, ["init", "--name", "X", "--provider", "mock", "--embedder", "magic"])
     assert result.exit_code != 0 and "Unknown embedder" in result.output
+
+
+def test_the_login_throttle_trusts_only_the_address_the_proxy_appended():
+    def request(forwarded):
+        return SimpleNamespace(headers={"x-forwarded-for": forwarded}, client=SimpleNamespace(host="172.18.0.2"))
+
+    assert access._client(request("1.1.1.1, 9.9.9.9")) == access._client(request("2.2.2.2, 9.9.9.9")) == "9.9.9.9"
+
+
+def test_a_cookie_with_odd_digits_is_rejected_not_a_crash():
+    assert access.valid_token("pw", "²³.abc") is False
+    assert access.valid_token("pw", "٣٣.abc") is False
+
+
+def test_the_entrypoint_refuses_a_public_domain_without_a_password():
+    import subprocess
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[1] / "deploy" / "entrypoint.sh"
+    done = subprocess.run(["sh", str(script)], env={"PATH": "/usr/bin:/bin", "BROLL_DOMAIN": "example.com"},
+                          capture_output=True, text=True)
+    assert done.returncode == 1 and "BROLL_ACCESS_PASSWORD" in done.stderr

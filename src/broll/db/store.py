@@ -887,7 +887,9 @@ class Store:
             if not owner_host or not pid.isdigit():
                 orphaned.append(row["id"])  # unowned: a pre-v4 row or a hard kill
             elif owner_host == host:
-                if not _pid_alive(int(pid)):
+                # A job claimed by our own pid is left over from a previous run: this worker is only
+                # starting now. In a container restart the new process often reuses the old pid.
+                if int(pid) == os.getpid() or not _pid_alive(int(pid)):
                     orphaned.append(row["id"])
             elif self.conn.execute(
                 "SELECT ? < datetime('now', '-2 hours')", (row["started_at"],)

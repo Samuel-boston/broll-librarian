@@ -84,3 +84,12 @@ async def test_a_failed_reanalysis_leaves_the_source_status_consistent(workspace
 
     # Its shot is still the good, indexed one from the first run.
     assert store.get_source(first.source_id).status == "indexed"
+
+
+def test_a_job_claimed_by_our_own_pid_is_left_over_from_a_previous_run(store):
+    """In a container restart the new process often reuses the old pid, so the old job looks alive."""
+    job = store.enqueue("index_source", {"filename": "a.mp4"})
+    store.claim_job(worker_id=f"{socket.gethostname()}:{os.getpid()}")
+
+    assert store.reset_stale_jobs() == 1
+    assert store.get_job(job.id).status == "queued"

@@ -2,6 +2,13 @@
 # Create the library on first start, then run the web app and the ingest worker.
 set -eu
 
+# On a public domain with no login in front (Cloudflare Access), the shared password is the only lock.
+# Refuse to start without one rather than serve the library to anyone who finds the address.
+if [ -n "${BROLL_DOMAIN:-}" ] && [ -z "${BROLL_ACCESS_PASSWORD:-}" ] && [ "${BROLL_NO_PASSWORD_OK:-}" != "1" ]; then
+    echo "BROLL_DOMAIN is set but BROLL_ACCESS_PASSWORD is empty. Set a password in .env (or BROLL_NO_PASSWORD_OK=1 if a login sits in front)." >&2
+    exit 1
+fi
+
 WORKSPACE="${BROLL_WORKSPACE:-library}"
 CONFIG="${BROLL_HOME:-/data}/workspaces/${WORKSPACE}/config.yaml"
 

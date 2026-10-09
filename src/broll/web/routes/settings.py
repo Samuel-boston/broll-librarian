@@ -120,6 +120,13 @@ async def save_dashboard(request: Request, supabase_url: str = Form(""), service
             request=request, name="partials/settings_form.html",
             context=_context(request, message="The Project URL must start with https://."),
         )
+    host = parsed.hostname or ""
+    if url and not local and not (host.endswith(".supabase.co") or os.environ.get("BROLL_ALLOW_ANY_SUPABASE_HOST") == "1"):
+        # The server sends the service key to this address, so it can't be pointed at any host it can reach.
+        return templates.TemplateResponse(
+            request=request, name="partials/settings_form.html",
+            context=_context(request, message="The Project URL should look like https://xxxx.supabase.co."),
+        )
     if not url or not key:
         return templates.TemplateResponse(
             request=request, name="partials/settings_form.html",

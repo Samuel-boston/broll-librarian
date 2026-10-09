@@ -5,6 +5,8 @@ Everything is local: nothing in Drive is ever touched. The dashboard's copy is k
 
 from __future__ import annotations
 
+from broll.backup import list_backups
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -168,10 +170,12 @@ def test_clear_library_empties_everything_and_leaves_no_files(store, workspace):
     result = clear_library(workspace, store)
 
     assert result.sources == 2 and result.shots == 2 and result.jobs == 1
-    assert result.thumbnails == 2 and result.staged == 1
+    assert result.thumbnails == 2 and result.staged_kept == 1
     assert store.list_sources() == [] and store.count_shots() == 0 and store.vectors.count() == 0
     assert queue_stats(store).total == 0
-    assert not list(workspace.thumbnails_dir.glob("*.jpg")) and not list(workspace.staging_dir.glob("*"))
+    assert not list(workspace.thumbnails_dir.glob("*.jpg"))
+    assert (workspace.staging_dir / "left.mp4").exists(), "a staged upload may be the only copy"
+    assert list_backups(workspace), "the library is snapshotted before it is cleared"
 
 
 def test_running_jobs_reports_files_being_indexed(store):

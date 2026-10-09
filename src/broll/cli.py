@@ -1465,8 +1465,10 @@ def reset(
 
     _echo(
         f"Cleared {result.sources} source(s), {result.shots} shot(s), "
-        f"{result.jobs} job(s), {result.thumbnails} thumbnail(s), {result.staged} staged file(s)."
+        f"{result.jobs} job(s), {result.thumbnails} thumbnail(s)."
     )
+    if result.staged_kept:
+        _echo(f"Kept {result.staged_kept} staged upload(s): they may be the only copy. Delete them by hand if you are sure.")
     if result.dashboard_removed:
         _echo(f"Removed {result.dashboard_removed} shot(s) from the dashboard.")
     if result.dashboard_error:
