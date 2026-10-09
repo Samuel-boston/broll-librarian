@@ -126,8 +126,8 @@ def test_a_dry_run_says_what_would_be_left_for_a_person(cli_workspace, monkeypat
                        origin_path="drive:b", size_bytes=4_000_000),
         DiscoveredFile(origin="drive", path=None, filename="podcast.mp4", drive_file_id="c",
                        origin_path="drive:c", size_bytes=30 * GB, duration_s=5400),
-        DiscoveredFile(origin="drive", path=None, filename="B CAM.MP4", drive_file_id="d",
-                       origin_path="drive:d", size_bytes=105 * GB),
+        DiscoveredFile(origin="local", path=None, filename="B CAM.MP4", origin_path="/footage/B CAM.MP4",
+                       size_bytes=105 * GB),  # a local file has to fit the disk; a Drive one is read in place
     ]
     monkeypatch.setattr("broll.ingest.scanner.scan_drive_folder", lambda client, folder: files)
     monkeypatch.setattr("broll.cli._drive_client", lambda config: object())
@@ -136,3 +136,32 @@ def test_a_dry_run_says_what_would_be_left_for_a_person(cli_workspace, monkeypat
     assert "Would queue 2 file(s)" in result.stdout and "1 video, 1 photo" in result.stdout
     assert "1 too long to be b-roll" in result.stdout and "1 too big to process" in result.stdout
     assert "Nothing was written" in result.stdout
+
+
+def test_a_pilot_is_a_spread_of_both_kinds_and_the_same_every_time(cli_workspace, monkeypatch):
+    files = [DiscoveredFile(origin="drive", path=None, filename=f"v{i}.mov", drive_file_id=f"v{i}",
+                            origin_path=f"drive:v{i}", size_bytes=100_000_000, duration_s=30) for i in range(50)]
+    files += [DiscoveredFile(origin="drive", path=None, filename=f"p{i}.jpg", drive_file_id=f"p{i}",
+                             origin_path=f"drive:p{i}", size_bytes=4_000_000) for i in range(50)]
+    monkeypatch.setattr("broll.ingest.scanner.scan_drive_folder", lambda client, folder: files)
+    monkeypatch.setattr("broll.cli._drive_client", lambda config: object())
+    first = _cli(cli_workspace, "index", "--drive-folder", "F", "--sample", "20", "--dry-run").stdout
+    second = _cli(cli_workspace, "index", "--drive-folder", "F", "--sample", "20", "--dry-run").stdout
+    assert first == second
+    assert "Pilot: 20 file(s)" in first and "12 video, 8 photo" in first
+
+
+def test_big_drive_videos_are_counted_as_read_in_place_not_turned_away(cli_workspace, monkeypatch):
+    files = [
+        DiscoveredFile(origin="drive", path=None, filename="DSC_9601.MOV", drive_file_id="a",
+                       origin_path="drive:a", size_bytes=28 * GB, duration_s=570),
+        DiscoveredFile(origin="drive", path=None, filename="small.mov", drive_file_id="b",
+                       origin_path="drive:b", size_bytes=300_000_000, duration_s=30),
+        DiscoveredFile(origin="drive", path=None, filename="Interview.mp4", drive_file_id="c",
+                       origin_path="drive:c", size_bytes=3 * GB, duration_s=3600),
+    ]
+    monkeypatch.setattr("broll.ingest.scanner.scan_drive_folder", lambda client, folder: files)
+    monkeypatch.setattr("broll.cli._drive_client", lambda config: object())
+    out = _cli(cli_workspace, "index", "--drive-folder", "F", "--dry-run").stdout
+    assert "Would queue 2 file(s)" in out and "about 0 GB to download" in out
+    assert "1 big video(s) (28 GB) are read in place" in out and "1 too long to be b-roll" in out

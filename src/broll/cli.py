@@ -348,6 +348,9 @@ def index(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the plan and touch nothing."),
     organise_after: bool = typer.Option(False, "--organise",
                                         help="File the results into Drive when indexing finishes."),
+    sample: Optional[int] = typer.Option(
+        None, "--sample", help="Only index this many files, spread through the folder: a pilot run "
+                               "to check the tags before committing to the lot."),
 ) -> None:
     """Queue footage for indexing and, unless --no-wait, work the queue."""
     workspace_config = resolve_workspace(workspace)
@@ -364,6 +367,10 @@ def index(
     if not files:
         _fail(f"No video files found at {path}")
 
+    if sample is not None and sample < len(files):
+        files = _pilot_sample(files, sample)
+        _echo(f"Pilot: {len(files)} file(s) picked from across the folder.")
+
     if dry_run:
         from collections import Counter
 
@@ -372,9 +379,17 @@ def index(
 
         turned_away: Counter = Counter()
         will_run = []
+        read_in_place: list[DiscoveredFile] = []
         for discovered in files:
+            # A big Drive video is read in place, so its size is no reason to turn it away.
+            streams = bool(
+                workspace_config.ingest.stream_above_gb
+                and discovered.origin == "drive" and media_kind(discovered.filename) == "video"
+                and discovered.size_bytes
+                and discovered.size_bytes >= workspace_config.ingest.stream_above_gb * 1e9
+            )
             verdict = check_limits(
-                workspace_config.ingest, size_bytes=discovered.size_bytes,
+                workspace_config.ingest, size_bytes=None if streams else discovered.size_bytes,
                 duration_s=discovered.duration_s,
                 is_image=media_kind(discovered.filename) == "image",
             )
@@ -382,10 +397,17 @@ def index(
                 turned_away[verdict.kind] += 1
             else:
                 will_run.append(discovered)
+                if streams:
+                    read_in_place.append(discovered)
         kinds = Counter(media_kind(d.filename) for d in will_run)
-        gb = sum(d.size_bytes or 0 for d in will_run) / 1e9
+        stream_bytes = sum(d.size_bytes for d in read_in_place)
+        streamed = len(read_in_place)
+        gb = (sum(d.size_bytes or 0 for d in will_run) - stream_bytes) / 1e9
         _echo(f"Would queue {len(will_run)} file(s) into workspace {workspace_config.id!r} "
-              f"({kinds.get('video', 0)} video, {kinds.get('image', 0)} photo, about {gb:.0f} GB to read).")
+              f"({kinds.get('video', 0)} video, {kinds.get('image', 0)} photo, about {gb:.0f} GB to download).")
+        if streamed:
+            _echo(f"{streamed} big video(s) ({stream_bytes / 1e9:.0f} GB) are read in place from Drive, "
+                  "not downloaded. Any longer than the limit are listed for you after a first look.")
         if turned_away:
             _echo("Would leave for you to decide (listed with a link, not downloaded): "
                   + ", ".join(f"{n} {attention.heading(k).lower()}" for k, n in turned_away.items()))
@@ -1867,3 +1889,21 @@ def audit_tags(
     finally:
         store.close()
     _echo(json.dumps(report, indent=2) if as_json else format_report(report))
+
+
+def _pilot_sample(files: list[DiscoveredFile], count: int) -> list[DiscoveredFile]:
+    """`count` files spread through the folder: a mix of video and photos, the same ones every time."""
+    import random
+
+    from .ingest.scanner import media_kind
+
+    rng = random.Random(7)
+    videos = [f for f in files if media_kind(f.filename) == "video"]
+    photos = [f for f in files if media_kind(f.filename) != "video"]
+    rng.shuffle(videos)
+    rng.shuffle(photos)
+    want_videos = min(len(videos), max(1, round(count * 0.6))) if videos else 0
+    picked = videos[:want_videos] + photos[: max(0, count - want_videos)]
+    if len(picked) < count:  # not enough photos: fill with more video
+        picked += videos[want_videos : want_videos + (count - len(picked))]
+    return sorted(picked, key=lambda f: f.filename)

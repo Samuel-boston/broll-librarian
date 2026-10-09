@@ -139,13 +139,20 @@ at an event. Indexing one is slow, can fill the server's disk, and gives a handf
 video. So the library does not download or analyse a file that is:
 
 * **too long** - over `ingest.max_duration_s` (default 600 s, ten minutes), or
-* **too big** - over `ingest.max_file_gb` (default 8 GB).
+* **too big** - over `ingest.max_file_gb` (default 8 GB). This only applies to files that have to be on the
+  server's disk (uploads and local files). A big video that is already in Google Drive is never downloaded.
 
 It decides from what Google Drive already reports, so nothing is downloaded to find out. Set a limit to 0 to
 turn it off. These files go on the **Needs attention** page with a link to open each one, and as shortcuts in
 a `_Needs Attention` folder in Drive. **Index anyway** lifts the length limit for that one file (up to
 `ingest.max_forced_duration_s`, default 3 hours) and the library then looks through it for the usable
-stretches. A file bigger than the server can hold at once still can't be forced through: the page says so.
+stretches.
+
+**Big videos in Drive are read in place.** A video in Drive of `ingest.stream_above_gb` (default 2 GB) or more
+is not downloaded. The server reads the few seconds around each frame it needs straight from Drive over HTTPS
+(a few megabytes a frame), so a 30 GB camera file costs the 40 GB disk nothing. Its length is then read from the
+file itself, and if it is past the length limit it goes on the Needs attention list like any other. Reading a 4K
+HEVC file this way takes several seconds a frame, so a very large library of such files is slow, not impossible.
 
 The same list holds files whose download stopped short (the half-file is deleted and the download tried
 again, never mistaken for the clip), files that can't be read, and files the model couldn't describe. A download
