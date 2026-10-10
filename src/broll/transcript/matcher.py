@@ -108,6 +108,9 @@ class BeatMatch:
     missing_footage: str | None = None
     #: Said under the line, e.g. "Nothing found for ..." after a person's own search.
     note: str | None = None
+    #: The person searched for themselves: show every result as a card to pick from.
+    carousel: bool = False
+    query: str | None = None
 
     def choose(self, shot_id: str) -> bool:
         """Promote an alternative to the top. Returns whether anything moved."""

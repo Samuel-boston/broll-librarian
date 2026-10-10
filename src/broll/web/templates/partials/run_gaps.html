@@ -1,0 +1,15 @@
+<div id="run-gaps" {% if oob %}hx-swap-oob="true"{% endif %}>
+  {% if gaps %}
+  <section class="card p-5" style="border-color:rgba(242,178,74,.28)">
+    <h2 class="flex items-center gap-2 text-sm font-semibold text-white">
+      <span class="text-amber">◎</span> Footage you should go and shoot
+    </h2>
+    <ul class="mt-3 space-y-2 text-sm text-muted">
+      {% for gap in gaps %}
+      <li class="flex gap-3"><span class="mono shrink-0 text-xs text-faint">{{ gap.beat.timecode }}</span>
+        <span>{{ gap.missing_footage or gap.beat.text }}</span></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+</div>

@@ -428,5 +428,9 @@ def test_a_line_with_no_good_match_offers_a_search_of_your_own(workspace):
     miss = client.post(f"/transcript/{run}/search", data={"beat": 0, "q": "xylophone"}).text
     assert "Nothing found for" in miss and "No good match" in miss
     hit = client.post(f"/transcript/{run}/search", data={"beat": 0, "q": "man sits calmly"}).text
-    assert "No good match" not in hit and "clip0.mov" in hit and "Your search: man sits calmly" in hit
+    assert "No good match" not in hit and "clip0.mov" in hit and "snap-x" in hit  # swipeable cards
+    assert hit.lstrip().startswith("<section") and 'hx-swap-oob="true"' in hit  # only this line + totals
+    pick = re.search(r'name="shot_id" value="([^"]+)"', hit).group(1)
+    picked = client.post(f"/transcript/{run}/swap", data={"beat": 0, "shot_id": pick}).text
+    assert picked.lstrip().startswith('<section id="beat-0"') and "on timeline" in picked
     assert client.post(f"/transcript/{run}/search", data={"beat": 0, "q": " "}).status_code == 400

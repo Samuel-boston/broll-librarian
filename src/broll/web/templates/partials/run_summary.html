@@ -1,0 +1,19 @@
+<div id="run-summary" class="space-y-4" {% if oob %}hx-swap-oob="true"{% endif %}>
+  <div class="card flex flex-wrap items-center gap-3 px-5 py-4">
+    <div class="text-sm text-muted">
+      <span class="font-medium text-white">{{ timeline.items|length }}</span> {{ 'image' if run.media == 'image' else ('video' if run.media == 'video' else 'clip') }}{{ '' if timeline.items|length == 1 else 's' }} ·
+      <span class="font-medium text-white">{{ gaps|length }}</span> gap(s) ·
+      <span class="mono text-xs">{{ timeline.fps }} fps</span>
+    </div>
+    <div class="ml-auto flex gap-2">
+      <a class="btn btn-sm" href="/transcript/{{ run.id }}/export/xml">FCP7 XML</a>
+      <a class="btn btn-sm" href="/transcript/{{ run.id }}/export/edl">EDL</a>
+      <a class="btn btn-sm" href="/transcript/{{ run.id }}/export/csv">CSV</a>
+    </div>
+  </div>
+  {% if timeline.warnings %}
+  <ul class="alert alert-warn space-y-1.5">
+    {% for warning in timeline.warnings %}<li class="flex gap-2"><span class="text-amber">•</span><span>{{ warning }}</span></li>{% endfor %}
+  </ul>
+  {% endif %}
+</div>

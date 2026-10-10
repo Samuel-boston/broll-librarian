@@ -1,0 +1,104 @@
+{#- One line of the script and its B-roll. Swapped on its own, so the page stays where it is. -#}
+{% set target = '#beat-' ~ match.beat.index %}
+<section id="beat-{{ match.beat.index }}" class="card overflow-hidden">
+  <header class="flex items-baseline gap-3 border-b border-line-soft px-5 py-3.5">
+    <span class="mono text-xs text-faint">{{ match.beat.timecode }}</span>
+    <p class="beat-text flex-1 text-sm leading-relaxed" data-run="{{ run.id }}" data-beat="{{ match.beat.index }}">{% for word in match.beat.text.split() %}<span data-w="{{ loop.index0 }}">{{ word }}</span>{{ ' ' if not loop.last }}{% endfor %}</p>
+    <span class="mono text-xs text-faint">{{ '%.1f'|format(match.beat.duration_s) }}s</span>
+    {% if not is_last %}
+    <button type="button" class="text-xs text-faint transition hover:text-white" title="Make this and the next line one piece of B-roll"
+            hx-post="/transcript/{{ run.id }}/join" hx-vals='{"beat": "{{ match.beat.index }}"}' hx-target="#beats" hx-swap="innerHTML">Join next</button>
+    {% endif %}
+  </header>
+
+  {% macro search_form(open=True) %}
+  <form class="flex flex-wrap items-center gap-2 px-5 {{ 'pb-4' if open else 'py-3' }}" hx-post="/transcript/{{ run.id }}/search"
+        hx-target="{{ target }}" hx-swap="outerHTML">
+    <input type="hidden" name="beat" value="{{ match.beat.index }}">
+    <input name="q" required autocomplete="off" value="{{ match.query or '' }}" placeholder="Search the library yourself, e.g. man walking on a beach" class="input flex-1 py-1.5 text-sm">
+    <button class="btn btn-sm">Search</button>
+    {% if match.note %}<span class="basis-full text-xs text-faint">{{ match.note }}</span>{% endif %}
+  </form>
+  {% endmacro %}
+
+  {% if match.no_good_match %}
+    <p class="flex items-start gap-2 px-5 py-4 text-sm" style="color:#f6c887">
+      <svg class="mt-0.5 shrink-0" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.2M12 16.3v.2"/>
+      </svg>
+      <span><span class="font-medium">No good match.</span> {{ match.missing_footage or 'Nothing in the library suited this beat.' }}</span>
+    </p>
+    {{ search_form() }}
+  {% elif match.carousel %}
+    {#- The results of a person's own search: swipe along and pick one. -#}
+    {{ search_form() }}
+    <div class="flex snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-4" style="scrollbar-width:thin">
+      {% for suggestion in match.alternatives %}
+      {% set picked = match.suggestions and match.suggestions[0].shot.id == suggestion.shot.id %}
+      <article class="card w-56 shrink-0 snap-start overflow-hidden {% if picked %}ring-2 ring-[#8b8cff]{% endif %}">
+        <div class="thumb aspect-video">
+          {% if suggestion.shot.thumbnail_path %}<img src="/thumbnails/{{ suggestion.shot.id }}.jpg" alt="" class="h-full w-full object-cover">{% endif %}
+          <span class="mono absolute bottom-1.5 right-1.5 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white/90">
+            {% if suggestion.source.media_kind == 'image' %}IMAGE{% else %}{{ '%.1f'|format(suggestion.shot.duration_s) }}s{% endif %}</span>
+        </div>
+        <div class="space-y-2 p-3">
+          <p class="line-clamp-3 text-xs leading-snug">{{ suggestion.shot.caption or suggestion.source.original_filename }}</p>
+          <p class="mono truncate text-[10px] text-faint">{{ suggestion.source.original_filename }}{% if suggestion.source.media_kind != 'image' %} · @{{ '%.1f'|format(suggestion.shot.start_s) }}s{% endif %}</p>
+          {% if picked %}
+            <span class="tag tag-accent">on timeline</span>
+          {% else %}
+            <form hx-post="/transcript/{{ run.id }}/swap" hx-target="{{ target }}" hx-swap="outerHTML">
+              <input type="hidden" name="beat" value="{{ match.beat.index }}">
+              <input type="hidden" name="shot_id" value="{{ suggestion.shot.id }}">
+              <button class="btn btn-sm w-full">Use this</button>
+            </form>
+          {% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <ul class="divide-line">
+      {% for suggestion in match.suggestions %}
+      <li class="flex items-start gap-3.5 px-5 py-3.5 {% if loop.first %}bg-[rgba(139,140,255,.06)] shadow-[inset_3px_0_0_0_#8b8cff]{% endif %}">
+        <div class="thumb h-12 w-20 shrink-0 rounded-md">
+          {% if suggestion.shot.thumbnail_path %}
+            <img src="/thumbnails/{{ suggestion.shot.id }}.jpg" alt="" class="h-full w-full object-cover">
+          {% endif %}
+        </div>
+        <div class="min-w-0 flex-1">
+          <p class="truncate text-sm">
+            {% if loop.first %}<span class="tag tag-accent mr-1.5">on timeline</span>{% endif %}
+            {{ suggestion.source.original_filename }}
+            {% if suggestion.source.media_kind == 'image' %}
+              <span class="tag">image</span>
+            {% else %}
+              <span class="mono text-[11px] text-faint">@{{ '%.1f'|format(suggestion.shot.start_s) }}s · {{ '%.1f'|format(suggestion.shot.duration_s) }}s</span>
+            {% endif %}
+            {% if suggestion.reused %}<span class="tag ml-1">reused</span>{% endif %}
+          </p>
+          <p class="mt-0.5 text-xs leading-relaxed text-muted">{{ suggestion.reason }}</p>
+        </div>
+        <div class="flex shrink-0 items-center gap-3">
+          {% if suggestion.drive_link %}
+            <a class="text-xs text-accent transition hover:underline" target="_blank" rel="noopener"
+               href="{{ suggestion.drive_link }}">Drive</a>
+          {% endif %}
+          {% if not loop.first %}
+          <form hx-post="/transcript/{{ run.id }}/swap" hx-target="{{ target }}" hx-swap="outerHTML">
+            <input type="hidden" name="beat" value="{{ match.beat.index }}">
+            <input type="hidden" name="shot_id" value="{{ suggestion.shot.id }}">
+            <button class="btn btn-sm">Use this</button>
+          </form>
+          {% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    <details class="border-t border-line-soft">
+      <summary class="cursor-pointer px-5 py-2.5 text-xs text-faint transition hover:text-white">Not right? Search the library yourself</summary>
+      {{ search_form() }}
+    </details>
+  {% endif %}
+</section>

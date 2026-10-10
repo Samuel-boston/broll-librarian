@@ -188,6 +188,16 @@ async def join_one(request: Request, run_id: str, beat: int = Form(...)):
                                       context=_run_context(request, state, run))
 
 
+CARDS = 12  # how many options a person's own search lays out
+
+
+def _beat_response(request: Request, state, run: TranscriptRun, match: BeatMatch):
+    """Just the one line that changed, plus the totals: the page stays where it is."""
+    context = _run_context(request, state, run)
+    context["match"] = match
+    return templates.TemplateResponse(request=request, name="partials/beat_update.html", context=context)
+
+
 @router.post("/transcript/{run_id}/search", response_class=HTMLResponse)
 async def search_for_beat(request: Request, run_id: str, beat: int = Form(...), q: str = Form("")):
     """A person's own search for one line, when the suggestions were no good."""
@@ -204,19 +214,25 @@ async def search_for_beat(request: Request, run_id: str, beat: int = Form(...), 
     store = state.store()
     try:
         engine = SearchEngine(store, state.embedder, featured_person=run.config.client.featured_person)
-        found = engine.search(q, run.filters, run.config.transcript.suggestions_per_beat * 3)
+        found = engine.search(q, run.filters, CARDS)
+        near = False
+        if len(found) < CARDS // 2:  # a person hunting wants options: add near matches below the sure ones
+            seen = {r.shot.id for r in found}
+            extra = [r for r in engine.search(q, run.filters, CARDS, strict=False) if r.shot.id not in seen]
+            found, near = [*found, *extra][:CARDS], bool(extra)
         suggestions = [Suggestion(shot=r.shot, source=r.source, reason=f"Your search: {q}",
                                   confidence=0.5, score=r.score) for r in found]
     finally:
         store.close()
+    match.query = q
     if suggestions:
         n = run.config.transcript.suggestions_per_beat
         match.suggestions, match.alternatives = suggestions[:n], suggestions
-        match.no_good_match, match.missing_footage, match.note = False, None, None
+        match.no_good_match, match.missing_footage, match.carousel = False, None, True
+        match.note = "Includes near matches." if near else None
     else:
         match.note = f"Nothing found for “{q}”. Try other words."
-    return templates.TemplateResponse(request=request, name="partials/beats.html",
-                                      context=_run_context(request, state, run))
+    return _beat_response(request, state, run, match)
 
 
 @router.post("/transcript/{run_id}/swap", response_class=HTMLResponse)
@@ -227,11 +243,7 @@ async def swap_suggestion(request: Request, run_id: str, beat: int = Form(...),
     match = next((m for m in run.matches if m.beat.index == beat), None)
     if match is None or not match.choose(shot_id):
         raise HTTPException(status_code=404, detail="No such beat or candidate.")
-    return templates.TemplateResponse(
-        request=request,
-        name="partials/beats.html",
-        context=_run_context(request, state, run),
-    )
+    return _beat_response(request, state, run, match)
 
 
 @router.get("/transcript/{run_id}/export/{fmt}")
