@@ -106,6 +106,8 @@ class BeatMatch:
     alternatives: list[Suggestion] = field(default_factory=list)
     no_good_match: bool = False
     missing_footage: str | None = None
+    #: Said under the line, e.g. "Nothing found for ..." after a person's own search.
+    note: str | None = None
 
     def choose(self, shot_id: str) -> bool:
         """Promote an alternative to the top. Returns whether anything moved."""

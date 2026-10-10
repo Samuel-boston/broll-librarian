@@ -417,3 +417,16 @@ def test_a_line_can_be_split_by_selecting_words_and_joined_again(workspace):
     joined = client.post(f"/transcript/{run}/join", data={"beat": 0}).text
     assert joined.count('class="beat-text') == 3  # split 3 -> split first again 4 -> joined 3
     assert client.post(f"/transcript/{run}/join", data={"beat": 99}).status_code == 400
+
+
+def test_a_line_with_no_good_match_offers_a_search_of_your_own(workspace):
+    two_sides(workspace, videos=2, images=0)
+    client = _client(workspace)
+    page = client.post("/transcript", data={"text": "Zebra quantum nonsense.", "media": ["video"], "rerank": ""}).text
+    run = re.search(r'data-run="([0-9a-f]+)"', page).group(1)
+    assert "No good match" in page and f'hx-post="/transcript/{run}/search"' in page
+    miss = client.post(f"/transcript/{run}/search", data={"beat": 0, "q": "xylophone"}).text
+    assert "Nothing found for" in miss and "No good match" in miss
+    hit = client.post(f"/transcript/{run}/search", data={"beat": 0, "q": "man sits calmly"}).text
+    assert "No good match" not in hit and "clip0.mov" in hit and "Your search: man sits calmly" in hit
+    assert client.post(f"/transcript/{run}/search", data={"beat": 0, "q": " "}).status_code == 400

@@ -188,6 +188,37 @@ async def join_one(request: Request, run_id: str, beat: int = Form(...)):
                                       context=_run_context(request, state, run))
 
 
+@router.post("/transcript/{run_id}/search", response_class=HTMLResponse)
+async def search_for_beat(request: Request, run_id: str, beat: int = Form(...), q: str = Form("")):
+    """A person's own search for one line, when the suggestions were no good."""
+    from ...transcript.matcher import Suggestion
+
+    state = client_state(request)
+    run = _get_run(state, run_id)
+    match = next((m for m in run.matches if m.beat.index == beat), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail="No such beat.")
+    q = q.strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="Type what you want to find.")
+    store = state.store()
+    try:
+        engine = SearchEngine(store, state.embedder, featured_person=run.config.client.featured_person)
+        found = engine.search(q, run.filters, run.config.transcript.suggestions_per_beat * 3)
+        suggestions = [Suggestion(shot=r.shot, source=r.source, reason=f"Your search: {q}",
+                                  confidence=0.5, score=r.score) for r in found]
+    finally:
+        store.close()
+    if suggestions:
+        n = run.config.transcript.suggestions_per_beat
+        match.suggestions, match.alternatives = suggestions[:n], suggestions
+        match.no_good_match, match.missing_footage, match.note = False, None, None
+    else:
+        match.note = f"Nothing found for “{q}”. Try other words."
+    return templates.TemplateResponse(request=request, name="partials/beats.html",
+                                      context=_run_context(request, state, run))
+
+
 @router.post("/transcript/{run_id}/swap", response_class=HTMLResponse)
 async def swap_suggestion(request: Request, run_id: str, beat: int = Form(...),
                           shot_id: str = Form(...)):

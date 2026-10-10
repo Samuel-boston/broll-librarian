@@ -39,6 +39,12 @@
         </svg>
         <span><span class="font-medium">No good match.</span> {{ match.missing_footage or 'Nothing in the library suited this beat.' }}</span>
       </p>
+      <form class="flex flex-wrap items-center gap-2 px-5 pb-4" hx-post="/transcript/{{ run.id }}/search" hx-target="#beats" hx-swap="innerHTML">
+        <input type="hidden" name="beat" value="{{ match.beat.index }}">
+        <input name="q" required autocomplete="off" placeholder="Search the library yourself, e.g. man walking on a beach" class="input flex-1 py-1.5 text-sm">
+        <button class="btn btn-sm">Search</button>
+        {% if match.note %}<span class="basis-full text-xs text-faint">{{ match.note }}</span>{% endif %}
+      </form>
     {% else %}
       <ul class="divide-line">
         {% for suggestion in match.suggestions %}
