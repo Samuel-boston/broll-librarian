@@ -678,7 +678,7 @@ cross-rate sources are conformed). CSV is for anyone who just wants the list.
 
 The footage lives in Drive, so a plain export imports offline. On the Script to B-roll results, **Download clips + timeline**
 fixes that for an editor who has no Drive for Desktop mount. The server cuts the chosen clip for every line, each one
-just the shot plus handles (default 1 s each side, a field next to the button), and zips them with `timeline.xml`
+just the part of the shot the line uses plus handles (default 1 s each side, a field next to the button; a 60 s shot under a 4 s line is a 6 s file), and zips them with `timeline.xml`
 (FCP7), `timeline.edl` and a `README.txt`.
 
 * **Folder field.** Type the folder on your computer where the `clips` folder will end up (a Mac path such as

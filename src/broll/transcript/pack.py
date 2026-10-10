@@ -212,13 +212,18 @@ def build_pack(config: WorkspaceConfig, matches: list[BeatMatch], job: PackJob, 
 
     # The first line each distinct shot is chosen for names its file; later lines share the file.
     first_line: dict[str, BeatMatch] = {}
+    # The longest stretch any line takes from a shot. Nothing past it is cut: a 60 s shot under a 4 s line
+    # would otherwise be a minute of re-encoded footage the timeline never uses.
+    needed: dict[str, float] = {}
     for match in matches:
         number = match.beat.index + 1
         if match.chosen is None:
             job.gaps.append(PackSkip(number, match.beat.timecode, match.beat.text,
                                      match.missing_footage or "No good match in the library."))
-        elif match.chosen.shot.id not in first_line:
-            first_line[match.chosen.shot.id] = match
+        else:
+            if match.chosen.shot.id not in first_line:
+                first_line[match.chosen.shot.id] = match
+            needed[match.chosen.shot.id] = max(needed.get(match.chosen.shot.id, 0.0), match.beat.duration_s)
 
     job.total = len(first_line)
     packed: dict[str, PackedClip] = {}
@@ -239,7 +244,8 @@ def build_pack(config: WorkspaceConfig, matches: list[BeatMatch], job: PackJob, 
                     continue
 
                 image = source.media_kind == "image"
-                estimate = _estimate_bytes(source, shot.duration_s + 2 * handles + 1.0, image)
+                length = min(shot.duration_s, needed[shot_id]) if not image else 0.0
+                estimate = _estimate_bytes(source, length + 2 * handles + 1.0, image)
                 if total_bytes + estimate > cap:
                     job.limit_hit = True
                     stopped = (f"The pack reached its {job.max_gb:g} GB limit before this clip. "
@@ -256,6 +262,7 @@ def build_pack(config: WorkspaceConfig, matches: list[BeatMatch], job: PackJob, 
                         result = fetch_module.fetch_shot(
                             config, store, shot_id, dest_dir=work, trim=not image, handles_s=handles,
                             copy=True, drive=drive, stream=True,
+                            max_len_s=needed[shot_id],
                         )
                         path = Path(result.path)
                         if total_bytes + result.bytes > cap:

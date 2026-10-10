@@ -441,11 +441,15 @@ def fetch_shot(
     drive=None,
     best_part: bool = False,
     stream: bool = False,
+    max_len_s: float | None = None,
 ) -> FetchResult:
     """A local file for one shot. See the module docstring for the order.
 
     `best_part` cuts (and reports in and out points for) the strongest stretch the library found inside
     the shot, when there is one, instead of the whole shot.
+
+    `max_len_s` keeps only the first that-many seconds of the shot (plus handles), for a caller that will use
+    no more than that. A 60-second shot under a 4-second line is then a 6-second file, not a minute of footage.
 
     `stream` (with `trim`) cuts a video that exists only in Drive straight out of Drive, never downloading
     it. A copy already on this machine is still preferred.
@@ -476,6 +480,8 @@ def fetch_shot(
     first, last = shot.start_s, shot.end_s
     if best_part and shot.best_start_s is not None and shot.best_end_s is not None:
         first, last = shot.best_start_s, shot.best_end_s
+    if max_len_s is not None and last - first > max_len_s:
+        last = first + max(0.0, max_len_s)
     start = max(0.0, first - handles_s)
     end = min(duration, last + handles_s) if duration else last + handles_s
     # Cutting from Drive never takes the shortcut of handing back the whole file: that is a download.

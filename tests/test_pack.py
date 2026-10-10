@@ -252,6 +252,28 @@ def test_the_same_shot_for_two_lines_is_cut_once(workspace, footage, tmp_path):
 
 
 @needs_ffmpeg
+def test_only_the_stretch_a_line_uses_is_cut_from_a_long_shot(workspace, footage, tmp_path):
+    """A 4 s shot under a 1.5 s line: the file holds the 1.5 s plus handles, not the whole shot."""
+    from broll.fetch import probe_video
+
+    shot = add_shot(workspace, footage["b"], 1.0, 5.0)
+    job = job_for(workspace, handles=0.5)
+    build_pack(workspace, [match_for(workspace, shot, 0, 0.0, 1.5, "A short line.")], job, tmp_path / "job")
+    with zipfile.ZipFile(job.zip_path) as zf:
+        name = "clips/001_00m00s_b_clip.mp4"
+        target = tmp_path / "cut.mp4"
+        target.write_bytes(zf.read(name))
+        length = probe_video(target)["duration"]
+        item = clipitems(zf.read("timeline.xml").decode())[0]
+        in_s, out_s = int(item.findtext("in")) / FPS, int(item.findtext("out")) / FPS
+    assert length < 3.5, f"{length}s: the whole 4 s shot plus handles would be 5 s"
+    assert out_s - in_s == pytest.approx(1.5, abs=0.05)
+    assert out_s <= length + 0.05, "the whole slot is inside the file"
+    assert luma_at(target, in_s) == pytest.approx(frame_luma(1.0), abs=2.5)
+    assert luma_at(target, out_s - 0.08) == pytest.approx(frame_luma(2.42), abs=4)
+
+
+@needs_ffmpeg
 def test_a_still_image_is_copied_as_it_is(workspace, tmp_path):
     photo = tmp_path / "beach photo.jpg"
     import subprocess
