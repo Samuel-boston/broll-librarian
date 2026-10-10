@@ -1984,6 +1984,41 @@ def folders_approve(
     _echo("Run `broll organise` to move the files in Drive too.")
 
 
+@folders_app.command("auto")
+def folders_auto(
+    min_clips: Optional[int] = typer.Option(
+        None, "--min-clips", help="Different files a suggestion needs before it becomes a folder (default 5)."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Say what would happen, change nothing."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+) -> None:
+    """Once the library is filed: create the suggested folders that enough files belong in.
+
+    Near-duplicate suggestions ("Jet Ski", "Jetski") are folded into one, and a suggestion that matches a
+    folder already in the tree moves its clips there. A new folder needs --min-clips different files; the
+    rest stay as suggestions and their clips stay where they are. Drive is not touched: run `broll
+    organise` afterwards.
+    """
+    from .review import create_wanted_folders
+
+    workspace_config = resolve_workspace(workspace)
+    store = Store.for_config(workspace_config)
+    try:
+        embedder = None if dry_run else _load_embedder(workspace_config)
+        done = create_wanted_folders(workspace_config, store, embedder, min_clips, dry_run)
+    finally:
+        store.close()
+    if not done["created"] and not done["waiting"]:
+        _echo("No folder suggestions.")
+        return
+    verb = "Would create" if dry_run else "Created"
+    for path, files in done["created"]:
+        _echo(f"{verb} {path}  ({files} file(s))")
+    for path, files in done["waiting"]:
+        _echo(f"Not enough yet: {path}  ({files} file(s))")
+    if done["created"] and not dry_run:
+        _echo(f"Moved {len(done['moved'])} clip(s). Run `broll organise` to move the files in Drive too.")
+
+
 @folders_app.command("rename")
 def folders_rename(
     path: str = typer.Argument(..., help='The folder, e.g. "08_Life Chapters".'),

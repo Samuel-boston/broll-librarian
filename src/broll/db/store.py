@@ -828,6 +828,18 @@ class Store:
             (p for p in self.list_folder_proposals(status=None) if p["id"] == proposal_id), None
         )
 
+    def merge_folder_proposals(self, into_id: int, from_ids: list[int]) -> None:
+        """Fold near-duplicate suggestions into one: their clips join `into_id`, the rest are closed."""
+        for other in from_ids:
+            if other == into_id:
+                continue
+            self.conn.execute(
+                "INSERT OR IGNORE INTO folder_proposal_shots (proposal_id, shot_id) "
+                "SELECT ?, shot_id FROM folder_proposal_shots WHERE proposal_id = ?",
+                (into_id, other),
+            )
+            self.set_folder_proposal_status(other, "merged")
+
     def set_folder_proposal_status(self, proposal_id: int, status: str) -> None:
         self.conn.execute(
             "UPDATE folder_proposals SET status = ? WHERE workspace_id = ? AND id = ?",

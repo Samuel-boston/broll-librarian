@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from .analysis.embedder import Embedder
@@ -286,6 +287,81 @@ def dismiss_folder_proposal(store: Store, proposal_id: int) -> bool:
         return False
     store.set_folder_proposal_status(proposal_id, "dismissed")
     return True
+
+
+@dataclass
+class FolderPlan:
+    """What the suggested folders add up to once the library is filed."""
+
+    path: str                       # where the clips would go
+    proposal_ids: list[int]         # the suggestions folded into it (the first is the one approved)
+    shot_ids: list[str]
+    files: int                      # different source files, not shots: one long clip is one thing
+    existing: bool                  # the folder is already in the tree (a near-match to a sibling)
+    note: str | None = None
+    ready: bool = False             # enough files to create it
+
+
+def plan_new_folders(config: WorkspaceConfig, store: Store, min_files: int | None = None) -> list[FolderPlan]:
+    """Fold the open suggestions together and say which have earned a folder.
+
+    One folder, many names: "Jet Ski", "Jetski" and "Jet Skiing" under the same parent are one suggestion,
+    and one that matches a folder already in the tree goes there. A new folder is only ready when
+    `min_files` different files would be in it (default `taxonomy.new_folder_min_clips`), because a
+    folder with one clip in it is clutter, not structure.
+    """
+    from .analysis.analyzer import _near
+
+    min_files = config.taxonomy.new_folder_min_clips if min_files is None else min_files
+    groups: list[FolderPlan] = []
+    open_ones = store.list_folder_proposals("open")
+    # Biggest first, so the best-supported spelling names the merged folder.
+    for proposal in sorted(open_ones, key=lambda p: (-len(p["shot_ids"]), p["id"])):
+        parent, _, name = proposal["path"].rpartition("/")
+        home = next((g for g in groups if g.path.rpartition("/")[0] == parent
+                     and _near(g.path.rpartition("/")[2], name)), None)
+        if home is None:
+            node = config.taxonomy.find_node(parent) if parent else None
+            sibling = next((c.name for c in node.children if _near(c.name, name)), None) if node else None
+            path = f"{parent}/{sibling}" if sibling else proposal["path"]
+            groups.append(FolderPlan(path=path, proposal_ids=[proposal["id"]], shot_ids=list(proposal["shot_ids"]),
+                                     files=0, existing=bool(sibling or config.taxonomy.find_node(proposal["path"])),
+                                     note=proposal.get("note")))
+        else:
+            home.proposal_ids.append(proposal["id"])
+            home.shot_ids = sorted({*home.shot_ids, *proposal["shot_ids"]})
+    for group in groups:
+        sources = {s.source_id for s in (store.get_shot(i) for i in group.shot_ids) if s is not None}
+        group.files = len(sources)
+        group.ready = group.existing or group.files >= min_files
+    return sorted(groups, key=lambda g: (-g.files, g.path))
+
+
+def create_wanted_folders(
+    config: WorkspaceConfig, store: Store, embedder: Embedder | None = None,
+    min_files: int | None = None, dry_run: bool = False,
+) -> dict[str, Any]:
+    """Create the folders that have earned one, move their clips in, and leave the rest as suggestions.
+
+    Returns {"created": [(path, files)], "waiting": [(path, files)], "moved": [shot ids], "sources": [...]}.
+    Nothing in Drive changes: run `broll organise` afterwards to file the clips there.
+    """
+    plans = plan_new_folders(config, store, min_files)
+    result: dict[str, Any] = {"created": [], "waiting": [], "moved": [], "sources": []}
+    for plan in plans:
+        if not plan.ready:
+            result["waiting"].append((plan.path, plan.files))
+            continue
+        result["created"].append((plan.path, plan.files))
+        if dry_run:
+            continue
+        main, *others = plan.proposal_ids
+        store.merge_folder_proposals(main, others)
+        done = approve_folder_proposal(config, store, main, embedder,
+                                       name=plan.path.rpartition("/")[2], parent=plan.path.rpartition("/")[0])
+        result["moved"] += done["moved"]
+        result["sources"] += done["sources"]
+    return result
 
 
 def _is_corrected(shot: Shot) -> bool:

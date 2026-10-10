@@ -143,6 +143,9 @@ class TaxonomyConfig(BaseModel):
     # Off: a model inventing "Jet Ski", "Jetski" and "Jet Skiing" would otherwise reshape the
     # client's own folder structure on its own.
     auto_create_folders: bool = False
+    # `broll folders auto` (run once the library is filed) creates a suggested folder only when at least
+    # this many different files would go in it. Fewer stay suggestions, in the folder the clip already has.
+    new_folder_min_clips: int = 5
     # File a clip the model was unsure about in the review folder rather than guess it into a
     # folder. A person confirms it there; confirming moves it to the right place.
     route_uncertain_to_review: bool = True

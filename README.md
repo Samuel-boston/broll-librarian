@@ -246,6 +246,7 @@ broll vocab --promote subjects=hydrofoil
 broll audit-tags                   # tags on too many clips, themes in use, how sure the model was
 broll attention                    # files that were set aside (too long, unreadable...), with links
 broll folders                      # new folders the model suggested; approve or dismiss
+broll folders auto [--dry-run]    # once the library is filed: make the suggested folders that enough files belong in
 broll costs --project 5000         # measured cost, and what 5,000 more would cost
 broll refile --all --dry-run       # re-sort clips into a changed folder tree, from stored data (cheap)
 broll reanalyse --dry-run          # re-run rows analysed with an older prompt
@@ -731,6 +732,7 @@ Every removal is local: **nothing in Google Drive is ever deleted**, and the sho
 | `broll index --drive-folder <id> [--sample N] [--dry-run]` | Index footage already in Drive; `--sample` for a pilot, `--dry-run` to see what would be set aside |
 | `broll attention [index/dismiss/sync <id>]` | Files that were not indexed (too long, unreadable...), with a link each |
 | `broll folders [approve/dismiss <id>]` | New folders the model suggested |
+| `broll folders auto [--min-clips N] [--dry-run]` | After filing: create the suggested folders that at least N different files (default `taxonomy.new_folder_min_clips`, 5) belong in. Near-duplicate suggestions ("Jet Ski", "Jetski") are one folder, a suggestion matching an existing folder moves its clips there, the rest stay suggestions. Run `broll organise` after. |
 | `broll folders rename/add/note/remove` | Change the client's folder tree; clips follow a rename |
 | `broll audit-tags` | Is the tagging healthy? No model calls |
 | `broll work [--follow]` | Work the queue; safe to kill and restart |
