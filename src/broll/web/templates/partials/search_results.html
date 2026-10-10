@@ -1,33 +1,32 @@
-{#- The search page's results: Videos and Photos as two separate lists, each with its count, always both shown. -#}
+{#- The search page's results: Videos and Images as two separate lists, each with its count. One is shown at a time. -#}
 <input type="hidden" name="view" value="{{ view }}">
 {% if corrections %}
   <p class="mb-4 text-sm text-muted">
     Showing results for <span class="font-medium text-white">{{ corrected_query }}</span>.
-    <a href="{{ request.url.include_query_params(exact='true') }}"
-       hx-get="{{ request.url.include_query_params(exact='true') }}" hx-include="this"
+    <a href="{{ url_with(request, exact='true') }}"
+       hx-get="{{ url_with(request, exact='true') }}" hx-include="this"
        class="text-accent underline decoration-dotted underline-offset-4">Search instead for “{{ query }}”</a>
   </p>
 {% endif %}
-<div class="mb-5 flex items-center gap-2" role="tablist" aria-label="Videos or photos">
+{#- Plain links, not an in-page swap: switching sides changes the filters on the left too, so it loads the whole page. -#}
+<div class="mb-5 flex items-center gap-2" role="tablist" aria-label="Videos or images">
   {% for tab in tabs %}
   <a role="tab" aria-selected="{{ 'true' if tab.key == view else 'false' }}"
-     href="{{ request.url.include_query_params(view=tab.key, limit=page) }}"
-     hx-get="{{ request.url.include_query_params(view=tab.key, limit=page) }}" hx-include="this"
-     hx-target="#results" hx-push-url="true"
+     href="{{ url_with(request, view=tab.key, limit=None) }}"
      class="chip {% if tab.key == view %}chip-amber{% endif %}">
     {{ tab.label }}
     <span class="mono text-xs {% if tab.key == view %}{% else %}text-faint{% endif %}">{{ tab.count }}{{ '+' if tab.more else '' }}</span>
   </a>
   {% endfor %}
-  {% if query %}<span class="ml-auto text-xs text-faint">{{ total_shots }} shots in the library</span>{% endif %}
+  {% if query %}<span class="ml-auto text-xs text-faint">{{ total_shots }} {{ noun }}{{ '' if total_shots == 1 else 's' }} in the library</span>{% endif %}
 </div>
-{% with hide_count=True, empty_message=("No " ~ ("photos" if view == "image" else "videos") ~ " match." if query else None) %}
+{% with hide_count=True, empty_message=("No " ~ ("images" if view == "image" else "videos") ~ " match." if query else None) %}
   {% include "partials/results.html" %}
 {% endwith %}
 {% if can_show_more %}
   <p class="mt-6 text-center">
-    <a href="{{ request.url.include_query_params(view=view, limit=limit + page) }}"
-       hx-get="{{ request.url.include_query_params(view=view, limit=limit + page) }}" hx-include="this"
+    <a href="{{ url_with(request, view=view, limit=limit + page) }}"
+       hx-get="{{ url_with(request, view=view, limit=limit + page) }}" hx-include="this"
        hx-target="#results" hx-swap="innerHTML show:none" hx-push-url="true"
        class="btn">Show {{ page }} more</a>
   </p>

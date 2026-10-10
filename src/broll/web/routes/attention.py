@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
-from ... import attention
+from ... import attention, kinds
 from ...ingest.limits import GB, human_duration
 from ..app import client_state, templates
 
@@ -25,18 +25,28 @@ def _items(store) -> list[dict]:
         item["duration_text"] = human_duration(item["duration_s"]) if item["duration_s"] else ""
         # A file that is too big for the disk cannot be forced through, however much we'd like to.
         item["can_force"] = item["kind"] in ("too_long", "analysis_failed", "download_incomplete", "unreadable")
+        item["media"] = kinds.of_file(item["filename"])  # "kind" is already taken: it is the reason
         out.append(item)
     return out
 
 
 def _context(request: Request, state, store, message: str | None = None, error: str | None = None) -> dict:
-    items = _items(store)
+    """The list for one side, videos or images. The side travels in the address (?kind=)."""
+    everything = _items(store)
+    waiting = {k: sum(1 for i in everything if i["media"] == k) for k in kinds.KINDS}
+    side = kinds.clean(request.query_params.get("kind"))
+    if not side:
+        side = "image" if waiting["image"] and not waiting["video"] else "video"
+    items = [i for i in everything if i["media"] == side]
     groups: dict[str, list[dict]] = {}
     for item in items:
         groups.setdefault(item["heading"], []).append(item)
     return {
         "request": request,
         "workspace": state.config,
+        "kind": side,
+        "noun": kinds.SINGULAR[side],
+        "tabs": [{"key": k, "label": kinds.LABELS[k], "count": waiting[k]} for k in kinds.KINDS],
         "groups": groups,
         "total": len(items),
         "message": message,

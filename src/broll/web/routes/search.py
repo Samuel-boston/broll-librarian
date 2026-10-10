@@ -20,6 +20,7 @@ from ...analysis.schema import (
 from ...ingest.pipeline import drive_organise_callable
 from ...search.filters import SearchFilters
 from ...search.query import SearchEngine
+from ... import kinds
 from ..app import client_state, templates
 
 log = logging.getLogger(__name__)
@@ -101,16 +102,17 @@ async def search_page(
             top_pick=True if top_picks else None,
         )
         limit = max(PAGE, min(limit, MAX_LIMIT))
-        # Videos and photos are always two separate lists, each with its own count, even when one of them is
-        # empty: a photo and a clip are not the same kind of thing to cut with.
+        # Videos and images are always two separate lists, each with its own count, even when one of them is
+        # empty: a photograph and a clip are not the same kind of thing to cut with. Only one is shown at a time.
+        view = kinds.clean(view)
         searched: dict[str, list] = {}
         hidden = 0
-        for kind in ("video", "image"):
+        for kind in kinds.KINDS:
             wanted = limit if view == kind else PAGE
             kind_filters = filters.model_copy(update={"media_kind": [kind]})
             searched[kind] = engine.search(q, kind_filters, wanted, strict=not loose, correct=not exact)
             hidden += engine.hidden_count
-        if view not in searched:
+        if not view:
             view = "video" if searched["video"] or not searched["image"] else "image"
             if view == "image" and limit != PAGE:
                 searched["image"] = engine.search(
@@ -118,11 +120,12 @@ async def search_page(
                     strict=not loose, correct=not exact)
         results = searched[view]
         tabs = [
-            {"key": kind, "label": label, "count": len(searched[kind]),
+            {"key": kind, "label": kinds.LABELS[kind], "count": len(searched[kind]),
              "more": len(searched[kind]) >= (limit if view == kind else PAGE)}
-            for kind, label in (("video", "Videos"), ("image", "Photos"))
+            for kind in kinds.KINDS
         ]
-        counts = store.facet_counts()
+        # The filters on the left describe the side being looked at, so they never offer what is not in it.
+        counts = store.facet_counts(view)
         context = {
             "request": request,
             "workspace": config,
@@ -150,7 +153,8 @@ async def search_page(
                 "setting": _available(list(SETTINGS), counts, "setting"),
                 "usable_for": _available(list(USABLE_FOR), counts, "usable_for"),
             },
-            "total_shots": store.count_shots(),
+            "total_shots": store.count_shots(media_kind=view),
+            "noun": kinds.SINGULAR[view],
             "hidden_count": hidden,
             "tabs": tabs,
             "view": view,

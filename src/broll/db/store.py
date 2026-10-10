@@ -431,13 +431,35 @@ class Store:
         ).fetchall()
         return [r["id"] for r in rows]
 
-    def count_shots(self, status: str | None = None) -> int:
-        sql = "SELECT COUNT(*) FROM shots WHERE workspace_id = ?"
-        params: list[Any] = [self.workspace_id]
+    def count_shots(self, status: str | None = None, media_kind: str | None = None) -> int:
+        sql = "SELECT COUNT(*) FROM shots s"
+        params: list[Any] = []
+        if media_kind:
+            sql += " JOIN sources src ON src.id = s.source_id"
+        sql += " WHERE s.workspace_id = ?"
+        params.append(self.workspace_id)
         if status:
-            sql += " AND status = ?"
+            sql += " AND s.status = ?"
             params.append(status)
+        if media_kind:
+            sql += " AND src.media_kind = ?"
+            params.append(media_kind)
         return int(self.conn.execute(sql, params).fetchone()[0])
+
+    def shot_kinds(self, shot_ids: Iterable[str]) -> dict[str, str]:
+        """shot id -> "video" or "image", for the shots asked about."""
+        ids = list(dict.fromkeys(shot_ids))
+        out: dict[str, str] = {}
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            marks = ", ".join("?" for _ in chunk)
+            for row in self.conn.execute(
+                f"""SELECT s.id, src.media_kind FROM shots s JOIN sources src ON src.id = s.source_id
+                    WHERE s.workspace_id = ? AND s.id IN ({marks})""",
+                (self.workspace_id, *chunk),
+            ).fetchall():
+                out[row["id"]] = row["media_kind"]
+        return out
 
     def prune_shots(self, source_id: str, keep: int) -> int:
         """Delete this source's shots numbered `keep` and above: the file was planned into fewer shots.
@@ -532,15 +554,19 @@ class Store:
             counts.update(set(re.findall(r"[\w']+", (text or "").lower())))
         return counts
 
-    def browse_rows(self) -> list[dict[str, Any]]:
-        """Every organised shot, newest first - the raw material for browsing."""
+    def browse_rows(self, media_kind: str | None = None) -> list[dict[str, Any]]:
+        """Every organised shot, newest first - the raw material for browsing.
+
+        `media_kind` keeps one side only: "video" or "image".
+        """
+        kind_clause = " AND src.media_kind = ?" if media_kind else ""
         rows = self.conn.execute(
-            """SELECT s.id, s.category, s.secondary_categories_json, s.thumbnail_path,
+            f"""SELECT s.id, s.category, s.secondary_categories_json, s.thumbnail_path,
                       s.top_pick, s.featured_person, src.media_kind
                FROM shots s JOIN sources src ON src.id = s.source_id
-               WHERE s.workspace_id = ? AND s.status IN ('indexed', 'needs_review')
+               WHERE s.workspace_id = ? AND s.status IN ('indexed', 'needs_review'){kind_clause}
                ORDER BY src.created_at DESC, s.shot_index""",
-            (self.workspace_id,),
+            (self.workspace_id, *([media_kind] if media_kind else [])),
         ).fetchall()
         return [
             {
@@ -586,25 +612,32 @@ class Store:
 
     # -- facet counts (input to the taxonomy threshold rules) ---------------
 
-    def facet_counts(self) -> dict[tuple[str, str], int]:
-        """How many indexed shots carry each facet value, keyed (facet, value)."""
+    def facet_counts(self, media_kind: str | None = None) -> dict[tuple[str, str], int]:
+        """How many indexed shots carry each facet value, keyed (facet, value).
+
+        `media_kind` counts one side only ("video" or "image"), so the filters offered next to a list of
+        videos never promise images that are not in it.
+        """
         counts: dict[tuple[str, str], int] = {}
+        join = " JOIN sources src ON src.id = s.source_id" if media_kind else ""
+        only = " AND src.media_kind = ?" if media_kind else ""
+        extra = [media_kind] if media_kind else []
         for facet in SCALAR_FACETS:
             rows = self.conn.execute(
-                f"SELECT {facet} AS value, COUNT(*) AS n FROM shots"
-                " WHERE workspace_id = ? AND status IN ('indexed','needs_review')"
-                f" AND {facet} IS NOT NULL GROUP BY {facet}",
-                (self.workspace_id,),
+                f"SELECT s.{facet} AS value, COUNT(*) AS n FROM shots s{join}"
+                " WHERE s.workspace_id = ? AND s.status IN ('indexed','needs_review')"
+                f" AND s.{facet} IS NOT NULL{only} GROUP BY s.{facet}",
+                (self.workspace_id, *extra),
             ).fetchall()
             for row in rows:
                 counts[(facet, row["value"])] = row["n"]
         for facet in LIST_FACETS:
             rows = self.conn.execute(
                 f"""SELECT j.value AS value, COUNT(*) AS n
-                    FROM shots s, json_each(s.{facet}_json) j
-                    WHERE s.workspace_id = ? AND s.status IN ('indexed','needs_review')
+                    FROM shots s{join}, json_each(s.{facet}_json) j
+                    WHERE s.workspace_id = ? AND s.status IN ('indexed','needs_review'){only}
                     GROUP BY j.value""",
-                (self.workspace_id,),
+                (self.workspace_id, *extra),
             ).fetchall()
             for row in rows:
                 counts[(facet, row["value"])] = row["n"]

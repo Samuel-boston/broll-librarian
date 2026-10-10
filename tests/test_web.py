@@ -82,7 +82,7 @@ def test_uploading_a_non_video_is_rejected_not_queued(workspace, tmp_path):
             files=[("files", (junk.name, junk.read_bytes(), "text/plain"))],
         )
     assert response.status_code == 200
-    assert "Skipped 1 non-video" in response.text
+    assert "Skipped 1 file(s) that are neither a video nor an image" in response.text
 
     store = Store.for_config(workspace)
     try:
@@ -108,7 +108,7 @@ def test_search_page_shows_indexed_shots(workspace, store):
     with _client(workspace, run_worker=False) as client:
         html = client.get("/search?q=coffee").text
     assert "coffee" in html.lower()
-    assert "shots indexed" in html
+    assert "videos indexed" in html
 
 
 @pytest.mark.slow

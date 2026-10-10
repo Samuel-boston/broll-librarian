@@ -164,16 +164,16 @@ def _as_bool(value: Any) -> bool:
 
 
 def review_queue(
-    store: Store, limit: int = 200, below_confidence: float = 0.7
+    store: Store, limit: int = 200, below_confidence: float = 0.7, media_kind: str | None = None
 ) -> list[dict[str, Any]]:
-    """Shots needing attention, newest first, with why."""
+    """Shots needing attention, newest first, with why. `media_kind` keeps one side: "video" or "image"."""
     rows = store.conn.execute(
-        """SELECT s.*, src.original_filename, src.duration_s AS source_duration
+        f"""SELECT s.*, src.original_filename, src.duration_s AS source_duration, src.media_kind AS kind
            FROM shots s JOIN sources src ON src.id = s.source_id
-           WHERE s.workspace_id = ? AND s.status = 'needs_review'
+           WHERE s.workspace_id = ? AND s.status = 'needs_review'{" AND src.media_kind = ?" if media_kind else ""}
            ORDER BY src.created_at DESC, s.shot_index
            LIMIT ?""",
-        (store.workspace_id, limit),
+        (store.workspace_id, *([media_kind] if media_kind else []), limit),
     ).fetchall()
 
     queue = []
@@ -200,6 +200,7 @@ def review_queue(
             {
                 "shot": shot,
                 "filename": row["original_filename"],
+                "kind": row["kind"],
                 "reasons": reasons or ["flagged for review"],
             }
         )

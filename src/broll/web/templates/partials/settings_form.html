@@ -195,5 +195,18 @@
       <p class="mt-4 text-sm text-faint">None seen twice or more yet.</p>
       {% endif %}
     </div>
+
+    <div class="card space-y-3 p-6" style="border-color:rgba(244,123,147,.28)">
+      <h2 class="text-sm font-semibold text-white">Delete everything</h2>
+      <p class="text-xs leading-relaxed text-faint">
+        Empties this library: every video and image, its tags and thumbnails. Files in Google Drive are not touched.
+        You will be asked to type DELETE first.
+      </p>
+      <button type="button" class="btn btn-sm" style="color:var(--rose)"
+              hx-post="/library/delete-all" hx-swap="none"
+              hx-prompt="Delete EVERYTHING in this library: every clip, its tags and thumbnails. Files in Google Drive are not touched. This cannot be undone.&#10;&#10;Type DELETE to confirm.">
+        Delete all…
+      </button>
+    </div>
   </div>
 </div>

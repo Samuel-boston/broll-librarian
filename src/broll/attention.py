@@ -6,7 +6,7 @@ can then open the file, dismiss it, or tell the library to index it anyway.
 
 When Drive is connected the list is mirrored there too: a "_Needs Attention" folder with one
 shortcut per file, grouped by reason. A shortcut points at the file where it already is. Nothing is
-moved, renamed or deleted.
+moved, renamed or deleted. Videos and images are listed apart, as everywhere else.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from . import kinds
 from .config import WorkspaceConfig
 from .db.store import Store
 from .ingest.scanner import DiscoveredFile
@@ -190,7 +191,9 @@ def sync_drive_shortcuts(config: WorkspaceConfig, store: Store, client) -> int:
     created = 0
     for item in pending:
         try:
-            folder = organizer._folder_id((DRIVE_FOLDER, heading(item["kind"])), report)
+            # Videos and images are kept apart here too: _Needs Attention/Videos/<reason>, .../Images/<reason>.
+            side = config.taxonomy.media_prefix(kinds.of_file(item["filename"]))
+            folder = organizer._folder_id((DRIVE_FOLDER, *side, heading(item["kind"])), report)
             existing = next(
                 (e for e in client.list_all(folder)
                  if e.is_shortcut and e.shortcut_target_id == item["drive_file_id"]),

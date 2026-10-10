@@ -35,7 +35,7 @@ from typing import Any
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
-from ... import attention
+from ... import attention, kinds
 from ...db.store import Store, canonical_time
 from ...ingest.scanner import DiscoveredFile, media_kind, scan_local
 from ...jobs.queue import enqueue_files, queue_stats
@@ -282,6 +282,8 @@ async def status(request: Request, client: str | None = None) -> dict:
             "done": stats.done,
             "failed": stats.failed,
             "shots": store.count_shots(),
+            "videos": store.count_shots(media_kind="video"),
+            "images": store.count_shots(media_kind="image"),
             "needs_review": store.count_shots("needs_review"),
             "needs_attention": sum(store.attention_counts().values()),
             "worker_running": bool(state.worker),
@@ -303,7 +305,8 @@ async def attention_list(request: Request, client: str | None = None) -> dict:
             "count": len(items),
             "items": [
                 {
-                    "id": i["id"], "kind": i["kind"], "filename": i["filename"], "detail": i["detail"],
+                    "id": i["id"], "kind": i["kind"], "media": kinds.of_file(i["filename"]),
+                    "filename": i["filename"], "detail": i["detail"],
                     "link": i["link"], "size_bytes": i["size_bytes"], "duration_s": i["duration_s"],
                 }
                 for i in items

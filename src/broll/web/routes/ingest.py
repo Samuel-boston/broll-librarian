@@ -7,8 +7,9 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
 
+from ... import kinds
 from ...ingest.scanner import DiscoveredFile, media_kind, scan_local
-from ...jobs.queue import enqueue_files, queue_stats
+from ...jobs.queue import KIND_INDEX_SOURCE, enqueue_files, queue_stats
 from ...library_admin import cancel_job, clear_queue
 from ..app import client_state, templates
 
@@ -126,7 +127,7 @@ async def upload(request: Request, files: list[UploadFile] = File(default=[])):
         context = _queue_context(request, store, state)
         context["message"] = f"Queued {len(accepted)} file(s)."
         if rejected:
-            context["message"] += f" Skipped {len(rejected)} non-video file(s)."
+            context["message"] += f" Skipped {len(rejected)} file(s) that are neither a video nor an image."
         if rejected_full:
             context["error"] = "Not uploaded, the disk is too full: " + "; ".join(rejected_full)
     finally:
@@ -194,11 +195,24 @@ def _queue_context(request: Request, store, state) -> dict:
     ).fetchone()[0]
     per_file = float(average or 0.0)
 
+    # The same queue, counted once for videos and once for images.
+    by_side = {k: {"queued": 0, "running": 0, "done": 0, "failed": 0} for k in kinds.KINDS}
+    for row in store.conn.execute(
+        """SELECT status, json_extract(payload_json, '$.filename') AS filename FROM jobs
+           WHERE workspace_id = ? AND kind = ? AND status IN ('queued', 'running', 'done', 'failed')""",
+        (store.workspace_id, KIND_INDEX_SOURCE),
+    ):
+        by_side[kinds.of_file(row["filename"])][row["status"]] += 1
+    jobs = [{**dict(r), "media": kinds.of_file(r["filename"])} for r in recent]
+
     return {
         "request": request,
         "workspace": state.config,
         "stats": stats,
-        "jobs": [dict(r) for r in recent],
+        "jobs": jobs,
+        "by_side": [{"key": k, "label": kinds.LABELS[k], **by_side[k],
+                     "indexed": store.count_shots(media_kind=k),
+                     "review": store.count_shots("needs_review", media_kind=k)} for k in kinds.KINDS],
         "cost_so_far": store.total_cost(),
         "cost_remaining": per_file * stats.outstanding,
         "shots": store.count_shots(),

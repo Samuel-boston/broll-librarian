@@ -1,8 +1,8 @@
 {% if corrections %}
   <p class="mb-4 text-sm text-muted">
     Showing results for <span class="font-medium text-white">{{ corrected_query }}</span>.
-    <a href="{{ request.url.include_query_params(exact='true') }}"
-       hx-get="{{ request.url.include_query_params(exact='true') }}" hx-include="this"
+    <a href="{{ url_with(request, exact='true') }}"
+       hx-get="{{ url_with(request, exact='true') }}" hx-include="this"
        class="text-accent underline decoration-dotted underline-offset-4">Search instead for “{{ query }}”</a>
   </p>
 {% endif %}
@@ -31,7 +31,7 @@
         {% endif %}
         <div class="absolute right-2.5 top-2.5">{% include "partials/star.html" %}</div>
         {% if result.source.media_kind == 'image' %}
-          <span class="absolute bottom-2.5 right-2.5 rounded bg-black/55 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-white/90 backdrop-blur">Photo</span>
+          <span class="absolute bottom-2.5 right-2.5 rounded bg-black/55 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-white/90 backdrop-blur">Image</span>
         {% else %}
           <span class="mono absolute bottom-2.5 right-2.5 rounded bg-black/55 px-1.5 py-0.5 text-[11px] text-white/90 backdrop-blur">{{ '%.1f'|format(shot.duration_s) }}s</span>
         {% endif %}
@@ -95,8 +95,8 @@
 {% if hidden_count %}
   <p class="mt-6 text-center text-xs text-faint">
     {{ hidden_count }} near match{{ '' if hidden_count == 1 else 'es' }} hidden.
-    <a href="{{ request.url.include_query_params(loose='true') }}"
-       hx-get="{{ request.url.include_query_params(loose='true') }}" hx-include="this"
+    <a href="{{ url_with(request, loose='true') }}"
+       hx-get="{{ url_with(request, loose='true') }}" hx-include="this"
        class="text-accent underline decoration-dotted underline-offset-4">Show them</a>
   </p>
 {% elif loose and query %}

@@ -20,6 +20,7 @@ from ...review import (
     dismiss_folder_proposal,
     review_queue,
 )
+from ... import kinds
 from ..app import client_state, templates
 
 log = logging.getLogger(__name__)
@@ -41,14 +42,32 @@ def _categories(config) -> list[str]:
 
 
 def _context(request: Request, state, store, message: str | None = None) -> dict:
+    """The review screen for one side, videos or images. The side travels in the address (?kind=)."""
+    flagged = {k: store.count_shots("needs_review", media_kind=k) for k in kinds.KINDS}
+    kind = kinds.clean(request.query_params.get("kind"))
+    if not kind:
+        kind = "image" if flagged["image"] and not flagged["video"] else "video"
+
+    proposals = store.list_folder_proposals("open")
+    side_of = store.shot_kinds(i for p in proposals for i in p["shot_ids"])
+    mine = []
+    for proposal in proposals:
+        here = [i for i in proposal["shot_ids"] if side_of.get(i) == kind]
+        if here:
+            mine.append({**proposal, "count_here": len(here)})
+
     context = {
         "request": request,
         "workspace": state.config,
-        "queue": review_queue(store, below_confidence=state.config.ingest.review_below_confidence),
+        "kind": kind,
+        "noun": kinds.SINGULAR[kind],
+        "tabs": [{"key": k, "label": kinds.LABELS[k], "count": flagged[k]} for k in kinds.KINDS],
+        "queue": review_queue(
+            store, below_confidence=state.config.ingest.review_below_confidence, media_kind=kind),
         "options": ENUM_OPTIONS,
         "categories": _categories(state.config),
-        "indexed": store.count_shots("indexed"),
-        "proposals": store.list_folder_proposals("open"),
+        "indexed": store.count_shots("indexed", media_kind=kind),
+        "proposals": mine,
     }
     if message:
         context["message"] = message

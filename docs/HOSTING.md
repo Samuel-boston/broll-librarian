@@ -143,8 +143,8 @@ video. So the library does not download or analyse a file that is:
   server's disk (uploads and local files). A big video that is already in Google Drive is never downloaded.
 
 It decides from what Google Drive already reports, so nothing is downloaded to find out. Set a limit to 0 to
-turn it off. These files go on the **Needs attention** page with a link to open each one, and as shortcuts in
-a `_Needs Attention` folder in Drive. **Index anyway** lifts the length limit for that one file (up to
+turn it off. These files go on the **Needs attention** page (Videos and Images listed apart) with a link to open each one,
+and as shortcuts in a `_Needs Attention` folder in Drive. **Index anyway** lifts the length limit for that one file (up to
 `ingest.max_forced_duration_s`, default 3 hours) and the library then looks through it for the usable
 stretches.
 

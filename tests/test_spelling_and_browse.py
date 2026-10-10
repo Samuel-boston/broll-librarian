@@ -155,26 +155,33 @@ def test_the_folder_filter_includes_secondary_matches(workspace, store):
     assert names(engine.browse(SearchFilters(uncategorised=True), 50)) == ["stray.mov"]
 
 
-def test_the_library_home_shows_folders_feelings_and_recent_clips(workspace, store):
+def test_the_library_home_is_two_doors_and_each_side_shows_folders_feelings_and_recent_clips(workspace, store):
     from broll.web.app import create_app
 
     _tree_workspace(workspace, store)
     store.close()
     with TestClient(create_app(workspace, run_worker=False)) as client:
         home = client.get("/").text  # redirects to /library
-        # The page (rightly) escapes "&" as "&amp;".
-        assert "Nervous System Practices" in home and "Travel &amp; Adventure" in home
-        assert "Browse by feeling" in home and "calm" in home
-        assert "Recently added" in home
-        assert "Unsorted · 1" in home
-        assert "START HERE" not in home and "Top Picks</span>" not in home
+        # Nothing but the two sides: no folders, no feelings, no recent clips, no search box.
+        assert "Videos" in home and "Images" in home
+        assert "Nervous System Practices" not in home and "Browse by feeling" not in home
+        assert "Recently added" not in home and 'name="q"' not in home
+        assert 'href="/library?kind=video"' in home and 'href="/library?kind=image"' in home
 
-        folder = client.get("/library", params={"path": "01_Nervous System Practices"}).text
+        side = client.get("/library", params={"kind": "video"}).text
+        # The page (rightly) escapes "&" as "&amp;".
+        assert "Nervous System Practices" in side and "Travel &amp; Adventure" in side
+        assert "Browse by feeling" in side and "calm" in side
+        assert "Recently added" in side
+        assert "Unsorted · 1" in side
+        assert "START HERE" not in side and "Top Picks</span>" not in side
+
+        folder = client.get("/library", params={"kind": "video", "path": "01_Nervous System Practices"}).text
         assert "Breathwork" in folder and "Meditation &amp; Stillness" in folder  # subfolders
         assert folder.count("<article") == 2                                       # both clips
-        assert "2 clips in Nervous System Practices" in folder
+        assert "2 videos in Nervous System Practices" in folder
 
-        feeling = client.get("/library", params={"emotion": "grounded"}).text
+        feeling = client.get("/library", params={"kind": "video", "emotion": "grounded"}).text
         assert feeling.count("<article") == 1 and "Feeling grounded" in feeling
 
 

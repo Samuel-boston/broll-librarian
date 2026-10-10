@@ -32,7 +32,7 @@ def _flag(workspace, name="podcast.mp4", kind="too_long", link="https://drive.go
 
 def test_the_page_says_so_when_nothing_needs_attention(workspace):
     html = _client(workspace).get("/attention").text
-    assert "Nothing needs attention" in html
+    assert "No videos need attention" in html
 
 
 def test_each_file_is_listed_with_its_reason_and_a_link_to_open_it(workspace):

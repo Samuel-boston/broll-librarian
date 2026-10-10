@@ -31,6 +31,27 @@ TEMPLATE_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+
+
+def url_with(request, **updates) -> str:
+    """This page's address with some query parameters changed, as a *relative* link ("/search?q=...").
+
+    Never absolute: behind the HTTPS reverse proxy the app sees plain http, and a link built from
+    request.url pointed at http:// on an https:// page. The browser blocks that silently, so tabs and
+    "show more" buttons did nothing. A parameter set to None is dropped; a list replaces every value.
+    """
+    from urllib.parse import urlencode
+
+    items = [(k, v) for k, v in request.query_params.multi_items() if k not in updates]
+    for key, value in updates.items():
+        if value is None:
+            continue
+        for item in value if isinstance(value, (list, tuple)) else [value]:
+            items.append((key, str(item)))
+    return request.url.path + (f"?{urlencode(items)}" if items else "")
+
+
+templates.env.globals["url_with"] = url_with
 # Lets the layout show a Sign out button only when the shared-password gate is on.
 templates.env.globals["access_enabled"] = lambda: bool(os.environ.get("BROLL_ACCESS_PASSWORD"))
 

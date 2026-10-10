@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% set active = 'library' %}
+{% set active = 'search' %}
 {% block title %}Search{% endblock %}
 {% block content %}
 <!-- hx-target/-swap/-include/-push-url are inherited from the form, but the
@@ -16,7 +16,7 @@
                hx-get="/search" hx-trigger="keyup changed delay:400ms, search"
                placeholder="calm, grounded, switching off"
                class="input mt-1.5">
-        <p class="mt-1.5 text-xs text-faint">{{ total_shots }} shots indexed</p>
+        <p class="mt-1.5 text-xs text-faint">{{ total_shots }} {{ noun }}{{ '' if total_shots == 1 else 's' }} indexed</p>
       </div>
 
       <div class="card space-y-2 p-3.5">
@@ -39,6 +39,8 @@
         </label>
       </div>
 
+      {#- A photograph has no length, so the length filters are for videos only. -#}
+      {% if noun != 'image' %}
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="label">Min secs</label>
@@ -51,6 +53,7 @@
                  hx-get="/search" hx-trigger="change" class="filter-input input mt-1.5 py-1.5 text-sm">
         </div>
       </div>
+      {% endif %}
 
       {% macro facet_group(title, name, options, chosen, open=False, path=False) %}
         {% if options %}

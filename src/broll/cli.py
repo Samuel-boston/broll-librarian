@@ -732,6 +732,8 @@ def status(
             "jobs": stats.__dict__,
             "sources": sources,
             "shots": store.count_shots(),
+            "videos": store.count_shots(media_kind="video"),
+            "images": store.count_shots(media_kind="image"),
             "needs_review": store.count_shots("needs_review"),
             "vectors": store.vectors.count(),
             "vector_backend": store.vectors.backend,
@@ -746,7 +748,8 @@ def status(
         _echo(f"jobs:      queued={stats.queued} running={stats.running} "
               f"done={stats.done} failed={stats.failed}")
         _echo("sources:   " + (", ".join(f"{k}={v}" for k, v in sources.items()) or "none"))
-        _echo(f"shots:     {payload['shots']} total, {payload['needs_review']} need review")
+        _echo(f"shots:     {payload['shots']} total ({payload['videos']} videos, {payload['images']} images), "
+              f"{payload['needs_review']} need review")
         _echo(f"vectors:   {payload['vectors']} ({payload['vector_backend']} backend)")
         waiting = store.attention_counts()
         if waiting:

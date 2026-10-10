@@ -108,7 +108,7 @@ def test_review_screen_lists_and_saves(flagged):
                   "status": "indexed"},
         )
         assert saved.status_code == 200
-        assert "Nothing needs review" in saved.text
+        assert "No videos need review" in saved.text
 
         bad = client.post(f"/review/{shot.id}", data={"shot_type": "banana"})
         assert bad.status_code == 400

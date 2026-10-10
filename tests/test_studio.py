@@ -67,12 +67,12 @@ def test_the_header_offers_every_client(studio):
 
 def test_a_chosen_client_is_remembered(studio):
     """?client= switches, and the cookie keeps you there for the next click."""
-    first = studio.get("/library?client=luqman")
+    first = studio.get("/library?client=luqman&kind=video")
     assert first.status_code == 200
     assert "closes a deal" in first.text
 
     # No ?client= this time: the cookie decides, not the default.
-    again = studio.get("/library")
+    again = studio.get("/library?kind=video")
     assert "closes a deal" in again.text
     assert "meditates on a beach" not in again.text
 

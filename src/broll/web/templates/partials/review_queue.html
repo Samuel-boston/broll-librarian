@@ -1,4 +1,13 @@
 <div id="review-queue" class="space-y-5">
+  <div class="flex items-center gap-2" role="tablist" aria-label="Videos or images">
+    {% for tab in tabs %}
+    <a role="tab" aria-selected="{{ 'true' if tab.key == kind else 'false' }}" href="/review?kind={{ tab.key }}"
+       class="chip {% if tab.key == kind %}chip-amber{% endif %}">
+      {{ tab.label }} <span class="mono text-xs {% if tab.key != kind %}text-faint{% endif %}">{{ tab.count }}</span>
+    </a>
+    {% endfor %}
+  </div>
+
   {% if message %}
     <p class="alert alert-ok">{{ message }}</p>
   {% endif %}
@@ -7,18 +16,18 @@
   <section class="card overflow-hidden">
     <header class="border-b border-line-soft px-5 py-4">
       <h2 class="text-sm font-semibold text-white">Suggested folders <span class="tag tag-warn">{{ proposals|length }}</span></h2>
-      <p class="mt-1 text-xs text-muted">The model found clips that fit none of the client's folders. Nothing was created. Approve a folder to add it and move those clips into it.</p>
+      <p class="mt-1 text-xs text-muted">The model found {{ noun }}s that fit none of the client's folders. Nothing was created. Approve a folder to add it and move those {{ noun }}s into it.</p>
     </header>
     <ul class="divide-line">
       {% for p in proposals %}
       <li class="flex flex-wrap items-center gap-3 px-5 py-3 text-sm">
         <div class="min-w-0 flex-1">
           <p class="font-medium">{{ p.path.replace('/', ' › ') }}</p>
-          <p class="mt-0.5 text-xs text-faint">{{ p.shot_ids|length }} clip(s){% if p.note %} · {{ p.note }}{% endif %}</p>
+          <p class="mt-0.5 text-xs text-faint">{{ p.count_here }} {{ noun }}{{ '' if p.count_here == 1 else 's' }}{% if p.note %} · {{ p.note }}{% endif %}</p>
         </div>
-        <button type="button" class="btn btn-sm btn-primary" hx-post="/review/folders/{{ p.id }}/approve"
+        <button type="button" class="btn btn-sm btn-primary" hx-post="/review/folders/{{ p.id }}/approve?kind={{ kind }}"
                 hx-target="#review-queue" hx-swap="outerHTML">Create folder</button>
-        <button type="button" class="btn btn-sm" hx-post="/review/folders/{{ p.id }}/dismiss"
+        <button type="button" class="btn btn-sm" hx-post="/review/folders/{{ p.id }}/dismiss?kind={{ kind }}"
                 hx-target="#review-queue" hx-swap="outerHTML">Dismiss</button>
       </li>
       {% endfor %}
@@ -27,14 +36,14 @@
   {% endif %}
 
   {% if not queue %}
-    <p class="empty">Nothing needs review. {{ indexed }} shot(s) are indexed.</p>
+    <p class="empty">No {{ noun }}s need review. {{ indexed }} {{ noun }}{{ '' if indexed == 1 else 's' }} indexed.</p>
   {% else %}
-  <p class="text-sm text-muted">{{ queue|length }} shot(s) flagged. Corrections are kept and
+  <p class="text-sm text-muted">{{ queue|length }} {{ noun }}{{ '' if queue|length == 1 else 's' }} flagged. Corrections are kept and
      recompute the shot's search text and embedding.</p>
 
   {% for entry in queue %}
   {% set shot = entry.shot %}
-  <form class="card overflow-hidden" hx-post="/review/{{ shot.id }}"
+  <form class="card overflow-hidden" hx-post="/review/{{ shot.id }}?kind={{ kind }}"
         hx-target="#review-queue" hx-swap="outerHTML">
     <header class="flex flex-wrap items-center gap-3.5 border-b border-line-soft px-5 py-4">
       <div class="thumb h-14 w-24 shrink-0 rounded-md">
@@ -44,10 +53,12 @@
       </div>
       <div class="min-w-0 flex-1">
         <p class="truncate text-sm font-medium">{{ entry.filename }}
+          {% if kind != 'image' %}
           <span class="mono text-[11px] font-normal text-faint">
             shot {{ shot.shot_index + 1 }} · @{{ '%.1f'|format(shot.start_s) }}s ·
             {{ '%.1f'|format(shot.duration_s) }}s
           </span>
+          {% endif %}
         </p>
         <p class="mt-0.5 text-xs" style="color:#f6c887">{{ entry.reasons | join('; ') }}</p>
       </div>

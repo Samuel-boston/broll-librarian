@@ -23,7 +23,9 @@ whose download didn't finish are **not** indexed and **not** lost. They are on *
 For each one: open it, then **Index anyway** (the library looks through it for usable stretches) or
 **Dismiss** (it is never queued again). `POST /api/attention/{id}/index` and `.../dismiss` do the same.
 
-The same list appears in Drive, as shortcuts under `_Needs Attention/`, one folder per reason. Nothing is moved.
+The same list appears in Drive, as shortcuts under `_Needs Attention/`, one folder per reason (and, when the
+tree is split by media, under `Videos/` or `Images/` inside it). Nothing is moved. Each item in
+`GET /api/attention` says which side it is on: `"media": "video"` or `"image"`.
 
 ## 3. Check what the model decided
 

@@ -251,8 +251,10 @@ def test_delete_button_on_a_card_removes_the_file(workspace, store):
     source_id = shot_id.rsplit("-", 1)[0]
     store.close()
     with _client(workspace) as client:
-        page = client.get("/library").text
-        assert f"/sources/{source_id}/delete" in page and "Delete all" in page
+        page = client.get("/library", params={"kind": "video"}).text
+        assert f"/sources/{source_id}/delete" in page
+        # "Delete all" is on Settings, not on the page people browse on.
+        assert "Delete all" not in page and "Delete all" in client.get("/settings").text
         response = client.post(f"/sources/{source_id}/delete")
         assert response.status_code == 200 and response.text == ""
         assert client.post(f"/sources/{source_id}/delete").status_code == 404

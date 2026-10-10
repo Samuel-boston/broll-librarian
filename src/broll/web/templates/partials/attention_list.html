@@ -1,13 +1,21 @@
 <div id="attention-list" class="space-y-6">
+  <div class="flex items-center gap-2" role="tablist" aria-label="Videos or images">
+    {% for tab in tabs %}
+    <a role="tab" aria-selected="{{ 'true' if tab.key == kind else 'false' }}" href="/attention?kind={{ tab.key }}"
+       class="chip {% if tab.key == kind %}chip-amber{% endif %}">
+      {{ tab.label }} <span class="mono text-xs {% if tab.key != kind %}text-faint{% endif %}">{{ tab.count }}</span>
+    </a>
+    {% endfor %}
+  </div>
   {% if message %}<p class="alert alert-ok">{{ message }}</p>{% endif %}
   {% if error %}<p class="alert alert-bad">{{ error }}</p>{% endif %}
 
   {% if not groups %}
-    <p class="empty">Nothing needs attention. Every file the library has seen was indexed.</p>
+    <p class="empty">No {{ noun }}s need attention. Every {{ noun }} the library has seen was indexed.</p>
   {% else %}
   <div class="flex flex-wrap items-center gap-3">
-    <p class="text-sm text-muted">{{ total }} file(s).{% if limit_text %} Anything longer than {{ limit_text }} is set aside, so a recording doesn't get tagged as if it were B-roll.{% endif %}</p>
-    <button class="btn btn-sm ml-auto" hx-post="/attention/sync" hx-target="#attention-list" hx-swap="outerHTML">
+    <p class="text-sm text-muted">{{ total }} {{ noun }}{{ '' if total == 1 else 's' }}.{% if limit_text and kind == 'video' %} Anything longer than {{ limit_text }} is set aside, so a recording doesn't get tagged as if it were B-roll.{% endif %}</p>
+    <button class="btn btn-sm ml-auto" hx-post="/attention/sync?kind={{ kind }}" hx-target="#attention-list" hx-swap="outerHTML">
       Add shortcuts to Drive
     </button>
   </div>
@@ -34,13 +42,13 @@
         <a class="btn btn-sm" href="{{ item.link }}" target="_blank" rel="noopener">Open in Drive</a>
         {% endif %}
         {% if item.can_force %}
-        <button class="btn btn-sm btn-primary" hx-post="/attention/{{ item.id }}/index"
+        <button class="btn btn-sm btn-primary" hx-post="/attention/{{ item.id }}/index?kind={{ kind }}"
                 hx-target="#attention-list" hx-swap="outerHTML"
                 hx-confirm="Index {{ item.filename }} anyway? The library will look through it for usable stretches.">
           {{ 'Index anyway' if item.kind == 'too_long' else 'Try again' }}
         </button>
         {% endif %}
-        <button class="btn btn-sm" hx-post="/attention/{{ item.id }}/dismiss"
+        <button class="btn btn-sm" hx-post="/attention/{{ item.id }}/dismiss?kind={{ kind }}"
                 hx-target="#attention-list" hx-swap="outerHTML"
                 {% if item.origin == 'upload' %}hx-confirm="Dismiss {{ item.filename }}? This also deletes the copy that was uploaded to the server (the original on your computer is untouched)."{% endif %}>Dismiss</button>
       </li>

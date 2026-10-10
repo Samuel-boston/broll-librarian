@@ -1,4 +1,4 @@
-"""The search page: Videos and Photos as two lists that are always there, and every match reachable."""
+"""The search page: Videos and Images as two lists that are always there, and every match reachable."""
 
 from __future__ import annotations
 
@@ -37,21 +37,21 @@ def tab(html, label):
     return match.group(1) if match else None
 
 
-def test_videos_and_photos_are_two_lists_with_their_own_counts(workspace):
+def test_videos_and_images_are_two_lists_with_their_own_counts(workspace):
     seed(workspace, videos=3, photos=2)
     html = page(workspace, q="presenting")
-    assert tab(html, "Videos") == "3" and tab(html, "Photos") == "2"
+    assert tab(html, "Videos") == "3" and tab(html, "Images") == "2"
 
 
 def test_both_lists_are_there_even_when_one_is_empty(workspace):
     seed(workspace, videos=3, photos=0)
     html = page(workspace, q="presenting")
-    assert tab(html, "Videos") == "3" and tab(html, "Photos") == "0"
+    assert tab(html, "Videos") == "3" and tab(html, "Images") == "0"
     photos = page(workspace, q="presenting", view="image")
-    assert "No photos match." in photos and "video0" not in photos
+    assert "No images match." in photos and "video0" not in photos
 
 
-def test_the_photos_list_shows_only_photos_and_the_videos_list_only_videos(workspace):
+def test_the_images_list_shows_only_images_and_the_videos_list_only_videos(workspace):
     seed(workspace, videos=2, photos=2)
     videos = page(workspace, q="presenting", view="video")
     photos = page(workspace, q="presenting", view="image")
@@ -59,7 +59,7 @@ def test_the_photos_list_shows_only_photos_and_the_videos_list_only_videos(works
     assert "image0.jpg" in photos and "video0.mov" not in photos
 
 
-def test_with_only_photos_the_page_opens_on_them(workspace):
+def test_with_only_images_the_page_opens_on_them(workspace):
     seed(workspace, videos=0, photos=2)
     html = page(workspace, q="presenting")
     assert "image0.jpg" in html and tab(html, "Videos") == "0"
@@ -67,7 +67,7 @@ def test_with_only_photos_the_page_opens_on_them(workspace):
 
 def test_an_empty_search_still_shows_both_lists(workspace):
     html = page(workspace, q="")
-    assert tab(html, "Videos") == "0" and tab(html, "Photos") == "0"
+    assert tab(html, "Videos") == "0" and tab(html, "Images") == "0"
 
 
 def test_every_match_can_be_reached_a_page_at_a_time(workspace):

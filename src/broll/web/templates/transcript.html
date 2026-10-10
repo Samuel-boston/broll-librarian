@@ -13,6 +13,16 @@
             class="textarea mono mt-1.5 text-xs leading-relaxed"></textarea>
   <div class="mt-4 flex flex-wrap items-center gap-5">
     <input type="file" name="upload" accept=".srt,.vtt,.txt,text/plain">
+    <fieldset class="flex items-center gap-4 text-sm">
+      <legend class="sr-only">Suggest</legend>
+      <span class="label">Suggest</span>
+      <label class="flex cursor-pointer items-center gap-2">
+        <input type="radio" name="media" value="video" checked> Videos
+      </label>
+      <label class="flex cursor-pointer items-center gap-2">
+        <input type="radio" name="media" value="image"> Images
+      </label>
+    </fieldset>
     <label class="flex cursor-pointer items-center gap-2 text-sm">
       <input type="checkbox" name="rerank" value="true" checked>
       Rerank with the text model

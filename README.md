@@ -163,13 +163,23 @@ One process: FastAPI + Jinja2 + HTMX + Tailwind from a CDN. No SPA, no npm, no
 build step. The ingest worker runs inside the same process by default, so
 dropping files in the browser is all it takes — no CLI step.
 
+* **Videos and Images, kept apart everywhere.** The home page is two doors,
+  *Videos* and *Images*, and nothing else. Each opens the same folder tree
+  holding only that kind, with its own counts, thumbnails, feelings and recent
+  additions; a toggle at the top hops to the same folder on the other side.
+  Search, Review, Needs attention and the Upload queue are split the same way
+  (a tab for each, with its own count), and Script to B-roll asks which side to
+  cut from. Old links that predate the split (`/library?path=...`) land on the
+  Videos side.
 * **Ingest** — drag and drop, or point at a folder (files there are never moved,
   copied or deleted). The queue panel polls every two seconds while work is
-  outstanding and shows queued/running/done/failed, shots indexed, cost so far
-  and estimated cost remaining.
-* **Search** — query box, filter sidebar built from the facets the library
-  actually contains, thumbnail grid with captions, timecodes, quality flags,
-  a Drive link and a copy-link button.
+  outstanding and shows queued/running/done/failed, shots indexed and shots
+  needing review (each counted for videos and for images), cost so far and
+  estimated cost remaining.
+* **Search** — query box, filter sidebar built from the facets the side being
+  searched actually contains, thumbnail grid with captions, timecodes, quality
+  flags, a Drive link and a copy-link button. Videos and Images are two tabs,
+  each with a count; switching is a plain link, so the filters change with it.
 
 * **Transcript** — paste or upload, see suggestions per beat, swap any of them,
   export FCP7 XML / EDL / CSV.
@@ -180,7 +190,8 @@ dropping files in the browser is all it takes — no CLI step.
   the analysis failed twice. Corrections are ground truth: saving one recomputes
   the shot's search text and embedding immediately.
 * **Settings** — provider and model, API keys, Drive connection, taxonomy
-  thresholds, the Drive-for-Desktop mount path, and vocabulary promotion.
+  thresholds, the Drive-for-Desktop mount path, vocabulary promotion, and the
+  "Delete everything" control (it asks you to type DELETE).
 
 API keys typed into Settings are written to `$BROLL_HOME/.env` with owner-only
 permissions and are never rendered back to the page, never stored in the

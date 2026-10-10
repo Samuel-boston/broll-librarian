@@ -1,7 +1,7 @@
 <div class="space-y-4">
   <div class="card flex flex-wrap items-center gap-3 px-5 py-4">
     <div class="text-sm text-muted">
-      <span class="font-medium text-white">{{ timeline.items|length }}</span> clip(s) ·
+      <span class="font-medium text-white">{{ timeline.items|length }}</span> {{ 'image' if run.media == 'image' else 'video' }}{{ '' if timeline.items|length == 1 else 's' }} ·
       <span class="font-medium text-white">{{ gaps|length }}</span> gap(s) ·
       <span class="mono text-xs">{{ timeline.fps }} fps</span>
     </div>
@@ -48,7 +48,7 @@
               {% if loop.first %}<span class="tag tag-accent mr-1.5">on timeline</span>{% endif %}
               {{ suggestion.source.original_filename }}
               {% if suggestion.source.media_kind == 'image' %}
-                <span class="tag">photo</span>
+                <span class="tag">image</span>
               {% else %}
                 <span class="mono text-[11px] text-faint">@{{ '%.1f'|format(suggestion.shot.start_s) }}s · {{ '%.1f'|format(suggestion.shot.duration_s) }}s</span>
               {% endif %}

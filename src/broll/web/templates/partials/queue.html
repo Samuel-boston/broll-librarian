@@ -11,13 +11,26 @@
         {{ 'worker running' if worker_running else 'worker not running' }}
       </span>
     </div>
-    <dl class="mt-4 grid grid-cols-2 gap-y-2 text-sm">
-      <dt class="text-muted">Queued</dt><dd class="mono text-right">{{ stats.queued }}</dd>
-      <dt class="text-muted">Running</dt><dd class="mono text-right">{{ stats.running }}</dd>
-      <dt class="text-muted">Done</dt><dd class="mono text-right">{{ stats.done }}</dd>
-      <dt class="text-muted">Failed</dt><dd class="mono text-right {% if stats.failed %}text-rose{% endif %}">{{ stats.failed }}</dd>
-      <dt class="text-muted">Shots indexed</dt><dd class="mono text-right">{{ shots }}</dd>
-      <dt class="text-muted">Needs review</dt><dd class="mono text-right">{{ needs_review }}</dd>
+    <table class="mt-4 w-full text-sm">
+      <thead>
+        <tr class="text-xs text-faint">
+          <th class="pb-2 text-left font-normal"></th>
+          {% for side in by_side %}<th class="pb-2 text-right font-medium">{{ side.label }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for key, label in [('queued', 'Queued'), ('running', 'Running'), ('done', 'Done'), ('failed', 'Failed'),
+                              ('indexed', 'Shots indexed'), ('review', 'Needs review')] %}
+        <tr>
+          <td class="py-1 text-left text-muted">{{ label }}</td>
+          {% for side in by_side %}
+          <td class="mono py-1 text-right {% if key == 'failed' and side[key] %}text-rose{% endif %}">{{ side[key] }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <dl class="mt-3 grid grid-cols-2 gap-y-2 border-t border-line-soft pt-3 text-sm">
       <dt class="text-muted">Cost so far</dt><dd class="mono text-right">${{ '%.4f'|format(cost_so_far) }}</dd>
       <dt class="text-muted">Est. remaining</dt><dd class="mono text-right">${{ '%.4f'|format(cost_remaining) }}</dd>
     </dl>
@@ -44,6 +57,7 @@
           {% elif job.status == 'failed' %}bg-[#f47b93]
           {% elif job.status == 'cancelled' %}bg-[#4a5160] opacity-50
           {% else %}bg-[#39414f]{% endif %}"></span>
+        <span class="tag shrink-0">{{ 'image' if job.media == 'image' else 'video' }}</span>
         <span class="min-w-0 flex-1 truncate" title="{{ job.filename }}">{{ job.filename or job.id[:8] }}</span>
         <span class="text-xs text-faint">{{ job.status }}{% if job.attempts > 1 %} ·{{ job.attempts }}x{% endif %}</span>
         {% if job.status == 'queued' %}
