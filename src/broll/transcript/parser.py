@@ -28,6 +28,8 @@ class Cue:
     start_s: float
     end_s: float
     text: str
+    #: A person (or the phrase splitter) said "new B-roll starts here": never merged into the one before.
+    hard: bool = False
 
 
 @dataclass
@@ -114,7 +116,7 @@ def parse_plain_text(text: str, words_per_minute: int = 150) -> list[Cue]:
         cleaned = _clean(sentence)
         if not cleaned:
             continue
-        duration = max(1.0, len(cleaned.split()) * seconds_per_word)
+        duration = max(1.0, len(cleaned.replace("|", " ").split()) * seconds_per_word)
         cues.append(Cue(start_s=cursor, end_s=cursor + duration, text=cleaned))
         cursor += duration
     return cues
@@ -149,9 +151,18 @@ def segment(
     beat_min_s: float = 3.0,
     beat_max_s: float = 15.0,
     estimated: bool = False,
+    granularity: str = "sentence",
 ) -> list[Beat]:
-    """Cues -> beats: split on sentence boundaries, then merge and divide."""
-    sentences = _sentences(cues)
+    """Cues -> beats: split on sentence boundaries, then merge and divide.
+
+    `granularity="phrase"` also cuts at commas, semicolons, dashes and "and then", so each thing a
+    sentence lists ("I travelled, I walked on the beach, I stood on stage") gets its own B-roll.
+    A "|" in the script is always a cut, whatever the granularity.
+    """
+    sentences = _marks(_sentences(cues))
+    if granularity == "phrase":
+        sentences = _phrases(sentences)
+        beat_min_s = min(beat_min_s, PHRASE_MIN_S)
     merged = _merge_short(sentences, beat_min_s, beat_max_s)
     divided: list[Cue] = []
     for cue in merged:
@@ -168,6 +179,47 @@ def segment(
         )
         for index, cue in enumerate(divided)
     ]
+
+
+PHRASE_MIN_S = 0.6
+PHRASE_SPLIT = re.compile(r"(?<=[,;:])\s+|\s+[\u2013\u2014-]{1,2}\s+|\s+(?=(?:and then|then)\s)", re.I)
+
+
+def _respan(cue: Cue, parts: list[str], hard: bool) -> list[Cue]:
+    """Cut a cue into these parts, sharing its time out by word count."""
+    total = sum(len(p.split()) for p in parts) or 1
+    out, cursor, span = [], cue.start_s, cue.end_s - cue.start_s
+    for number, part in enumerate(parts):
+        share = span * (len(part.split()) / total)
+        out.append(Cue(cursor, cursor + share, part, hard=cue.hard if number == 0 else hard))
+        cursor += share
+    return out
+
+
+def _marks(cues: list[Cue]) -> list[Cue]:
+    """A "|" in the script is a cut the person asked for."""
+    out: list[Cue] = []
+    for cue in cues:
+        parts = [p.strip() for p in cue.text.split("|") if p.strip()]
+        out.extend(_respan(cue, parts, True) if len(parts) > 1 else [Cue(cue.start_s, cue.end_s, parts[0] if parts else cue.text, cue.hard)])
+    return out
+
+
+def _phrases(cues: list[Cue]) -> list[Cue]:
+    out: list[Cue] = []
+    for cue in cues:
+        pieces = [p.strip(" ,;") for p in PHRASE_SPLIT.split(cue.text) if p and p.strip(" ,;")]
+        merged: list[str] = []
+        for piece in pieces:  # a one-word scrap ("Yes,", "Then") belongs to its neighbour
+            if merged and len(merged[-1].split()) < 2:
+                merged[-1] = f"{merged[-1]}, {piece}"
+            else:
+                merged.append(piece)
+        if len(merged) > 1 and len(merged[-1].split()) < 2:
+            tail = merged.pop()
+            merged[-1] = f"{merged[-1]} {tail}"
+        out.extend(_respan(cue, merged, True) if len(merged) > 1 else [cue])
+    return out
 
 
 def _sentences(cues: list[Cue]) -> list[Cue]:
@@ -194,12 +246,12 @@ def _merge_short(cues: list[Cue], minimum: float, maximum: float) -> list[Cue]:
         if merged:
             previous = merged[-1]
             combined = cue.end_s - previous.start_s
-            if (previous.end_s - previous.start_s) < minimum and combined <= maximum:
+            if (previous.end_s - previous.start_s) < minimum and combined <= maximum and not cue.hard:
                 merged[-1] = Cue(previous.start_s, cue.end_s, f"{previous.text} {cue.text}")
                 continue
         merged.append(cue)
     # A trailing runt has no successor to absorb it; fold it backwards.
-    if len(merged) > 1 and (merged[-1].end_s - merged[-1].start_s) < minimum:
+    if len(merged) > 1 and (merged[-1].end_s - merged[-1].start_s) < minimum and not merged[-1].hard:
         last = merged.pop()
         previous = merged[-1]
         merged[-1] = Cue(previous.start_s, last.end_s, f"{previous.text} {last.text}")
@@ -232,6 +284,7 @@ def parse_and_segment(
     words_per_minute: int = 150,
     beat_min_s: float = 3.0,
     beat_max_s: float = 15.0,
+    granularity: str = "sentence",
 ) -> list[Beat]:
     cues, estimated = parse(text, filename, words_per_minute)
-    return segment(cues, beat_min_s, beat_max_s, estimated)
+    return segment(cues, beat_min_s, beat_max_s, estimated, granularity)

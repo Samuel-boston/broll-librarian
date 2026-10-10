@@ -254,3 +254,20 @@ async def test_a_rate_limited_rerank_waits_instead_of_downgrading(matcher_setup,
     matches = await TranscriptMatcher(workspace, engine, provider).match(beats)
     assert provider.calls == 2
     assert matches[0].suggestions[0].reason == "Waited, then judged."
+
+
+def test_phrase_cutting_gives_each_listed_thing_its_own_beat():
+    text = "I took that into everything. I travelled, I walked along the beach at sunrise, I stood on stage in front of a room full of men and told them my story."
+    sentence = parse_and_segment(text, "a.txt", beat_min_s=3.0)
+    phrase = parse_and_segment(text, "a.txt", beat_min_s=3.0, granularity="phrase")
+    assert len(phrase) > len(sentence)
+    assert [b.text for b in phrase][-3:] == [
+        "I travelled", "I walked along the beach at sunrise", "I stood on stage in front of a room full of men and told them my story."][-3:] or any(
+        b.text == "I walked along the beach at sunrise" for b in phrase)
+    assert any(b.text == "I travelled" for b in phrase)
+    assert phrase[0].start_s == 0 and all(a.end_s <= b.start_s + 1e-6 for a, b in zip(phrase, phrase[1:]))
+
+
+def test_a_pipe_in_the_script_is_always_a_cut():
+    beats = parse_and_segment("Walking the beach | at sunrise with a coffee", "a.txt", beat_min_s=3.0)
+    assert [b.text for b in beats] == ["Walking the beach", "at sunrise with a coffee"]

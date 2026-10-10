@@ -57,6 +57,10 @@ async def match_transcript(
     filename: str = Form(default="transcript.txt"),
     rerank: bool = Form(default=True),
     media: list[str] = Form(default=[]),
+    cut: str = Form(default="phrase"),
+    min_s: float | None = Form(default=None),
+    max_s: float | None = Form(default=None),
+    per_line: int | None = Form(default=None),
     upload: UploadFile | None = File(default=None),
 ):
     state = client_state(request)
@@ -67,9 +71,14 @@ async def match_transcript(
         raise HTTPException(status_code=400, detail="Paste a transcript or upload a file.")
 
     config = state.config
+    if per_line and 1 <= per_line <= 10 and per_line != config.transcript.suggestions_per_beat:
+        config = config.model_copy(deep=True)  # this run only: the saved setting is untouched
+        config.transcript.suggestions_per_beat = per_line
     beats = parse_and_segment(
         text, filename, config.transcript.words_per_minute,
-        config.transcript.beat_min_s, config.transcript.beat_max_s,
+        min_s if min_s and min_s > 0 else config.transcript.beat_min_s,
+        max_s if max_s and max_s > 0 else config.transcript.beat_max_s,
+        granularity="phrase" if cut == "phrase" else "sentence",
     )
 
     store = state.store()
