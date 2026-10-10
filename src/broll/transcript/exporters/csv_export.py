@@ -17,9 +17,27 @@ COLUMNS = [
 ]
 
 
+def _safe(value):
+    """A cell Excel would run as a formula ("=...", "+...", "@...") is text: put a quote in front of it."""
+    if isinstance(value, str) and value[:1] in ("=", "+", "@", "-") and not value[1:2].isdigit():
+        return "'" + value
+    return value
+
+
+class _Writer:
+    def __init__(self, writer):
+        self._writer = writer
+
+    def writeheader(self):
+        self._writer.writeheader()
+
+    def writerow(self, row):
+        self._writer.writerow({k: _safe(v) for k, v in row.items()})
+
+
 def build(matches: list[BeatMatch], timeline: Timeline) -> str:
     buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=COLUMNS, lineterminator="\n")
+    writer = _Writer(csv.DictWriter(buffer, fieldnames=COLUMNS, lineterminator="\n"))
     writer.writeheader()
 
     placed = {item.match.beat.index: item for item in timeline.items}
@@ -70,7 +88,8 @@ def build(matches: list[BeatMatch], timeline: Timeline) -> str:
                 ),
                 "status": "placed" if rank == 1 else "alternative",
             })
-    return buffer.getvalue()
+    # The byte-order mark is what makes Excel read the curly quotes and accents correctly.
+    return "\ufeff" + buffer.getvalue()
 
 
 def _timecode(seconds: float) -> str:
@@ -80,5 +99,5 @@ def _timecode(seconds: float) -> str:
 
 def write(matches: list[BeatMatch], timeline: Timeline, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(build(matches, timeline), encoding="utf-8")
+    path.write_text(build(matches, timeline), encoding="utf-8")  # build() adds the BOM
     return path

@@ -1663,6 +1663,29 @@ def backup(
 
 
 @app.command()
+def restore(
+    file: Path = typer.Argument(..., help="A backup from `broll backup --list` (a library-<date>.db file)."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    yes: bool = typer.Option(False, "--yes", help="Required: this replaces the library database."),
+) -> None:
+    """Put a backup back as the library database. Stop the app first; the replaced database is kept beside it."""
+    from .backup import RestoreError, backups_dir, restore_database
+
+    workspace_config = resolve_workspace(workspace)
+    path = file if file.is_absolute() or file.exists() else backups_dir(workspace_config) / file
+    if not yes:
+        _fail("This replaces the library database with that backup. Re-run with --yes (and stop the app first).")
+    try:
+        done = restore_database(workspace_config, path)
+    except RestoreError as exc:
+        _fail(str(exc))
+    counts = done["counts"]
+    _echo(f"Restored {path.name}: {counts['sources']} files, {counts['shots']} shots.")
+    if done["kept"]:
+        _echo(f"The database it replaced is kept at {done['kept']}.")
+
+
+@app.command()
 def remove(
     source_id: str = typer.Argument(..., help="The file's id (see `broll show`)."),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),

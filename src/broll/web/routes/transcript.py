@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import re
 import uuid
 from dataclasses import dataclass, field
 
@@ -40,6 +42,11 @@ class TranscriptRun:
     config: object = None
     filters: object = None
     rerank: bool = False
+    #: Bumped whenever lines are split or joined. A form from a stale tab carries the old number, so it can
+    #: be refused instead of editing whichever lines now sit at its positions.
+    rev: int = 0
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    notice: str | None = None
 
     def timeline(self, config) -> Timeline:
         return build_timeline(self.matches, config, name=self.name)
@@ -99,12 +106,14 @@ async def match_transcript(
         sides = [k for k in kinds.KINDS if k in {kinds.clean(m) for m in media}]
         media = sides[0] if len(sides) == 1 else "both"
         wanted = SearchFilters(exclude_flagged=True, media_kind=sides if len(sides) == 1 else [])
-        matches = await TranscriptMatcher(config, engine, text_provider, wanted).match(beats)
+        matcher = TranscriptMatcher(config, engine, text_provider, wanted)
+        matches = await matcher.match(beats)
+        notice = getattr(matcher, "rerank_notice", None)
     finally:
         store.close()
 
     run = TranscriptRun(id=uuid.uuid4().hex[:12], name=filename.rsplit(".", 1)[0], matches=matches, media=media,
-                         config=config, filters=wanted, rerank=bool(text_provider))
+                         config=config, filters=wanted, rerank=bool(text_provider), notice=notice)
     state.runs[run.id] = run
 
     return templates.TemplateResponse(
@@ -146,45 +155,51 @@ async def _rematch(request: Request, state, run: TranscriptRun, new_beats: list,
 
 @router.post("/transcript/{run_id}/split", response_class=HTMLResponse)
 async def split_one(request: Request, run_id: str, beat: int = Form(...), start: int = Form(...),
-                    end: int = Form(...)):
+                    end: int = Form(...), rev: int | None = Form(None)):
     """Make the selected words of a beat a beat of their own (and the rest before and after, theirs)."""
     state = client_state(request)
     run = _get_run(state, run_id)
-    current = next((m for m in run.matches if m.beat.index == beat), None)
-    if current is None:
-        raise HTTPException(status_code=404, detail="No such beat.")
-    pieces = split_beat(current.beat, start, end)
-    if len(pieces) < 2:
-        raise HTTPException(status_code=400, detail="Select part of the line, not all of it.")
-    new_beats, keep = [], {}
-    for match in run.matches:
-        if match is current:
-            new_beats.extend(pieces)
-        else:
-            new_beats.append(match.beat)
-            keep[id(match.beat)] = match
-    await _rematch(request, state, run, new_beats, keep)
+    async with run.lock:
+        _check_rev(run, rev)
+        current = next((m for m in run.matches if m.beat.index == beat), None)
+        if current is None:
+            raise HTTPException(status_code=404, detail="No such beat.")
+        pieces = split_beat(current.beat, start, end)
+        if len(pieces) < 2:
+            raise HTTPException(status_code=400, detail="Select part of the line, not all of it.")
+        new_beats, keep = [], {}
+        for match in run.matches:
+            if match is current:
+                new_beats.extend(pieces)
+            else:
+                new_beats.append(match.beat)
+                keep[id(match.beat)] = match
+        await _rematch(request, state, run, new_beats, keep)
+        run.rev += 1
     return templates.TemplateResponse(request=request, name="partials/beats.html",
                                       context=_run_context(request, state, run))
 
 
 @router.post("/transcript/{run_id}/join", response_class=HTMLResponse)
-async def join_one(request: Request, run_id: str, beat: int = Form(...)):
+async def join_one(request: Request, run_id: str, beat: int = Form(...), rev: int | None = Form(None)):
     """Put a beat and the one after it back together as one B-roll."""
     state = client_state(request)
     run = _get_run(state, run_id)
-    spot = next((i for i, m in enumerate(run.matches) if m.beat.index == beat), None)
-    if spot is None or spot + 1 >= len(run.matches):
-        raise HTTPException(status_code=400, detail="There is no beat after this one.")
-    joined = join_beats(run.matches[spot].beat, run.matches[spot + 1].beat)
-    new_beats, keep = [], {}
-    for i, match in enumerate(run.matches):
-        if i == spot:
-            new_beats.append(joined)
-        elif i != spot + 1:
-            new_beats.append(match.beat)
-            keep[id(match.beat)] = match
-    await _rematch(request, state, run, new_beats, keep)
+    async with run.lock:
+        _check_rev(run, rev)
+        spot = next((i for i, m in enumerate(run.matches) if m.beat.index == beat), None)
+        if spot is None or spot + 1 >= len(run.matches):
+            raise HTTPException(status_code=400, detail="There is no beat after this one.")
+        joined = join_beats(run.matches[spot].beat, run.matches[spot + 1].beat)
+        new_beats, keep = [], {}
+        for i, match in enumerate(run.matches):
+            if i == spot:
+                new_beats.append(joined)
+            elif i != spot + 1:
+                new_beats.append(match.beat)
+                keep[id(match.beat)] = match
+        await _rematch(request, state, run, new_beats, keep)
+        run.rev += 1
     return templates.TemplateResponse(request=request, name="partials/beats.html",
                                       context=_run_context(request, state, run))
 
@@ -200,12 +215,14 @@ def _beat_response(request: Request, state, run: TranscriptRun, match: BeatMatch
 
 
 @router.post("/transcript/{run_id}/search", response_class=HTMLResponse)
-async def search_for_beat(request: Request, run_id: str, beat: int = Form(...), q: str = Form("")):
+async def search_for_beat(request: Request, run_id: str, beat: int = Form(...), q: str = Form(""),
+                          rev: int | None = Form(None)):
     """A person's own search for one line, when the suggestions were no good."""
     from ...transcript.matcher import Suggestion
 
     state = client_state(request)
     run = _get_run(state, run_id)
+    _check_rev(run, rev)
     match = next((m for m in run.matches if m.beat.index == beat), None)
     if match is None:
         raise HTTPException(status_code=404, detail="No such beat.")
@@ -238,9 +255,10 @@ async def search_for_beat(request: Request, run_id: str, beat: int = Form(...), 
 
 @router.post("/transcript/{run_id}/swap", response_class=HTMLResponse)
 async def swap_suggestion(request: Request, run_id: str, beat: int = Form(...),
-                          shot_id: str = Form(...)):
+                          shot_id: str = Form(...), rev: int | None = Form(None)):
     state = client_state(request)
     run = _get_run(state, run_id)
+    _check_rev(run, rev)
     match = next((m for m in run.matches if m.beat.index == beat), None)
     if match is None or not match.choose(shot_id):
         raise HTTPException(status_code=404, detail="No such beat or candidate.")
@@ -255,6 +273,8 @@ async def export(request: Request, run_id: str, fmt: str):
         raise HTTPException(status_code=404, detail=f"Unknown format {fmt!r}.")
 
     timeline = run.timeline(state.config)
+    if not timeline.items and fmt != "csv":
+        raise HTTPException(status_code=400, detail="Nothing to export yet: no line has a clip.")
     if fmt == "xml":
         body = fcp7xml.build(timeline)
     elif fmt == "edl":
@@ -266,7 +286,7 @@ async def export(request: Request, run_id: str, fmt: str):
     return Response(
         content=body,
         media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{run.name}.{extension}"'},
+        headers={"Content-Disposition": _disposition(run.name, extension)},
     )
 
 
@@ -312,6 +332,23 @@ async def pack_download(request: Request, run_id: str, job_id: str):
     if job is None or job.run_id != run_id or job.state != "done" or job.zip_path is None:
         raise HTTPException(status_code=404, detail="That pack is not ready, or it has been deleted. Build it again.")
     return FileResponse(job.zip_path, media_type="application/zip", filename=job.zip_name)
+
+
+def _disposition(name: str, extension: str) -> str:
+    """A download name that survives accents, quotes and newlines in the script's file name."""
+    from urllib.parse import quote
+
+    safe = re.sub(r'[\x00-\x1f"\\/:*?<>|]+', "_", name).strip(" .") or "broll"
+    ascii_name = safe.encode("ascii", "ignore").decode() or "broll"
+    return f"attachment; filename=\"{ascii_name}.{extension}\"; filename*=UTF-8''{quote(safe)}.{extension}"
+
+
+def _check_rev(run: TranscriptRun, rev: int | None) -> None:
+    if rev is not None and rev != run.rev:
+        raise HTTPException(
+            status_code=409,
+            detail="These results were changed in another tab or window. Reload this page's results to carry on.",
+        )
 
 
 def _get_run(state, run_id: str) -> TranscriptRun:

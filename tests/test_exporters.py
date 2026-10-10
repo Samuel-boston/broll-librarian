@@ -191,3 +191,21 @@ def test_files_are_written_to_disk(timeline, tmp_path):
     csv_path = csv_export.write(build_matches(), timeline, tmp_path / "out" / "seq.csv")
     for path in (xml_path, edl_path, csv_path):
         assert path.exists() and path.stat().st_size > 0
+
+
+@pytest.mark.parametrize("fps", [23.976, 24, 25, 29.97, 30, 50, 59.94])
+def test_adjacent_beats_meet_exactly_at_any_frame_rate(fps):
+    """Rounding each beat's start and length separately left one-frame overlaps and gaps at about a quarter
+    of the cuts. Rounding the two edges makes neighbours share one."""
+    matches = build_matches()
+    cursor = 0.0
+    for match in matches:
+        match.beat.start_s = round(cursor, 3)
+        cursor += 1.37 + 0.11 * match.beat.index
+        match.beat.end_s = round(cursor, 3)
+    config = build_config()
+    config.transcript.sequence_fps = fps
+    items = build_timeline(matches, config).items
+    assert len(items) >= 2
+    for before, after in zip(items, items[1:]):
+        assert before.end_frame == after.start_frame

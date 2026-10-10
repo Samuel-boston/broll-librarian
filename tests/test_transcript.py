@@ -283,3 +283,16 @@ def test_selected_words_become_their_own_beat_and_the_rest_keeps_its_own():
     assert [b.text for b in split_beat(beat, 0, 2)] == ["one two three", "four five six seven eight nine ten"]
     assert split_beat(beat, 0, 9) == [beat]
     assert join_beats(pieces[0], pieces[1]).text == "one two three four five six"
+
+
+def test_plain_text_keeps_words_before_a_colon_but_subtitles_drop_speaker_labels():
+    beats = parse_and_segment("Here's the thing: you need rest. Remember: sleep matters.", "a.txt")
+    assert "Here's the thing: you need rest." in " ".join(b.text for b in beats)
+    srt = "1\n00:00:00,000 --> 00:00:04,000\nADAM: You need rest.\n"
+    assert parse_and_segment(srt, "a.srt")[0].text == "You need rest."
+
+
+def test_a_leading_pipe_and_a_byte_order_mark_are_handled():
+    beats = parse_and_segment("﻿Hi. |Yes. Then no.", "a.txt", beat_min_s=3.0)
+    assert beats[0].text == "Hi."  # the BOM is not stuck to the first word
+    assert [b.text for b in beats][1].startswith("Yes")

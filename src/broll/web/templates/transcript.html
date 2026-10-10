@@ -68,7 +68,7 @@
       return range.compareBoundaryPoints(Range.END_TO_START, r) < 0 && range.compareBoundaryPoints(Range.START_TO_END, r) > 0;
     }).map(w => +w.dataset.w);
     if (!hit.length) { splitBtn.style.display = 'none'; return; }
-    pending = { run: line.dataset.run, beat: line.dataset.beat, start: Math.min(...hit), end: Math.max(...hit) };
+    pending = { run: line.dataset.run, rev: line.dataset.rev, beat: line.dataset.beat, start: Math.min(...hit), end: Math.max(...hit) };
     const box = range.getBoundingClientRect();
     splitBtn.style.left = (window.scrollX + box.left) + 'px';
     splitBtn.style.top = (window.scrollY + box.bottom + 6) + 'px';
@@ -79,7 +79,7 @@
     if (!pending) return;
     htmx.ajax('POST', `/transcript/${pending.run}/split`, {
       target: '#beats', swap: 'innerHTML',
-      values: { beat: pending.beat, start: pending.start, end: pending.end } });
+      values: { beat: pending.beat, rev: pending.rev, start: pending.start, end: pending.end } });
     splitBtn.style.display = 'none'; window.getSelection().removeAllRanges();
   });
 </script>
@@ -98,5 +98,11 @@
     }
   });
   document.body.addEventListener('htmx:afterSettle', restorePackFields);
+  // A refused request (out of date, nothing selected...) is said out loud; htmx does not show 4xx answers.
+  document.body.addEventListener('htmx:responseError', e => {
+    let text = 'That did not work.';
+    try { text = JSON.parse(e.detail.xhr.responseText).detail || text; } catch (_) {}
+    alert(text);
+  });
 </script>
 {% endblock %}

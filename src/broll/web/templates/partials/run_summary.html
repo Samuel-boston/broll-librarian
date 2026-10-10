@@ -37,6 +37,7 @@
       A pack is capped at {{ '%g'|format(workspace.transcript.pack_max_gb) }} GB and kept {{ '%g'|format(workspace.transcript.pack_keep_hours) }} hours.
     </p>
   </div>
+  {% if run.notice %}<p class="alert alert-warn">{{ run.notice }}</p>{% endif %}
   {% if timeline.warnings %}
   <ul class="alert alert-warn space-y-1.5">
     {% for warning in timeline.warnings %}<li class="flex gap-2"><span class="text-amber">•</span><span>{{ warning }}</span></li>{% endfor %}

@@ -38,11 +38,26 @@ TRANSIENT_MARKERS = (
 )
 
 
+#: Not about this file but about the setup: a dead Google sign-in, a bad or blocked API key, a spent daily
+#: quota. Every file will fail the same way until a person fixes it, so retrying each one three times in a
+#: few seconds only burns the queue. The worker waits instead, and no file is marked failed for it.
+ENVIRONMENT_MARKERS = (
+    "invalid_grant", "expired or revoked", "reauthenticate", "api key not valid", "api_key_invalid",
+    "unauthenticated", "invalid authentication credentials", "billing", "per day", "perday",
+    "permission_denied", "drive is not connected",
+)
+
+
+def is_environment_error(message: str) -> bool:
+    lowered = (message or "").lower()
+    return any(marker in lowered for marker in ENVIRONMENT_MARKERS)
+
+
 def classify_error(message: str) -> type[ProviderError]:
     lowered = (message or "").lower()
     return (
         TransientProviderError
-        if any(marker in lowered for marker in TRANSIENT_MARKERS)
+        if any(marker in lowered for marker in TRANSIENT_MARKERS) or is_environment_error(lowered)
         else ProviderError
     )
 

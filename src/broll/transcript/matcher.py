@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
 
-from ..analysis.providers.base import TransientProviderError
+from ..analysis.providers.base import TransientProviderError, is_environment_error
 from ..config import WorkspaceConfig
 from ..db.models import Shot, Source
 from ..search.filters import SearchFilters
@@ -146,6 +146,9 @@ class TranscriptMatcher:
         self.engine = engine
         self.text_provider = text_provider
         self.filters = filters or SearchFilters(exclude_flagged=True)
+        #: Set once the text model has run out (quota, bad key, outage): the rest of the script is ranked by
+        #: search alone instead of waiting 40 seconds per line for an answer that will not come.
+        self.rerank_notice: str | None = None
 
     async def match(self, beats: list[Beat]) -> list[BeatMatch]:
         usage: dict[str, int] = {}
@@ -203,7 +206,7 @@ class TranscriptMatcher:
             )
             for index, result in enumerate(candidates)
         ]
-        if self.text_provider is None:
+        if self.text_provider is None or self.rerank_notice:
             return fallback, None
 
         prompt = _rerank_prompt(beat, candidates, self.config.transcript.suggestions_per_beat)
@@ -213,9 +216,13 @@ class TranscriptMatcher:
                 result = await self.text_provider.complete(prompt, RerankResult)
                 break
             except TransientProviderError as exc:
-                if attempt == RATE_LIMIT_ATTEMPTS:
-                    log.warning("rerank still rate limited for beat %d, using search order: %s",
+                if is_environment_error(str(exc)) or attempt == RATE_LIMIT_ATTEMPTS:
+                    log.warning("rerank unavailable at beat %d, using search order from here: %s",
                                 beat.index, exc)
+                    self.rerank_notice = (
+                        "The text model could not be used (out of quota, or busy), so from line "
+                        f"{beat.index + 1} on the suggestions are ranked by search only."
+                    )
                     return fallback, None
                 await asyncio.sleep(RATE_LIMIT_WAIT_S * attempt)
             except Exception as exc:  # a reranker outage must not lose the timeline
@@ -226,10 +233,12 @@ class TranscriptMatcher:
             return [], (result.missing_footage or "").strip() or None
 
         suggestions: list[Suggestion] = []
+        seen: set[int] = set()
         for position, choice in enumerate(result.choices):
             index = choice.candidate - 1
-            if not (0 <= index < len(candidates)):
+            if not (0 <= index < len(candidates)) or index in seen:
                 continue
+            seen.add(index)
             candidate = candidates[index]
             suggestions.append(
                 Suggestion(

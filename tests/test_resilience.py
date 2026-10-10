@@ -117,3 +117,82 @@ def test_a_gemini_request_that_never_answers_is_abandoned_and_retried(monkeypatc
     assert made["http_options"].timeout == gemini.REQUEST_TIMEOUT_MS
     assert gemini.REQUEST_TIMEOUT_MS <= 300_000
     assert classify_error("gemini request failed: The read operation timed out") is TransientProviderError
+
+
+async def test_a_dead_sign_in_pauses_the_queue_instead_of_failing_every_file(workspace, store, tmp_path):
+    """invalid_grant (an expired Google sign-in) hits every file the same way. None may be marked failed,
+    none may lose an attempt, and nothing lands on Needs attention for it."""
+    from broll.ingest.pipeline import IngestPipeline
+    from broll.jobs.worker import Worker
+
+    for n in range(5):
+        clip = tmp_path / f"{n}.mp4"
+        clip.write_bytes(b"x")
+        store.enqueue(KIND_INDEX_SOURCE, {"origin": "local", "path": str(clip), "filename": clip.name,
+                                          "origin_path": str(clip)})
+    tried = []
+
+    class DeadSignIn(IngestPipeline):
+        async def ingest(self, discovered, force=False, overwrite_corrections=False, **kw):
+            tried.append(discovered.filename)
+            raise RuntimeError("invalid_grant: Token has been expired or revoked.")
+
+    worker = Worker(workspace, store, pipeline=DeadSignIn(workspace, store), concurrency=1)
+    await worker.run(drain=True)
+
+    stats = queue_stats(store)
+    assert stats.failed == 0 and stats.queued == 5 and len(tried) == 1, "it stopped after the first"
+    assert worker.pause_reason and "invalid_grant" in worker.pause_reason
+    assert store.conn.execute("SELECT MAX(attempts) FROM jobs").fetchone()[0] == 0
+    assert store.list_attention("open") == []
+
+
+def test_environment_errors_are_told_apart_from_a_bad_file():
+    from broll.analysis.providers.base import (
+        ProviderError, TransientProviderError, classify_error, is_environment_error)
+
+    for message in ("invalid_grant: Bad Request", "API key not valid. Please pass a valid API key.",
+                    "429 RESOURCE_EXHAUSTED: Quota exceeded ... per day"):
+        assert is_environment_error(message) and classify_error(message) is TransientProviderError
+    assert not is_environment_error("ffprobe could not read a.mp4: Invalid data")
+    assert classify_error("ffprobe could not read a.mp4: Invalid data") is ProviderError
+
+
+async def test_a_failed_attempt_leaves_no_download_behind(workspace, store, tmp_path, monkeypatch):
+    from broll.ingest.pipeline import IngestPipeline
+    from broll.ingest.scanner import DiscoveredFile
+
+    pipeline = IngestPipeline(workspace, store)
+    downloaded = workspace.temp_dir / "drive-abc.mp4"
+    downloaded.parent.mkdir(parents=True, exist_ok=True)
+    downloaded.write_bytes(b"x" * 100)
+
+    async def fetch(_self, _discovered):
+        return downloaded
+
+    async def broken(*args, **kwargs):
+        raise TransientProviderError("gemini request failed: 503 UNAVAILABLE")
+
+    monkeypatch.setattr(IngestPipeline, "_fetch", fetch)
+    monkeypatch.setattr(IngestPipeline, "_index", broken)
+    with pytest.raises(TransientProviderError):
+        await pipeline.ingest(DiscoveredFile(origin="drive", path=None, filename="abc.mp4",
+                                             drive_file_id="abc", origin_path="drive:abc", size_bytes=100))
+    assert not downloaded.exists(), "the Drive download must not stay on the disk after a failed attempt"
+
+
+async def test_an_embedding_failure_is_retried_not_swallowed(workspace, store):
+    from broll.ingest.pipeline import IngestPipeline
+    from tests.test_precision import add_shot
+
+    class Quota:
+        name = "fake"
+        dimensions = 4
+
+        def embed_documents(self, texts):
+            raise RuntimeError("429 RESOURCE_EXHAUSTED: slow down")
+
+    shot = add_shot(store, "a.mp4", caption="A man walks on a beach.")
+    pipeline = IngestPipeline(workspace, store, embedder=Quota())
+    with pytest.raises(TransientProviderError):
+        await pipeline._embed(shot)

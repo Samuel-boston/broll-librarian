@@ -251,7 +251,7 @@ def test_transcript_screen_matches_swaps_and_exports(workspace, store):
         run_id = re.search(r"/transcript/([0-9a-f]+)/export/xml", response.text).group(1)
 
         swap = re.search(
-            r'name="beat" value="(\d+)">\s*<input type="hidden" name="shot_id" value="([^"]+)"',
+            r'name="beat" value="(\d+)">(?:<input type="hidden" name="rev" value="\d+">)?\s*<input type="hidden" name="shot_id" value="([^"]+)"',
             response.text,
         )
         assert swap, "no alternative offered to swap to"

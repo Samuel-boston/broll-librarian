@@ -16,11 +16,16 @@ from .base import Timeline, frames_to_timecode
 def build(timeline: Timeline) -> str:
     lines = [f"TITLE: {timeline.name}", "FCM: NON-DROP FRAME", ""]
 
+    reels: dict[str, str] = {}
     for position, item in enumerate(timeline.items, start=1):
         # Source timecodes are conformed to the sequence rate.
         source_in = item.sequence_in_frame
         source_out = source_in + item.duration_frames
-        reel = _reel(item.name)
+        # One reel per source file, and never the same for two: names that start alike used to collide.
+        key = item.suggestion.source.id
+        if key not in reels:
+            reels[key] = _reel(item.name, len(reels) + 1)
+        reel = reels[key]
         lines.append(
             f"{position:03d}  {reel:<8} V     C        "
             f"{frames_to_timecode(source_in, timeline.fps)} "
@@ -44,10 +49,10 @@ def build(timeline: Timeline) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _reel(name: str) -> str:
-    """EDL reel names are 8 characters of A-Z0-9."""
-    cleaned = "".join(c for c in Path(name).stem.upper() if c.isalnum())
-    return (cleaned or "AX")[:8].ljust(3, "X")
+def _reel(name: str, number: int) -> str:
+    """EDL reel names are 8 characters of A-Z0-9: four letters from the name, four digits to keep it unique."""
+    cleaned = "".join(c for c in Path(name).stem.upper() if c.isascii() and c.isalnum() and not c.isdigit())
+    return f"{(cleaned or 'AX')[:4].ljust(4, 'X')}{number % 10000:04d}"
 
 
 def write(timeline: Timeline, path: Path) -> Path:

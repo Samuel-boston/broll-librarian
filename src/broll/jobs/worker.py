@@ -19,10 +19,13 @@ from ..db.models import Job
 from ..db.store import Store
 from ..ingest.pipeline import IngestPipeline, IngestResult
 from ..ingest.scanner import DiscoveredFile
-from ..analysis.providers.base import TransientProviderError, classify_error
+from ..analysis.providers.base import TransientProviderError, classify_error, is_environment_error
 from .queue import KIND_INDEX_SOURCE, backoff_delay, max_attempts
 
 log = logging.getLogger(__name__)
+
+#: How long to wait before trying again after a problem with the setup (sign-in, API key, daily quota).
+ENVIRONMENT_PAUSE_S = 300
 
 ProgressFn = Callable[[str, Job, IngestResult | None], None]
 
@@ -65,6 +68,9 @@ class Worker:
         self.idle_poll_s = idle_poll_s
         self.stats = WorkerStats()
         self._stop = asyncio.Event()
+        # Set when every file is failing for the same reason outside the file (see is_environment_error).
+        self.paused_until = 0.0
+        self.pause_reason: str | None = None
 
     def stop(self) -> None:
         self._stop.set()
@@ -88,6 +94,14 @@ class Worker:
         tasks: set[asyncio.Task] = set()
 
         while not self._stop.is_set():
+            if time.monotonic() < self.paused_until:
+                if drain:
+                    break  # a one-off command should end, saying why, rather than wait for a person
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=min(poll_interval * 10, 5.0))
+                except asyncio.TimeoutError:
+                    pass
+                continue
             # Take the machine-wide slot before claiming, so a job waiting for
             # its turn stays "queued" instead of looking like it is running. The
             # wait is in short steps so a stop is noticed, and a worker told to
@@ -211,6 +225,15 @@ class Worker:
             log.warning("could not mirror the needs-attention list to Drive: %s", exc)
 
     def _handle_failure(self, job: Job, error: str, transient: bool = False) -> None:
+        if is_environment_error(error):
+            # Nothing is wrong with this file. Hand it back untouched, mark nothing failed, and stop
+            # claiming work for a while: the next try may be after the problem is fixed.
+            self.store.release_job(job.id, error)
+            self.pause_reason = error[:300]
+            self.paused_until = time.monotonic() + ENVIRONMENT_PAUSE_S
+            log.error("indexing paused for %d s: %s", ENVIRONMENT_PAUSE_S, error[:300])
+            self._notify("paused", job, None)
+            return
         limit = max_attempts(transient)
         if job.attempts < limit:
             delay = backoff_delay(job.attempts, transient)

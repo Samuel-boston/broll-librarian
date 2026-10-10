@@ -105,8 +105,28 @@ Leave `BROLL_ACCESS_PASSWORD` out so people don't log in twice. Start it with
 * **Backups**: the database is copied every 24 hours to the `backups` folder of the library's data (the last
   7 are kept). That protects against a bad edit, not against losing the server, so also switch on the
   host's own backups or snapshots. List them with `docker compose exec librarian broll backup --list`.
-* **Restore**: stop the app, copy a backup over `library.db` in the data volume, and start it again. The
-  Drive files are untouched either way.
+* **Before a big run**: take a copy by hand, `docker compose exec librarian broll backup`. A backup lives on
+  the same disk as the library, so it does not survive losing the server. Switch on the host's own backups
+  too (Hetzner: Server > Backups), and keep `.env`, `drive_token.json` and `drive_copy_state.json` somewhere
+  safe off the server: they are not in the database backups.
+* **Restore**: stop the app, restore, start it again. The Drive files are untouched either way.
+
+  ```
+  docker compose stop librarian
+  docker compose run --rm librarian broll restore library-20261010-120410.db --yes
+  docker compose --profile caddy up -d
+  ```
+
+  `broll restore` removes the leftover `library.db-wal` and `-shm` files (copying a backup over `library.db`
+  by hand leaves them, and SQLite then quietly replays the newer rows on top of it) and keeps the database it
+  replaced as `library.db.before-restore-<time>`.
+* **Swap**: a 4 GB server can run out of memory on several 4K videos at once. Add 2 GB of swap once:
+  `fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile &&
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab`.
+* **Disk**: every `docker compose up --build` leaves build cache behind (about 4 GB a time). Run
+  `docker builder prune -f` after a deploy.
+* **Do not deploy while a run is going.** A rebuild stops the worker; its jobs resume, but only after the
+  stale-job timeout.
 * **Everything is in one volume**, `broll-data`: the index, thumbnails, backups, and any keys saved from
   Settings.
 

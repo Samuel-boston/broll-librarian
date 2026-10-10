@@ -434,3 +434,85 @@ def test_a_line_with_no_good_match_offers_a_search_of_your_own(workspace):
     picked = client.post(f"/transcript/{run}/swap", data={"beat": 0, "shot_id": pick}).text
     assert picked.lstrip().startswith('<section id="beat-0"') and "on timeline" in picked
     assert client.post(f"/transcript/{run}/search", data={"beat": 0, "q": " "}).status_code == 400
+
+
+def test_a_stale_tab_is_refused_instead_of_editing_the_wrong_lines(workspace):
+    client = _client(workspace)
+    page = client.post("/transcript", data={"text": "I walked to the sea and then I swam far out today.",
+                                            "cut": "sentence", "rerank": ""}).text
+    run = re.search(r'data-run="([0-9a-f]+)"', page).group(1)
+    rev = int(re.search(r'data-rev="(\d+)"', page).group(1))
+    ok = client.post(f"/transcript/{run}/split", data={"beat": 0, "start": 2, "end": 4, "rev": rev})
+    assert ok.status_code == 200
+    stale = client.post(f"/transcript/{run}/join", data={"beat": 0, "rev": rev})
+    assert stale.status_code == 409 and "another tab" in stale.json()["detail"]
+    assert client.post(f"/transcript/{run}/split", data={"beat": 0, "start": 0, "end": 0, "rev": rev}).status_code == 409
+
+
+def test_exports_survive_accents_and_stray_characters_and_refuse_an_empty_run(workspace):
+    client = _client(workspace)
+    page = client.post("/transcript", data={"text": "Zebra quantum nonsense.", "media": ["video"], "rerank": ""},
+                       files={}).text
+    run = re.search(r'data-run="([0-9a-f]+)"', page).group(1)
+    assert client.get(f"/transcript/{run}/export/xml").status_code == 400  # nothing placed: refuse, don't send an empty file
+    csv = client.get(f"/transcript/{run}/export/csv")
+    assert csv.status_code == 200 and csv.content.startswith(b"\xef\xbb\xbf")
+    accented = client.post("/transcript", files={"upload": ("scène – été 日本.txt", b"A man walks.", "text/plain")},
+                           data={"rerank": ""}).text
+    run2 = re.search(r'data-run="([0-9a-f]+)"', accented).group(1)
+    got = client.get(f"/transcript/{run2}/export/csv")
+    assert got.status_code == 200 and "filename*=UTF-8''" in got.headers["content-disposition"]
+
+
+def test_spreadsheet_formulas_in_a_narration_are_text():
+    from broll.transcript.exporters.csv_export import _safe
+
+    assert _safe("=SUM(A1)") == "'=SUM(A1)" and _safe("@cmd") == "'@cmd" and _safe("-5") == "-5"
+    assert _safe("A man walks.") == "A man walks."
+
+
+def test_edl_reels_are_unique_per_source_file(timeline_matches=None):
+    from tests.test_exporters import build_config, build_matches
+    from broll.transcript.exporters import edl
+    from broll.transcript.exporters.base import build_timeline
+
+    text = edl.build(build_timeline(build_matches(), build_config()))
+    reels = [line.split()[1] for line in text.splitlines() if line[:3].isdigit()]
+    assert len(reels) == len(set(reels)) and all(len(r) == 8 and r.isalnum() for r in reels)
+
+
+def test_the_text_model_running_out_stops_the_waiting_for_the_rest_of_the_script():
+    import asyncio
+
+    from broll.analysis.providers.base import TransientProviderError
+    from broll.config import WorkspaceConfig
+    from broll.transcript.matcher import TranscriptMatcher
+    from broll.transcript.parser import Beat
+
+    class Spent:
+        calls = 0
+
+        async def complete(self, prompt, schema):
+            Spent.calls += 1
+            raise TransientProviderError("429 RESOURCE_EXHAUSTED: Quota exceeded ... per day")
+
+    class Engine:
+        def search(self, *a, **k):
+            from tests.test_exporters import build_matches
+
+            return []
+
+    async def run():
+        matcher = TranscriptMatcher(WorkspaceConfig(id="x", name="x"), Engine(), Spent())
+        from tests.test_exporters import build_matches
+        from broll.search.query import SearchResult
+
+        shot = build_matches()[0].chosen
+        candidates = [SearchResult(shot=shot.shot, source=shot.source, score=1.0)]
+        for number in range(5):
+            beat = Beat(index=number, start_s=0, end_s=3, text="a line")
+            await matcher._rerank(beat, candidates)
+        return matcher
+
+    matcher = asyncio.run(asyncio.wait_for(run(), timeout=10))
+    assert Spent.calls == 1 and "ranked by search only" in matcher.rerank_notice

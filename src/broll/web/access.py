@@ -128,6 +128,23 @@ def login_page(next_url: str, error: str = "", status: int = 200) -> HTMLRespons
     return HTMLResponse(body, status_code=status)
 
 
+LOGIN_BODY_MAX = 64 * 1024
+
+
+def _api_refusal(request: Request):
+    """The JSON API's own check (token, or loopback), run early. None when the caller may proceed."""
+    from fastapi import HTTPException
+    from fastapi.responses import JSONResponse
+
+    from .routes.api import _authorise
+
+    try:
+        _authorise(request)
+    except HTTPException as exc:
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    return None
+
+
 def install(app) -> None:
     """Add the login routes and the gate. Does nothing until a password is set."""
     from fastapi import Form
@@ -163,6 +180,13 @@ def install(app) -> None:
         return response
 
     @app.middleware("http")
+    async def small_login_bodies(request: Request, call_next):
+        # A password is a few bytes. Anything bigger is not a login.
+        if request.url.path == "/login" and int(request.headers.get("content-length") or 0) > LOGIN_BODY_MAX:
+            return Response("Request too large.", status_code=413)
+        return await call_next(request)
+
+    @app.middleware("http")
     async def gate(request: Request, call_next):
         pw = password()
         if pw is None or request.url.path in PUBLIC_PATHS:
@@ -170,6 +194,12 @@ def install(app) -> None:
         # The JSON API carries its own auth (BROLL_API_TOKEN, or loopback only),
         # and an agent cannot follow a redirect to a login form.
         if request.url.path.startswith("/api/"):
+            # Say no BEFORE the body is read: a route that takes a file upload would otherwise write
+            # an anonymous stranger's request to disk first and refuse it afterwards.
+            if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+                refusal = _api_refusal(request)
+                if refusal is not None:
+                    return refusal
             return await call_next(request)
         if valid_token(pw, request.cookies.get(COOKIE)):
             return await call_next(request)

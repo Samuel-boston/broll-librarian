@@ -22,6 +22,7 @@ from typing import Callable
 from .. import attention
 from ..analysis.analyzer import Analyzer
 from ..analysis.embedder import Embedder
+from ..analysis.providers.base import classify_error
 from ..analysis.prompt import PROMPT_VERSION
 from ..analysis.schema import ShotContext
 from ..analysis.providers.base import TransientProviderError
@@ -209,6 +210,15 @@ class IngestPipeline:
                 discovered, video, working, force, overwrite_corrections, progress, result,
                 allow_long,
             )
+        except BaseException:
+            # A failed attempt must not leave its download behind: the queue retries the whole file, and
+            # during a model outage every queued file would download, fail and stay on the disk.
+            source_id = progress.get("source_id")
+            self._cleanup(
+                self.config.temp_dir / f"src-{source_id[:8]}" if source_id else None,
+                video, discovered, source_id,
+            )
+            raise
         finally:
             self._cleanup_raw(raw_dir)
 
@@ -274,7 +284,8 @@ class IngestPipeline:
         result.messages.extend(plan["messages"])
         segments: list[Segment] = plan["segments"]
         usable = number_usable(segments)
-        self.store.update_source(source.id, segments_json=json.dumps([s.to_dict() for s in segments]))
+        if plan.get("persist", True):
+            self.store.update_source(source.id, segments_json=json.dumps([s.to_dict() for s in segments]))
         self.store.prune_shots(source.id, keep=len(usable))
         primary = primary_segment_index(usable)
 
@@ -282,6 +293,10 @@ class IngestPipeline:
             shot_id = f"{source.id}-{seg.index}"
             existing_shot = self.store.get_shot(shot_id)
             if existing_shot and existing_shot.status == "indexed" and not force:
+                # A run cut short between saving the shot and embedding it left one searchable by words
+                # only: finish that now.
+                if self._embedder is not None and shot_id not in self.store.vectors.get_many([shot_id]):
+                    await self._embed(shot_id)
                 result.shots_skipped += 1
                 continue
             if existing_shot and _is_corrected(existing_shot) and not overwrite_corrections:
@@ -423,6 +438,7 @@ class IngestPipeline:
 
         segments: list[Segment] = []
         cost = 0.0
+        fell_back = False
         for start, end in ranges:
             if end - start < ingest.segment_min_s:
                 segments.append(Segment(start, end, "usable"))
@@ -435,6 +451,7 @@ class IngestPipeline:
             )
             cost += plan.cost_usd
             if plan.fallback_reason:
+                fell_back = True
                 messages.append(f"Looked at the whole of it as one shot: {plan.fallback_reason}")
             segments.extend(plan.segments)
         if not segments:
@@ -446,7 +463,9 @@ class IngestPipeline:
                 f"{left_out} shorter stretch(es) were not indexed: a file keeps at most "
                 f"{ingest.max_segments_per_source} shots (the longest)."
             )
-        return {"segments": segments, "cost": cost, "messages": messages}
+        # A plan made only because the model could not be asked (an error, not a judgement) is not kept:
+        # once the problem is fixed, the file should be looked through properly.
+        return {"segments": segments, "cost": cost, "messages": messages, "persist": not fell_back}
 
     def _is_complete(self, source) -> bool:
         """Only a finished source short-circuits the pipeline.
@@ -507,7 +526,10 @@ class IngestPipeline:
         text = self.store.recompute_search_text(shot_id)
         if not text:
             return
-        vector = await asyncio.to_thread(self._embedder.embed_documents, [text])
+        try:
+            vector = await asyncio.to_thread(self._embedder.embed_documents, [text])
+        except Exception as exc:  # noqa: BLE001 - say whether it is worth retrying, as for the vision calls
+            raise classify_error(str(exc))(f"embedding failed: {exc}") from exc
         self.store.vectors.upsert(shot_id, vector[0])
 
     def _cleanup_raw(self, raw_dir: Path | None) -> None:

@@ -161,7 +161,7 @@ def test_the_edl_counts_from_the_trimmed_file_too():
     matches = build_matches()
     timeline = build_timeline(matches, build_config(), packed=packed_for(matches), pack_folder="/Users/sam/Pack")
     text = edl.build(timeline)
-    assert "001  00100M00 V     C        00:00:01:00 00:00:07:00 00:00:00:00 00:00:06:00" in text
+    assert "001  MSBE0001 V     C        00:00:01:00 00:00:07:00 00:00:00:00 00:00:06:00" in text
     assert "* FROM CLIP NAME: 001_00m00s_beach_meditation.mp4" in text
 
 

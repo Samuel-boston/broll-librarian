@@ -13,6 +13,11 @@ services:
   librarian:
     build: .
     restart: unless-stopped
+    # A fixed name: a job is "stale" when its worker's host name is not this one, and the default name
+    # changes on every rebuild, which used to leave running jobs stranded after a deploy.
+    hostname: librarian
+    # The worker waits up to 30 s for files in flight on shutdown; the default 10 s cut that short.
+    stop_grace_period: 60s
     logging:
       driver: json-file
       options:

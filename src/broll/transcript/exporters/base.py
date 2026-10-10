@@ -247,8 +247,11 @@ def build_timeline(
             continue
 
         beat = match.beat
+        # Round the two edges, not the start and the length: adjacent beats share an edge, so they then
+        # meet exactly. Rounding start and length separately left a one-frame overlap or gap at about a
+        # quarter of the cuts.
         start_frame = seconds_to_frames(beat.start_s, fps)
-        wanted_frames = max(1, seconds_to_frames(beat.duration_s, fps))
+        wanted_frames = max(1, seconds_to_frames(beat.end_s, fps) - start_frame)
         source_fps = float(snap_fps(suggestion.source.fps) or fps)
 
         # A photograph has no length of its own: it holds the frame for as long

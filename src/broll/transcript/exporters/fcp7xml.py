@@ -7,6 +7,7 @@ so nothing needs to be emitted for the empty stretch.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -23,9 +24,12 @@ def _rate(parent: ET.Element, fps: float) -> ET.Element:
     return rate
 
 
+_XML_ILLEGAL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+
+
 def _text(parent: ET.Element, tag: str, value) -> ET.Element:
     element = ET.SubElement(parent, tag)
-    element.text = str(value)
+    element.text = _XML_ILLEGAL.sub("", str(value))  # a stray control character makes the whole file invalid
     return element
 
 

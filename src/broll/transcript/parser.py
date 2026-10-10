@@ -60,9 +60,12 @@ class TranscriptError(ValueError):
 # --------------------------------------------------------------------------
 
 
-def _clean(text: str) -> str:
+def _clean(text: str, speakers: bool = True) -> str:
+    """Tidy one cue. `speakers`: drop a leading "NAME:" label (subtitle files have them; a script's own
+    "Here's the thing:" is words, not a label, so plain text keeps them)."""
     text = TAG.sub("", text)
-    text = SPEAKER.sub("", text)
+    if speakers:
+        text = SPEAKER.sub("", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -113,7 +116,7 @@ def parse_plain_text(text: str, words_per_minute: int = 150) -> list[Cue]:
     cursor = 0.0
     seconds_per_word = 60.0 / max(1, words_per_minute)
     for sentence in sentences:
-        cleaned = _clean(sentence)
+        cleaned = _clean(sentence, speakers=False)
         if not cleaned:
             continue
         duration = max(1.0, len(cleaned.replace("|", " ").split()) * seconds_per_word)
@@ -124,6 +127,7 @@ def parse_plain_text(text: str, words_per_minute: int = 150) -> list[Cue]:
 
 def parse(text: str, filename: str | None = None, words_per_minute: int = 150) -> tuple[list[Cue], bool]:
     """Return (cues, timings_were_estimated)."""
+    text = text.lstrip("\ufeff")  # a byte-order mark would stick to the first word
     suffix = Path(filename).suffix.lower() if filename else ""
     stripped = text.strip()
     if suffix == ".vtt" or stripped.upper().startswith("WEBVTT"):
@@ -197,11 +201,20 @@ def _respan(cue: Cue, parts: list[str], hard: bool) -> list[Cue]:
 
 
 def _marks(cues: list[Cue]) -> list[Cue]:
-    """A "|" in the script is a cut the person asked for."""
+    """A "|" in the script is a cut the person asked for, wherever it sits (inside a cue, or at its edge)."""
     out: list[Cue] = []
+    cut_next = False
     for cue in cues:
-        parts = [p.strip() for p in cue.text.split("|") if p.strip()]
-        out.extend(_respan(cue, parts, True) if len(parts) > 1 else [Cue(cue.start_s, cue.end_s, parts[0] if parts else cue.text, cue.hard)])
+        text = cue.text.strip()
+        lead, trail = text.startswith("|"), text.endswith("|")
+        parts = [p.strip() for p in text.split("|") if p.strip()]
+        hard = cue.hard or cut_next or lead
+        cut_next = trail
+        if len(parts) > 1:
+            pieces = _respan(Cue(cue.start_s, cue.end_s, text, hard), parts, True)
+            out.extend(pieces)
+        else:
+            out.append(Cue(cue.start_s, cue.end_s, parts[0] if parts else cue.text, hard))
     return out
 
 
@@ -247,14 +260,14 @@ def _merge_short(cues: list[Cue], minimum: float, maximum: float) -> list[Cue]:
             previous = merged[-1]
             combined = cue.end_s - previous.start_s
             if (previous.end_s - previous.start_s) < minimum and combined <= maximum and not cue.hard:
-                merged[-1] = Cue(previous.start_s, cue.end_s, f"{previous.text} {cue.text}")
+                merged[-1] = Cue(previous.start_s, cue.end_s, f"{previous.text} {cue.text}", previous.hard)
                 continue
         merged.append(cue)
     # A trailing runt has no successor to absorb it; fold it backwards.
     if len(merged) > 1 and (merged[-1].end_s - merged[-1].start_s) < minimum and not merged[-1].hard:
         last = merged.pop()
         previous = merged[-1]
-        merged[-1] = Cue(previous.start_s, last.end_s, f"{previous.text} {last.text}")
+        merged[-1] = Cue(previous.start_s, last.end_s, f"{previous.text} {last.text}", previous.hard)
     return merged
 
 

@@ -370,3 +370,66 @@ def test_gemini_embeddings_are_sent_in_batches_the_api_accepts(monkeypatch):
     seen.clear()
     embedder.embed_query("q")
     assert seen == [(1, "RETRIEVAL_QUERY")], "a query is embedded as a query"
+
+
+def test_a_stranger_cannot_make_the_server_read_a_big_body(monkeypatch, tmp_path):
+    """An unauthenticated upload or login is refused before its body is read (and so before it reaches disk)."""
+    from broll.web import access
+
+    monkeypatch.setenv("BROLL_ACCESS_PASSWORD", "hunter2")
+    monkeypatch.delenv("BROLL_API_TOKEN", raising=False)
+    from broll.config import WorkspaceConfig
+    from broll.web.app import create_app
+
+    config = WorkspaceConfig(id="t", name="T")
+    config.provider.vision = "mock"
+    config.save()
+    config.ensure_dirs()
+    with TestClient(create_app(config, run_worker=False), client=("203.0.113.9", 5000)) as client:
+        spilled = {"n": 0}
+        original = access._api_refusal
+
+        def counting(request):
+            spilled["n"] += 1
+            return original(request)
+
+        monkeypatch.setattr(access, "_api_refusal", counting)
+        upload = client.post("/api/upload", files=[("files", ("a.mp4", b"x" * 200_000, "video/mp4"))])
+        assert upload.status_code == 403 and spilled["n"] == 1
+        big_login = client.post("/login", content=b"password=" + b"x" * 200_000,
+                                headers={"content-type": "application/x-www-form-urlencoded"})
+        assert big_login.status_code == 413
+        assert client.post("/login", data={"password": "nope"}).status_code == 401
+
+
+def test_restore_puts_the_backup_back_and_does_not_replay_newer_writes(workspace, store):
+    import sqlite3
+
+    from broll.backup import RestoreError, backup_database, restore_database
+    from broll.db.models import Shot, Source
+    from broll.db.store import Store, new_id
+
+    def add(n):
+        source = store.insert_source(Source(id=new_id(), workspace_id=workspace.id, content_hash=f"h{n}",
+                                            original_filename=f"{n}.mov", origin="local"))
+        store.insert_shot(Shot(id=f"{source.id}-0", workspace_id=workspace.id, source_id=source.id, status="indexed"))
+
+    for n in range(5):
+        add(n)
+    backup = backup_database(workspace)
+    for n in range(5, 12):
+        add(n)  # newer rows, sitting in the -wal as far as the backup is concerned
+    store.conn.commit()
+    with pytest.raises(RestoreError):
+        restore_database(workspace, backup.parent / "nope.db")
+    store.close()
+    done = restore_database(workspace, backup)
+    assert done["counts"] == {"sources": 5, "shots": 5} and done["kept"].exists()
+    again = Store.for_config(workspace)
+    try:
+        assert again.count_shots() == 5
+    finally:
+        again.close()
+    kept = sqlite3.connect(str(done["kept"]))
+    assert kept.execute("SELECT COUNT(*) FROM shots").fetchone()[0] == 12  # nothing was thrown away
+    kept.close()
