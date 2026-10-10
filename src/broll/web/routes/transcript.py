@@ -34,7 +34,7 @@ class TranscriptRun:
     id: str
     name: str
     matches: list[BeatMatch] = field(default_factory=list)
-    media: str = "video"
+    media: str = "both"
 
     def timeline(self, config) -> Timeline:
         return build_timeline(self.matches, config, name=self.name)
@@ -56,7 +56,7 @@ async def match_transcript(
     text: str = Form(default=""),
     filename: str = Form(default="transcript.txt"),
     rerank: bool = Form(default=True),
-    media: str = Form(default="video"),
+    media: list[str] = Form(default=[]),
     upload: UploadFile | None = File(default=None),
 ):
     state = client_state(request)
@@ -81,9 +81,10 @@ async def match_transcript(
                 text_provider = get_text_provider(config)
             except Exception:  # a missing key must not break the screen
                 text_provider = None
-        # One side at a time: a timeline of clips, or a timeline of stills. Never the two mixed in one list.
-        media = kinds.clean(media) or "video"
-        wanted = SearchFilters(exclude_flagged=True, media_kind=[media])
+        # Videos and images both by default; untick one to cut from the other alone.
+        sides = [k for k in kinds.KINDS if k in {kinds.clean(m) for m in media}]
+        media = sides[0] if len(sides) == 1 else "both"
+        wanted = SearchFilters(exclude_flagged=True, media_kind=sides if len(sides) == 1 else [])
         matches = await TranscriptMatcher(config, engine, text_provider, wanted).match(beats)
     finally:
         store.close()

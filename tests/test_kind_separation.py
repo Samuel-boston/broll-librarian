@@ -331,7 +331,7 @@ def test_the_queue_counts_videos_and_images_separately_and_tags_each_row(workspa
 # ---- the script screen -----------------------------------------------------------------------
 
 
-def test_the_script_screen_matches_one_side_at_a_time(workspace, monkeypatch):
+def test_the_script_screen_matches_both_by_default_or_one_side(workspace, monkeypatch):
     seen = []
 
     class Matcher:
@@ -343,10 +343,11 @@ def test_the_script_screen_matches_one_side_at_a_time(workspace, monkeypatch):
 
     monkeypatch.setattr("broll.web.routes.transcript.TranscriptMatcher", Matcher)
     client = _client(workspace)
-    assert 'name="media" value="image"' in client.get("/transcript").text
-    for choice in ("image", "video", "nonsense"):
+    page = client.get("/transcript").text
+    assert page.count('type="checkbox" name="media"') == 2 and page.count("checked>") >= 2
+    for choice in (["image"], ["video"], ["video", "image"], []):
         client.post("/transcript", data={"text": "He walks along the beach.", "media": choice, "rerank": ""})
-    assert seen == [["image"], ["video"], ["video"]]
+    assert seen == [["image"], ["video"], [], []]  # both, or none ticked, means both
 
 
 # ---- the delete-everything control moved to Settings -----------------------------------------

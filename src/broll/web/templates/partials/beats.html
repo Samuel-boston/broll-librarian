@@ -1,7 +1,7 @@
 <div class="space-y-4">
   <div class="card flex flex-wrap items-center gap-3 px-5 py-4">
     <div class="text-sm text-muted">
-      <span class="font-medium text-white">{{ timeline.items|length }}</span> {{ 'image' if run.media == 'image' else 'video' }}{{ '' if timeline.items|length == 1 else 's' }} ·
+      <span class="font-medium text-white">{{ timeline.items|length }}</span> {{ 'image' if run.media == 'image' else ('video' if run.media == 'video' else 'clip') }}{{ '' if timeline.items|length == 1 else 's' }} ·
       <span class="font-medium text-white">{{ gaps|length }}</span> gap(s) ·
       <span class="mono text-xs">{{ timeline.fps }} fps</span>
     </div>
