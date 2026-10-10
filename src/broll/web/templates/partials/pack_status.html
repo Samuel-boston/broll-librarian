@@ -1,0 +1,41 @@
+<div id="pack-status" class="card p-5 text-sm"
+     {% if job and not job.finished %}hx-get="/transcript/{{ run.id }}/pack/{{ job.id }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  {% if error %}
+    <p class="text-rose">{{ error }}</p>
+  {% elif job.state == 'queued' %}
+    <p class="text-muted">Waiting for another pack to finish…</p>
+  {% elif job.state == 'running' %}
+    <div class="flex items-center justify-between">
+      <span class="font-medium text-white">Cutting clip {{ [job.done + 1, job.total]|min }} of {{ job.total }}</span>
+      <span class="mono text-xs text-faint">{{ job.percent }}%</span>
+    </div>
+    <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full" style="background:var(--line-soft)">
+      <div class="h-full rounded-full" style="width:{{ job.percent }}%;background:var(--accent)"></div>
+    </div>
+    <p class="mt-2 text-xs text-faint">{{ job.current }}</p>
+    <p class="mt-1 text-xs text-faint">Each clip is cut out of Drive on the server. You can leave this page open and keep working.</p>
+  {% elif job.state == 'failed' %}
+    <p class="text-rose">The pack could not be built. {{ job.error }}</p>
+  {% else %}
+    <div class="flex flex-wrap items-center gap-3">
+      <a class="btn btn-primary btn-sm" href="/transcript/{{ run.id }}/pack/{{ job.id }}/download">Download {{ job.zip_name }}</a>
+      <span class="text-muted">{{ job.packed_lines }} line{{ '' if job.packed_lines == 1 else 's' }} · {{ '%.0f'|format(job.bytes / 1048576) }} MB</span>
+    </div>
+    <p class="mt-2 text-xs text-faint">
+      Unzip it so the <span class="mono">clips</span> folder is at <span class="mono">{{ job.folder }}/clips</span>, then import
+      <span class="mono">timeline.xml</span>. The README inside says how to relink if you unzip elsewhere. The file is deleted from the server after {{ '%g'|format(job.keep_hours) }} hours.
+    </p>
+    {% if job.limit_hit %}
+    <p class="alert alert-warn mt-3">The pack reached its {{ '%g'|format(job.max_gb) }} GB limit, so the last lines below were left out.</p>
+    {% endif %}
+    {% if job.skipped %}
+    <p class="mt-3 text-xs font-medium text-amber">Not packed ({{ job.skipped|length }}):</p>
+    <ul class="mt-1 space-y-1 text-xs text-muted">
+      {% for skip in job.skipped %}<li><span class="mono text-faint">{{ skip.timecode }}</span> {{ skip.text[:70] }} — {{ skip.reason }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    {% if job.gaps %}
+    <p class="mt-3 text-xs font-medium text-amber">No clip, no good match ({{ job.gaps|length }}): listed in the README as gaps.</p>
+    {% endif %}
+  {% endif %}
+</div>

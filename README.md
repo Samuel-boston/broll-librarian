@@ -674,6 +674,32 @@ FCP7 XML (`.xml`) is the export to reach for: it imports into both Premiere Pro
 and DaVinci Resolve. CMX3600 EDL is the universal fallback (one timebase, so
 cross-rate sources are conformed). CSV is for anyone who just wants the list.
 
+### Download clips + timeline (media online, no relinking)
+
+The footage lives in Drive, so a plain export imports offline. On the Script to B-roll results, **Download clips + timeline**
+fixes that for an editor who has no Drive for Desktop mount. The server cuts the chosen clip for every line, each one
+just the shot plus handles (default 1 s each side, a field next to the button), and zips them with `timeline.xml`
+(FCP7), `timeline.edl` and a `README.txt`.
+
+* **Folder field.** Type the folder on your computer where the `clips` folder will end up (a Mac path such as
+  `/Users/sam/Downloads/<pack name>`, or `C:\Users\sam\Downloads\<pack name>`). The XML's `pathurl` entries are that
+  folder plus `clips/<file>`, so Premiere and Resolve find the media on import. The page remembers what you typed in the
+  browser. On a Mac, double-clicking the zip unpacks into a folder named after the zip, which is what the placeholder shows.
+* **Never downloads a whole source.** A video that exists only in Drive is cut out of Drive over HTTPS with ranged reads
+  (the same in-place reading the indexer uses for big files), so a 100 GB camera file costs only the index and the seconds
+  that are read. Its content fingerprint is checked first, and a Drive copy that is not the indexed file is refused.
+  Images are copied as they are (a RAW photo may need Camera Raw to open).
+* **Timing.** The pack file starts at or before the shot minus the handle, so the XML's in-point is where the shot sits
+  *inside that file* (measured by `fetch_shot`), not its timecode in the original. A shot chosen for two lines is one file.
+* **Files** are named `001_<beat start>_<original name>.<ext>`, e.g. `007_01m42s_Walking_alone.mp4`.
+* **A background job** with a progress bar on the page; one pack is built at a time. Working files are deleted as each
+  clip goes into the zip. The zip is deleted after `transcript.pack_keep_hours` (6) and stray work files at start-up.
+* **Limits, said out loud.** A pack stops at `transcript.pack_max_gb` (5); the lines that did not fit are listed on the
+  page and in the README, as are lines whose clip could not be read, and lines with "No good match" (gaps with the
+  footage to find). Each cut also respects `ingest.disk_headroom_gb`: with too little free disk the clip is skipped.
+* **Not verified in Premiere.** The XML has been checked frame by frame against ffmpeg (the in-point lands on the
+  shot's first frame) and parsed, but nobody has imported it into Premiere or Resolve yet.
+
 **Automated coverage:** golden-file tests for all three formats, including a
 mixed-frame-rate sequence and a clip too short for its beat. **Manual gate not
 yet run:** importing a real export into Premiere with media linked needs a

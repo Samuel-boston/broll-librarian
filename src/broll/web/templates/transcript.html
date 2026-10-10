@@ -83,4 +83,20 @@
     splitBtn.style.display = 'none'; window.getSelection().removeAllRanges();
   });
 </script>
+<script>
+  // The pack's folder and handles are remembered in this browser. The summary is re-drawn whenever a clip
+  // is swapped, so the saved values go back in each time.
+  const packKey = name => 'broll.pack.' + name;
+  function restorePackFields() {
+    document.querySelectorAll('[data-pack-field]').forEach(el => {
+      try { const v = localStorage.getItem(packKey(el.name)); if (v !== null && v !== '') el.value = v; } catch (e) {}
+    });
+  }
+  document.addEventListener('input', e => {
+    if (e.target.matches && e.target.matches('[data-pack-field]')) {
+      try { localStorage.setItem(packKey(e.target.name), e.target.value); } catch (err) {}
+    }
+  });
+  document.body.addEventListener('htmx:afterSettle', restorePackFields);
+</script>
 {% endblock %}

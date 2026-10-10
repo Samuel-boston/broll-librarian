@@ -312,6 +312,14 @@ class TranscriptConfig(BaseModel):
     candidates_per_beat: int = 8
     suggestions_per_beat: int = 3
     sequence_fps: float | None = None  # None = modal fps of the suggested clips
+    # "Download clips + timeline": a zip of every chosen clip, cut out of Drive, plus a timeline that
+    # opens online. Handles are the extra seconds kept either side of a shot.
+    pack_handles_s: float = 1.0
+    # A pack stops growing at this size (the lines left over are listed). Disk is the limit: a pack is
+    # built on the server and needs about this much room until it is downloaded.
+    pack_max_gb: float = 5.0
+    # A finished pack is deleted from the server after this long.
+    pack_keep_hours: float = 6.0
 
 
 class ClientProfile(BaseModel):

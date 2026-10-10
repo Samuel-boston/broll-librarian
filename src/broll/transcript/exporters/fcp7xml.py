@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from .base import Timeline, frames_to_timecode, ntsc_timebase, path_to_url
+from .base import Timeline, frames_to_timecode, ntsc_timebase, packed_pathurl, path_to_url
 
 XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE xmeml>\n'
 
@@ -29,7 +29,8 @@ def _text(parent: ET.Element, tag: str, value) -> ET.Element:
     return element
 
 
-def build(timeline: Timeline) -> str:
+def build(timeline: Timeline, pack_folder: str | None = None) -> str:
+    """The XML. For a pack, `pack_folder` is where the person unzips it, and the pathurls point inside it."""
     root = ET.Element("xmeml", version="5")
     sequence = ET.SubElement(root, "sequence", id="broll-sequence-1")
     _text(sequence, "name", timeline.name)
@@ -68,7 +69,7 @@ def build(timeline: Timeline) -> str:
         _text(clip, "in", item.sequence_in_frame)
         _text(clip, "out", item.sequence_out_frame)
 
-        source_key = item.suggestion.source.id
+        source_key = item.file_key
         if source_key in seen_files:
             ET.SubElement(clip, "file", id=seen_files[source_key])
         else:
@@ -76,8 +77,20 @@ def build(timeline: Timeline) -> str:
             seen_files[source_key] = file_id
             file_element = ET.SubElement(clip, "file", id=file_id)
             _text(file_element, "name", item.name)
-            _text(file_element, "pathurl", path_to_url(item.media_path))
+            if item.packed_file and pack_folder:
+                _text(file_element, "pathurl", packed_pathurl(pack_folder, item.packed_file))
+            else:
+                _text(file_element, "pathurl", path_to_url(item.media_path))
             _rate(file_element, item.source_fps)
+            if item.file_duration_frames:
+                _text(file_element, "duration", item.file_duration_frames)
+            if item.packed_file:
+                # A cut file starts at zero: say so, so no embedded timecode shifts the in-point.
+                file_timecode = ET.SubElement(file_element, "timecode")
+                _rate(file_timecode, item.source_fps)
+                _text(file_timecode, "string", "00:00:00:00")
+                _text(file_timecode, "frame", 0)
+                _text(file_timecode, "displayformat", "NDF")
             file_media = ET.SubElement(file_element, "media")
             file_video = ET.SubElement(file_media, "video")
             file_characteristics = ET.SubElement(file_video, "samplecharacteristics")

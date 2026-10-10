@@ -75,6 +75,10 @@ class AppState:
         # Transcript runs live in memory: a run is cheap to redo, and
         # persisting a whole timeline would be a schema for one screen.
         self.runs: dict[str, object] = {}
+        # "Download clips + timeline" jobs: built in the background, one at a time.
+        from ..transcript.pack import PackManager
+
+        self.packs = PackManager(config)
 
     def store(self) -> Store:
         """A fresh connection per request. SQLite connections are cheap."""

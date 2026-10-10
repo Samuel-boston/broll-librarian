@@ -1,6 +1,7 @@
 <div class="space-y-4">
   <p class="text-xs text-faint">Select some words in a line, then press Split to give them their own B-roll.</p>
   {% include "partials/run_summary.html" %}
+  <div id="pack-status"></div>
   {% for match in matches %}
     {% set is_last = loop.last %}
     {% include "partials/beat.html" %}

@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
 from ... import kinds
 from ...analysis.providers.registry import get_text_provider
@@ -15,6 +15,7 @@ from ...search.query import SearchEngine
 from ...transcript.exporters import csv_export, edl, fcp7xml
 from ...transcript.exporters.base import Timeline, build_timeline
 from ...transcript.matcher import BeatMatch, TranscriptMatcher
+from ...transcript.pack import zip_base_name
 from ...transcript.parser import join_beats, parse_and_segment, split_beat
 from ..app import client_state, templates
 
@@ -269,6 +270,50 @@ async def export(request: Request, run_id: str, fmt: str):
     )
 
 
+def _pack_status(request: Request, state, run: TranscriptRun, job, error: str | None = None):
+    return templates.TemplateResponse(
+        request=request, name="partials/pack_status.html",
+        context={"request": request, "workspace": state.config, "run": run, "job": job, "error": error},
+    )
+
+
+@router.post("/transcript/{run_id}/pack", response_class=HTMLResponse)
+async def start_pack(request: Request, run_id: str, folder: str = Form(default=""),
+                     handles: float | None = Form(default=None)):
+    """Start cutting every chosen clip into a zip with a timeline that imports online."""
+    state = client_state(request)
+    run = _get_run(state, run_id)
+    if not any(m.chosen for m in run.matches):
+        return _pack_status(request, state, run, None, "No line has a chosen clip yet, so there is nothing to pack.")
+    handles_s = state.config.transcript.pack_handles_s if handles is None else handles
+    try:
+        job = state.packs.start(run.matches, run.id, run.name, folder, handles_s)
+    except ValueError as exc:
+        return _pack_status(request, state, run, None, str(exc))
+    return _pack_status(request, state, run, job)
+
+
+@router.get("/transcript/{run_id}/pack/{job_id}", response_class=HTMLResponse)
+async def pack_progress(request: Request, run_id: str, job_id: str):
+    state = client_state(request)
+    run = _get_run(state, run_id)
+    job = state.packs.get(job_id)
+    if job is None or job.run_id != run.id:
+        return _pack_status(request, state, run, None,
+                            "That pack is no longer on the server (packs are deleted after a few hours). "
+                            "Press the button again.")
+    return _pack_status(request, state, run, job)
+
+
+@router.get("/transcript/{run_id}/pack/{job_id}/download")
+async def pack_download(request: Request, run_id: str, job_id: str):
+    state = client_state(request)
+    job = state.packs.get(job_id)
+    if job is None or job.run_id != run_id or job.state != "done" or job.zip_path is None:
+        raise HTTPException(status_code=404, detail="That pack is not ready, or it has been deleted. Build it again.")
+    return FileResponse(job.zip_path, media_type="application/zip", filename=job.zip_name)
+
+
 def _get_run(state, run_id: str) -> TranscriptRun:
     run = state.runs.get(run_id)
     if run is None:
@@ -288,4 +333,5 @@ def _run_context(request: Request, state, run: TranscriptRun) -> dict:
         "matches": run.matches,
         "timeline": timeline,
         "gaps": timeline.gaps,
+        "pack_name": zip_base_name(run.name),
     }

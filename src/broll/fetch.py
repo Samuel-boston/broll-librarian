@@ -10,6 +10,10 @@ that has chosen a shot still needs the bytes. In order of preference:
 3. a download through the Drive API, into the workspace temp directory (kept
    as a cache) or into the folder the caller asked for.
 
+A caller that only wants a trimmed cut can pass ``stream=True``: when no local copy
+exists, the cut is made straight out of Drive over HTTPS (``RemoteDriveVideo``), so a
+100 GB camera file costs only the index and the seconds that are read, never a download.
+
 ``trim`` then cuts just the shot plus handles, so rendering a four-second
 cutaway does not pull a 2 GB camera file into the project. It stream-copies
 when a keyframe sits close enough before the in-point - bit-exact and instant -
@@ -37,6 +41,7 @@ from .config import WorkspaceConfig
 from .db.models import Source
 from .db.store import Store
 from .ingest.hashing import content_hash
+from .ingest.remote import RemoteDriveVideo
 
 log = logging.getLogger(__name__)
 
@@ -73,7 +78,7 @@ class FetchResult:
     filename: str
     media: str
     path: str               # the file to use
-    via: str                # local | drive_mount | drive_download
+    via: str                # local | drive_mount | drive_download | drive_stream
     source_path: str        # the full-length original that was read
     trimmed: bool
     trim_mode: str | None   # copy | reencode | None
@@ -181,16 +186,14 @@ def download(config: WorkspaceConfig, source: Source, directory: Path, drive=Non
     return target
 
 
-def locate(
-    config: WorkspaceConfig, source: Source, download_to: Path | None = None, drive=None,
-) -> tuple[Path, str]:
-    """A full, verified copy of the source on this machine, and how it was reached."""
+def find_local(config: WorkspaceConfig, source: Source) -> tuple[tuple[Path, str] | None, list[str]]:
+    """A verified full copy that is already on this machine, and what was tried if there is none."""
     tried: list[str] = []
     if source.origin_path:
         original = Path(source.origin_path)
         if original.is_file():
             if _same_file(original, source):
-                return original, "local"
+                return (original, "local"), tried
             tried.append(f"the file at {original} has changed since it was indexed")
         else:
             tried.append(f"{original} is no longer there")
@@ -198,11 +201,21 @@ def locate(
     if config.drive_local_mount_path:
         for candidate in mount_candidates(config, source):
             if candidate.is_file() and _same_file(candidate, source):
-                return candidate, "drive_mount"
+                return (candidate, "drive_mount"), tried
         if source.drive_path:
             tried.append(f"it is not under the Drive for Desktop folder {config.drive_local_mount_path}")
     else:
         tried.append("no Drive for Desktop folder is set (drive_local_mount_path)")
+    return None, tried
+
+
+def locate(
+    config: WorkspaceConfig, source: Source, download_to: Path | None = None, drive=None,
+) -> tuple[Path, str]:
+    """A full, verified copy of the source on this machine, and how it was reached."""
+    found, tried = find_local(config, source)
+    if found:
+        return found
 
     if source.drive_file_id:
         try:
@@ -224,9 +237,46 @@ def locate(
     )
 
 
+def open_remote(config: WorkspaceConfig, source: Source, drive=None) -> RemoteDriveVideo:
+    """The Drive original, readable in place, after checking it is the file that was indexed.
+
+    Costs two small range reads (the first and last megabyte) for the check; nothing is downloaded.
+    """
+    client = drive or drive_client_for(config)
+    size = source.filesize_bytes
+    if not size:
+        entry = client.get(source.drive_file_id)
+        size = entry.size if entry is not None else None
+    if not size:
+        raise FetchError(f"Drive did not say how big {source.original_filename} is, so it cannot be checked.")
+    remote = RemoteDriveVideo(client, source.drive_file_id, source.original_filename, size)
+    try:
+        same = remote.content_hash() == source.content_hash
+    except Exception as exc:  # noqa: BLE001 - Drive said no, or the network did
+        raise FetchError(f"Could not read {source.original_filename} from Drive: {_scrub(str(exc))}") from exc
+    if not same:
+        raise FetchError(
+            f"The copy of {source.original_filename} in Drive is not the file that was "
+            "indexed (its content differs). Re-index it, or restore the original.",
+        )
+    return remote
+
+
 # --------------------------------------------------------------------------
 # Cutting the shot out
 # --------------------------------------------------------------------------
+
+
+def _scrub(text: str) -> str:
+    """No access token in a message that may reach a screen."""
+    return re.sub(r"Bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer ***", text or "")
+
+
+def _input(original) -> list[str]:
+    """How ffmpeg/ffprobe open the file: a path, or Drive over HTTPS with a fresh token."""
+    if isinstance(original, RemoteDriveVideo):
+        return original.ffmpeg_input()
+    return ["-i", str(original)]
 
 
 def _run(cmd: list[str], timeout: float = 900) -> subprocess.CompletedProcess:
@@ -240,7 +290,7 @@ def _number(value) -> float | None:
         return None
 
 
-def probe_video(path: Path) -> dict:
+def probe_video(path) -> dict:
     """Duration, pixel format, and where the first keyframe sits on the timeline
     ffmpeg's -ss uses.
 
@@ -250,14 +300,16 @@ def probe_video(path: Path) -> dict:
     """
     cp = _run([
         "ffprobe", "-v", "error", "-select_streams", "v:0",
-        "-show_entries", "format=duration,start_time:stream=pix_fmt,codec_name", "-of", "json", str(path),
+        "-show_entries", "format=duration,start_time:stream=pix_fmt,codec_name", "-of", "json",
+        *_input(path),
     ], timeout=60)
     data = json.loads(cp.stdout or "{}")
     stream = (data.get("streams") or [{}])[0]
     fmt = data.get("format") or {}
     frames = json.loads(_run([
         "ffprobe", "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#8",
-        "-show_entries", "frame=best_effort_timestamp_time,pts_time,key_frame", "-of", "json", str(path),
+        "-show_entries", "frame=best_effort_timestamp_time,pts_time,key_frame", "-of", "json",
+        *_input(path),
     ], timeout=60).stdout or "{}").get("frames") or []
     start = _number(fmt.get("start_time")) or 0.0
     key = next((f for f in frames if str(f.get("key_frame")) == "1"), frames[0] if frames else {})
@@ -270,11 +322,11 @@ def probe_video(path: Path) -> dict:
     }
 
 
-def _frame_times(path: Path, interval: str, keyframes_only: bool = False) -> list[float]:
+def _frame_times(path, interval: str, keyframes_only: bool = False) -> list[float]:
     cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0"]
     if keyframes_only:
         cmd += ["-skip_frame", "nokey"]
-    cmd += ["-read_intervals", interval, "-show_entries", "frame=pts_time", "-of", "csv=p=0", str(path)]
+    cmd += ["-read_intervals", interval, "-show_entries", "frame=pts_time", "-of", "csv=p=0", *_input(path)]
     times = []
     for line in _run(cmd, timeout=120).stdout.splitlines():
         try:
@@ -284,7 +336,7 @@ def _frame_times(path: Path, interval: str, keyframes_only: bool = False) -> lis
     return times
 
 
-def keyframe_at_or_before(path: Path, t: float) -> float | None:
+def keyframe_at_or_before(path, t: float) -> float | None:
     """The last keyframe at or before `t`, looking back KEYFRAME_SEARCH_S at most."""
     start = max(0.0, t - KEYFRAME_SEARCH_S)
     before = [k for k in _frame_times(path, f"{start:.3f}%{t + 0.5:.3f}", keyframes_only=True)
@@ -292,7 +344,7 @@ def keyframe_at_or_before(path: Path, t: float) -> float | None:
     return max(before) if before else None
 
 
-def first_frame_at_or_after(path: Path, t: float) -> float | None:
+def first_frame_at_or_after(path, t: float) -> float | None:
     """The presentation time of the first frame at or after `t`."""
     after = [f for f in _frame_times(path, f"{t:.3f}%+0.5") if f >= t - 1e-4]
     return min(after) if after else None
@@ -305,7 +357,7 @@ def _x264_pix_fmt(source_pix_fmt: str) -> str:
     return f"yuv{chroma}p10le" if deep else f"yuv{chroma}p"
 
 
-def cut(original: Path, dest: Path, start: float, end: float) -> tuple[str, float]:
+def cut(original, dest: Path, start: float, end: float) -> tuple[str, float]:
     """Cut [start, end] of `original` into `dest`. Returns (mode, offset_s).
 
     The offset maps the two timelines: the frame a render gets by seeking to t
@@ -346,7 +398,7 @@ def cut(original: Path, dest: Path, start: float, end: float) -> tuple[str, floa
         # Two threads each way: a cut is a few seconds of footage, and the machine
         # it runs on is usually busy with something that matters more.
         common = ["ffmpeg", "-v", "error", "-nostdin", "-y", "-threads", "2", "-ss", f"{seek:.6f}",
-                  "-i", str(original), "-t", f"{end - anchor:.6f}", "-map", "0:v:0", "-map", "0:a:0?",
+                  *_input(original), "-t", f"{end - anchor:.6f}", "-map", "0:v:0", "-map", "0:a:0?",
                   "-sn", "-dn", "-threads", "2"]
         if mode == "copy":
             cmd = common + ["-c", "copy", "-avoid_negative_ts", "make_zero"]
@@ -358,7 +410,7 @@ def cut(original: Path, dest: Path, start: float, end: float) -> tuple[str, floa
         try:
             cp = _run(cmd + [str(partial)])
             if cp.returncode != 0 or not partial.is_file():
-                errors.append(f"{mode}: {(cp.stderr or '').strip()[-300:]}")
+                errors.append(f"{mode}: {_scrub((cp.stderr or '').strip()[-300:])}")
                 continue
             got = probe_video(partial)
             expected = end - anchor
@@ -369,7 +421,7 @@ def cut(original: Path, dest: Path, start: float, end: float) -> tuple[str, floa
             return mode, round(anchor - got["key_at"], 6)
         finally:
             partial.unlink(missing_ok=True)
-    raise FetchError(f"Could not cut {original.name}: " + " | ".join(errors), status=500)
+    raise FetchError(f"Could not cut {getattr(original, 'name', original)}: " + " | ".join(errors), status=500)
 
 
 # --------------------------------------------------------------------------
@@ -388,11 +440,15 @@ def fetch_shot(
     copy: bool = False,
     drive=None,
     best_part: bool = False,
+    stream: bool = False,
 ) -> FetchResult:
     """A local file for one shot. See the module docstring for the order.
 
     `best_part` cuts (and reports in and out points for) the strongest stretch the library found inside
     the shot, when there is one, instead of the whole shot.
+
+    `stream` (with `trim`) cuts a video that exists only in Drive straight out of Drive, never downloading
+    it. A copy already on this machine is still preferred.
     """
     shot = store.get_shot(shot_id)
     if shot is None:
@@ -403,21 +459,34 @@ def fetch_shot(
     if dest_dir is not None and not dest_dir.is_absolute():
         raise FetchError(f"dest_dir must be an absolute path, got {dest_dir}.", status=422)
 
-    # A trim only needs the full file as an intermediate, so it goes to the
-    # cache; an untrimmed download goes wherever the caller asked.
-    original, via = locate(config, source, None if trim else dest_dir, drive)
     is_image = source.media_kind == "image"
+    original: Path | RemoteDriveVideo | None = None
+    via = ""
+    if stream and trim and not is_image and source.drive_file_id:
+        found, _tried = find_local(config, source)
+        if found:
+            original, via = found
+        else:
+            original, via = open_remote(config, source, drive), "drive_stream"
+    if original is None:
+        # A trim only needs the full file as an intermediate, so it goes to the
+        # cache; an untrimmed download goes wherever the caller asked.
+        original, via = locate(config, source, None if trim else dest_dir, drive)
     duration = source.duration_s or 0.0
     first, last = shot.start_s, shot.end_s
     if best_part and shot.best_start_s is not None and shot.best_end_s is not None:
         first, last = shot.best_start_s, shot.best_end_s
     start = max(0.0, first - handles_s)
     end = min(duration, last + handles_s) if duration else last + handles_s
-    whole_file = start <= 0.05 and (not duration or end >= duration - 0.05)
+    # Cutting from Drive never takes the shortcut of handing back the whole file: that is a download.
+    whole_file = (start <= 0.05 and (not duration or end >= duration - 0.05)
+                  and not isinstance(original, RemoteDriveVideo))
 
     if trim and not is_image and not whole_file:
         target_dir = dest_dir or (config.temp_dir / "trims")
-        suffix = original.suffix.lower() if original.suffix.lower() in COPY_CONTAINERS else ".mov"
+        ext = Path(source.original_filename).suffix.lower() if isinstance(original, RemoteDriveVideo) \
+            else original.suffix.lower()
+        suffix = ext if ext in COPY_CONTAINERS else ".mov"
         dest = target_dir / (
             f"{_safe_name(source.original_filename)}_{source.id[:8]}-{shot.shot_index}"
             f"_{start:.2f}-{end:.2f}{suffix}"

@@ -57,7 +57,8 @@ nudges the ranking.
 ## 5. Get the clip into the edit
 
 * `POST /api/fetch` turns a shot into a local file. `trim: true` cuts it down to the shot; add `best_part: true` to cut to the strongest stretch instead (`best_start_s`..`best_end_s`).
-* The **Script to B-roll** page exports a Premiere (FCP7 XML), Resolve (EDL) or CSV timeline.
+* The **Script to B-roll** page exports a Premiere (FCP7 XML), Resolve (EDL) or CSV timeline. Those import offline unless the editor has Drive for Desktop. For media that imports online, press **Download clips + timeline** instead: it builds a zip in the background (progress on the page) with every chosen clip cut to the shot plus handles, taken straight out of Drive without downloading the source, and a `timeline.xml` whose paths point at the folder the editor types ("Folder on your computer where you will unzip it"). The `README.txt` inside lists lines with no clip and says how to relink. There is no API for it yet; an agent should use the page.
+* `POST /api/fetch` with a Drive-only video still downloads the file (cached) before trimming; only the pack reads Drive in place.
 * `POST /api/usage` records which video a shot went into, so the next shortlist doesn't offer it again.
 
 ## Changing the tree after the run

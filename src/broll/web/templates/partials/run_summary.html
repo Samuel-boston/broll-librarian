@@ -11,6 +11,32 @@
       <a class="btn btn-sm" href="/transcript/{{ run.id }}/export/csv">CSV</a>
     </div>
   </div>
+  <div class="card px-5 py-4">
+    <div class="flex flex-wrap items-end gap-3">
+      <label class="min-w-[18rem] flex-1 text-sm">
+        <span class="label">Folder on your computer where you will unzip it</span>
+        <input name="folder" data-pack-field type="text" autocomplete="off" spellcheck="false"
+               placeholder="/Users/yourname/Downloads/{{ pack_name }}"
+               class="input mono mt-1.5 w-full py-1.5 text-xs">
+      </label>
+      <label class="text-sm">
+        <span class="label">Handles (s)</span>
+        <input name="handles" data-pack-field type="number" min="0" max="10" step="0.5"
+               value="{{ workspace.transcript.pack_handles_s }}" class="input mt-1.5 w-20 py-1.5 text-sm">
+      </label>
+      <button class="btn btn-primary btn-sm" type="button"
+              hx-post="/transcript/{{ run.id }}/pack" hx-include="[data-pack-field]"
+              hx-target="#pack-status" hx-swap="outerHTML">Download clips + timeline</button>
+    </div>
+    <p class="mt-2 text-xs text-faint">
+      One zip: {{ timeline.items|length }} clip{{ '' if timeline.items|length == 1 else 's' }} cut to the shot plus handles, taken straight out of Drive, and a timeline
+      that imports into Premiere or Resolve with the media online. Type the folder where the <span class="mono">clips</span> folder will end up
+      (on a Mac, double-clicking the zip unpacks into Downloads/<span class="mono">{{ pack_name }}</span>; on Windows, a folder like
+      <span class="mono">C:\Users\you\Downloads\{{ pack_name }}</span>).
+      {% if gaps %}The {{ gaps|length }} line{{ '' if gaps|length == 1 else 's' }} with no good match get no clip and are listed in the README.{% endif %}
+      A pack is capped at {{ '%g'|format(workspace.transcript.pack_max_gb) }} GB and kept {{ '%g'|format(workspace.transcript.pack_keep_hours) }} hours.
+    </p>
+  </div>
   {% if timeline.warnings %}
   <ul class="alert alert-warn space-y-1.5">
     {% for warning in timeline.warnings %}<li class="flex gap-2"><span class="text-amber">•</span><span>{{ warning }}</span></li>{% endfor %}
