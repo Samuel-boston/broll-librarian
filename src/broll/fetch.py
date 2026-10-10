@@ -509,7 +509,10 @@ def fetch_shot(
             filename=source.original_filename, media=source.media_kind, path=str(dest),
             via=via, source_path=str(original), trimmed=True, trim_mode=mode,
             offset_s=offset, shot_start_s=first, shot_end_s=last,
-            in_s=round(first - offset, 6), out_s=round(last - offset, 6),
+            # A file whose first frame comes after the shot's start (a phone clip whose picture starts a
+            # fraction of a second into the container) cannot show anything before that frame: the shot
+            # begins at the start of the file. A negative in-point put the timeline before the footage.
+            in_s=round(max(0.0, first - offset), 6), out_s=round(max(0.0, last - offset), 6),
             handles_s=handles_s, duration_s=info["duration"], bytes=dest.stat().st_size,
             verified=True,
         )

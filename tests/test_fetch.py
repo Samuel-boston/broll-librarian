@@ -291,3 +291,19 @@ def test_the_endpoint_passes_on_why_a_shot_cannot_be_fetched(two_libraries, clip
         response = api.post("/api/fetch", json={"shot_id": shot.id, "client": "adam"})
     assert response.status_code == 503
     assert "broll drive login -w adam" in response.json()["detail"]
+
+
+def test_a_file_that_starts_after_the_shot_never_gets_a_negative_in_point(workspace, clips, monkeypatch):
+    """A phone clip whose first frame sits 0.3 s into the container: the shot begins at the file's start."""
+    import broll.fetch as fetch_module
+
+    real = fetch_module.cut
+
+    def late(original, dest, start, end):
+        mode, offset = real(original, dest, start, end)
+        return mode, offset + 0.3
+
+    monkeypatch.setattr(fetch_module, "cut", late)
+    shot = add_shot(workspace, clips["short_gop"], 0.0, 1.5)
+    result = fetch(workspace, shot, trim=True, handles_s=0.5)
+    assert result.in_s == 0.0 and result.out_s >= 1.0
