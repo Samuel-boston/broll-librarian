@@ -149,6 +149,10 @@ class TranscriptMatcher:
             matches.append(await self._match_beat(beat, usage))
         return matches
 
+    async def match_one(self, beat: Beat, usage: dict[str, int] | None = None) -> BeatMatch:
+        """Suggestions for one beat, e.g. after a person split or joined it."""
+        return await self._match_beat(beat, usage if usage is not None else {})
+
     async def _match_beat(self, beat: Beat, usage: dict[str, int]) -> BeatMatch:
         # Rank only, on purpose: the reranker judges relevance itself and is
         # told to answer "no good match". Any relevance gate would starve it on

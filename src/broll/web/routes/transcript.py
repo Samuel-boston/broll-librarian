@@ -15,7 +15,7 @@ from ...search.query import SearchEngine
 from ...transcript.exporters import csv_export, edl, fcp7xml
 from ...transcript.exporters.base import Timeline, build_timeline
 from ...transcript.matcher import BeatMatch, TranscriptMatcher
-from ...transcript.parser import parse_and_segment
+from ...transcript.parser import join_beats, parse_and_segment, split_beat
 from ..app import client_state, templates
 
 router = APIRouter()
@@ -35,6 +35,10 @@ class TranscriptRun:
     name: str
     matches: list[BeatMatch] = field(default_factory=list)
     media: str = "both"
+    # What it takes to match a beat again after a person splits or joins it.
+    config: object = None
+    filters: object = None
+    rerank: bool = False
 
     def timeline(self, config) -> Timeline:
         return build_timeline(self.matches, config, name=self.name)
@@ -98,7 +102,8 @@ async def match_transcript(
     finally:
         store.close()
 
-    run = TranscriptRun(id=uuid.uuid4().hex[:12], name=filename.rsplit(".", 1)[0], matches=matches, media=media)
+    run = TranscriptRun(id=uuid.uuid4().hex[:12], name=filename.rsplit(".", 1)[0], matches=matches, media=media,
+                         config=config, filters=wanted, rerank=bool(text_provider))
     state.runs[run.id] = run
 
     return templates.TemplateResponse(
@@ -106,6 +111,81 @@ async def match_transcript(
         name="partials/beats.html",
         context=_run_context(request, state, run),
     )
+
+
+async def _rematch(request: Request, state, run: TranscriptRun, new_beats: list, keep: dict[int, BeatMatch]):
+    """Rebuild a run's list after a split or join: only the new beats are matched again."""
+    from ...transcript.matcher import TranscriptMatcher
+
+    usage: dict[str, int] = {}
+    for match in keep.values():
+        if match.chosen:
+            usage[match.chosen.shot.id] = usage.get(match.chosen.shot.id, 0) + 1
+    store = state.store()
+    try:
+        engine = SearchEngine(store, state.embedder, featured_person=run.config.client.featured_person)
+        provider = None
+        if run.rerank:
+            try:
+                provider = get_text_provider(run.config)
+            except Exception:  # noqa: BLE001
+                provider = None
+        matcher = TranscriptMatcher(run.config, engine, provider, run.filters)
+        matches = []
+        for number, beat in enumerate(new_beats):
+            old = keep.get(id(beat))
+            beat.index = number
+            matches.append(old if old else await matcher.match_one(beat, usage))
+            if old is None and matches[-1].chosen:
+                usage[matches[-1].chosen.shot.id] = usage.get(matches[-1].chosen.shot.id, 0) + 1
+    finally:
+        store.close()
+    run.matches = matches
+
+
+@router.post("/transcript/{run_id}/split", response_class=HTMLResponse)
+async def split_one(request: Request, run_id: str, beat: int = Form(...), start: int = Form(...),
+                    end: int = Form(...)):
+    """Make the selected words of a beat a beat of their own (and the rest before and after, theirs)."""
+    state = client_state(request)
+    run = _get_run(state, run_id)
+    current = next((m for m in run.matches if m.beat.index == beat), None)
+    if current is None:
+        raise HTTPException(status_code=404, detail="No such beat.")
+    pieces = split_beat(current.beat, start, end)
+    if len(pieces) < 2:
+        raise HTTPException(status_code=400, detail="Select part of the line, not all of it.")
+    new_beats, keep = [], {}
+    for match in run.matches:
+        if match is current:
+            new_beats.extend(pieces)
+        else:
+            new_beats.append(match.beat)
+            keep[id(match.beat)] = match
+    await _rematch(request, state, run, new_beats, keep)
+    return templates.TemplateResponse(request=request, name="partials/beats.html",
+                                      context=_run_context(request, state, run))
+
+
+@router.post("/transcript/{run_id}/join", response_class=HTMLResponse)
+async def join_one(request: Request, run_id: str, beat: int = Form(...)):
+    """Put a beat and the one after it back together as one B-roll."""
+    state = client_state(request)
+    run = _get_run(state, run_id)
+    spot = next((i for i, m in enumerate(run.matches) if m.beat.index == beat), None)
+    if spot is None or spot + 1 >= len(run.matches):
+        raise HTTPException(status_code=400, detail="There is no beat after this one.")
+    joined = join_beats(run.matches[spot].beat, run.matches[spot + 1].beat)
+    new_beats, keep = [], {}
+    for i, match in enumerate(run.matches):
+        if i == spot:
+            new_beats.append(joined)
+        elif i != spot + 1:
+            new_beats.append(match.beat)
+            keep[id(match.beat)] = match
+    await _rematch(request, state, run, new_beats, keep)
+    return templates.TemplateResponse(request=request, name="partials/beats.html",
+                                      context=_run_context(request, state, run))
 
 
 @router.post("/transcript/{run_id}/swap", response_class=HTMLResponse)

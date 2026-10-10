@@ -49,4 +49,38 @@
 </form>
 
 <div id="beats" class="mt-7"></div>
+<button id="split-btn" type="button" class="btn btn-primary btn-sm"
+        style="position:absolute;display:none;z-index:50">Split</button>
+<script>
+  // Select words inside a line of the script, press Split: those words become a B-roll of their own.
+  const splitBtn = document.getElementById('split-btn');
+  let pending = null;
+  document.addEventListener('mouseup', () => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) { splitBtn.style.display = 'none'; return; }
+    const range = sel.getRangeAt(0);
+    const host = range.commonAncestorContainer;
+    const line = (host.nodeType === 1 ? host : host.parentElement).closest('.beat-text');
+    if (!line) { splitBtn.style.display = 'none'; return; }
+    // The words the selection touches, wherever in the line it starts and ends.
+    const hit = [...line.querySelectorAll('[data-w]')].filter(w => {
+      const r = document.createRange(); r.selectNodeContents(w);
+      return range.compareBoundaryPoints(Range.END_TO_START, r) < 0 && range.compareBoundaryPoints(Range.START_TO_END, r) > 0;
+    }).map(w => +w.dataset.w);
+    if (!hit.length) { splitBtn.style.display = 'none'; return; }
+    pending = { run: line.dataset.run, beat: line.dataset.beat, start: Math.min(...hit), end: Math.max(...hit) };
+    const box = range.getBoundingClientRect();
+    splitBtn.style.left = (window.scrollX + box.left) + 'px';
+    splitBtn.style.top = (window.scrollY + box.bottom + 6) + 'px';
+    splitBtn.style.display = 'block';
+  });
+  splitBtn.addEventListener('mousedown', e => e.preventDefault());
+  splitBtn.addEventListener('click', () => {
+    if (!pending) return;
+    htmx.ajax('POST', `/transcript/${pending.run}/split`, {
+      target: '#beats', swap: 'innerHTML',
+      values: { beat: pending.beat, start: pending.start, end: pending.end } });
+    splitBtn.style.display = 'none'; window.getSelection().removeAllRanges();
+  });
+</script>
 {% endblock %}

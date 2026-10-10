@@ -271,3 +271,15 @@ def test_phrase_cutting_gives_each_listed_thing_its_own_beat():
 def test_a_pipe_in_the_script_is_always_a_cut():
     beats = parse_and_segment("Walking the beach | at sunrise with a coffee", "a.txt", beat_min_s=3.0)
     assert [b.text for b in beats] == ["Walking the beach", "at sunrise with a coffee"]
+
+
+def test_selected_words_become_their_own_beat_and_the_rest_keeps_its_own():
+    from broll.transcript.parser import Beat, join_beats, split_beat
+
+    beat = Beat(index=3, start_s=10.0, end_s=20.0, text="one two three four five six seven eight nine ten")
+    pieces = split_beat(beat, 3, 5)
+    assert [b.text for b in pieces] == ["one two three", "four five six", "seven eight nine ten"]
+    assert pieces[0].start_s == 10.0 and abs(pieces[-1].end_s - 20.0) < 1e-6
+    assert [b.text for b in split_beat(beat, 0, 2)] == ["one two three", "four five six seven eight nine ten"]
+    assert split_beat(beat, 0, 9) == [beat]
+    assert join_beats(pieces[0], pieces[1]).text == "one two three four five six"

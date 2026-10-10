@@ -399,3 +399,21 @@ def test_a_suggested_folder_can_be_renamed_moved_and_described_before_it_is_crea
         store.close()
     node = workspace.__class__.model_validate(workspace.model_dump()).taxonomy.find_node(
         "01_Nervous System Practices/Red Light Therapy")
+
+
+def test_a_line_can_be_split_by_selecting_words_and_joined_again(workspace):
+    import re as _re
+
+    client = _client(workspace)
+    page = client.post("/transcript", data={"text": "I travelled to the sea and walked along the beach at sunrise today.",
+                                            "cut": "sentence", "rerank": ""}).text
+    run = _re.search(r'data-run="([0-9a-f]+)"', page).group(1)
+    assert page.count('class="beat-text') == 1 and 'data-w="3"' in page
+    split = client.post(f"/transcript/{run}/split", data={"beat": 0, "start": 5, "end": 9}).text
+    texts = _re.findall(r'<p class="beat-text[^>]*>(.*?)</p>', split)
+    flat = [" ".join(_re.sub(r"<[^>]+>", "", t).split()) for t in texts]
+    assert flat == ["I travelled to the sea", "and walked along the beach", "at sunrise today."]
+    assert client.post(f"/transcript/{run}/split", data={"beat": 0, "start": 0, "end": 1}).status_code == 200
+    joined = client.post(f"/transcript/{run}/join", data={"beat": 0}).text
+    assert joined.count('class="beat-text') == 3  # split 3 -> split first again 4 -> joined 3
+    assert client.post(f"/transcript/{run}/join", data={"beat": 99}).status_code == 400

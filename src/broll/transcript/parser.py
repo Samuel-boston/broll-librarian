@@ -288,3 +288,30 @@ def parse_and_segment(
 ) -> list[Beat]:
     cues, estimated = parse(text, filename, words_per_minute)
     return segment(cues, beat_min_s, beat_max_s, estimated, granularity)
+
+
+def split_beat(beat: Beat, start: int, end: int) -> list[Beat]:
+    """Cut one beat so words `start`..`end` (inclusive) become a beat of their own.
+
+    Whatever is left before and after becomes its own beat too. Time is shared out by word count.
+    Indexes are not set: the caller numbers the whole list.
+    """
+    words = beat.text.split()
+    start, end = max(0, start), min(len(words) - 1, end)
+    if not words or start > end or (start == 0 and end == len(words) - 1):
+        return [beat]
+    pieces = [words[:start], words[start:end + 1], words[end + 1:]]
+    out: list[Beat] = []
+    cursor, span = beat.start_s, beat.duration_s
+    for piece in (p for p in pieces if p):
+        share = span * len(piece) / len(words)
+        out.append(Beat(index=beat.index, start_s=round(cursor, 3), end_s=round(cursor + share, 3),
+                        text=" ".join(piece), estimated_timing=beat.estimated_timing, words=len(piece)))
+        cursor += share
+    return out
+
+
+def join_beats(first: Beat, second: Beat) -> Beat:
+    text = f"{first.text} {second.text}"
+    return Beat(index=first.index, start_s=first.start_s, end_s=second.end_s, text=text,
+                estimated_timing=first.estimated_timing or second.estimated_timing, words=len(text.split()))
