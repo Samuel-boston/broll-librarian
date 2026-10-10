@@ -114,7 +114,7 @@ class FakeDriveClient:
             current = self.ensure_folder(part, current).id
         return current
 
-    def upload(self, path: Path, name: str, parent_id: str) -> DriveFile:
+    def upload(self, path: Path, name: str, parent_id: str, app_properties=None) -> DriveFile:
         self._record(f"upload:{name}")
         entry = DriveFile(
             id=self._new_id("file"),
@@ -122,6 +122,7 @@ class FakeDriveClient:
             mime_type="video/mp4",
             parents=[parent_id],
             web_view_link=f"https://drive.google.com/file/d/{name}/view",
+            app_properties=dict(app_properties or {}) or None,
         )
         self._files[entry.id] = entry
         return entry

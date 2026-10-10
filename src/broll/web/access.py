@@ -27,7 +27,7 @@ TTL_S = 30 * 24 * 3600
 # Failed attempts in the last five minutes: at most this many per address, and per server in total.
 WINDOW_S = 300
 MAX_PER_CLIENT = 5
-MAX_TOTAL = 30
+MAX_TOTAL = 300  # one stranger must not be able to lock everyone out; per address the limit is MAX_PER_CLIENT
 
 # Reachable without logging in: the login page itself and the health check the container uses.
 PUBLIC_PATHS = ("/login", "/logout", "/healthz")

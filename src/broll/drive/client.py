@@ -135,13 +135,16 @@ class DriveClient:
         def call():
             return self.service.files().get(
                 fileId=file_id,
-                fields=("id,name,mimeType,parents,webViewLink,shortcutDetails,size,md5Checksum,"
+                fields=("id,name,mimeType,parents,webViewLink,shortcutDetails,size,md5Checksum,appProperties,trashed,"
                         "videoMediaMetadata(durationMillis)"),
                 supportsAllDrives=True,
             ).execute()
 
         try:
-            return _to_file(with_backoff(call, description=f"get {file_id}"))
+            payload = with_backoff(call, description=f"get {file_id}")
+            if payload.get("trashed"):
+                return None  # a file Adam trashed is gone as far as filing is concerned
+            return _to_file(payload)
         except Exception as exc:
             if getattr(getattr(exc, "resp", None), "status", None) == 404:
                 return None
@@ -258,16 +261,20 @@ class DriveClient:
             current = self.ensure_folder(part, current).id
         return current
 
-    def upload(self, path: Path, name: str, parent_id: str) -> DriveFile:
+    def upload(self, path: Path, name: str, parent_id: str,
+               app_properties: dict[str, str] | None = None) -> DriveFile:
         from googleapiclient.http import MediaFileUpload
 
         media = MediaFileUpload(str(path), resumable=True)
+        body: dict[str, Any] = {"name": name, "parents": [parent_id]}
+        if app_properties:
+            body["appProperties"] = app_properties
 
         def call():
             return self.service.files().create(
-                body={"name": name, "parents": [parent_id]},
+                body=body,
                 media_body=media,
-                fields="id,name,mimeType,parents,webViewLink",
+                fields="id,name,mimeType,parents,webViewLink,appProperties",
                 supportsAllDrives=True,
             ).execute()
 
@@ -336,21 +343,29 @@ class DriveClient:
                 supportsAllDrives=True,
             ).execute()
 
-        self._children.clear()
-        return _to_file(with_backoff(call, description=f"rename {file_id}"))
+        done = _to_file(with_backoff(call, description=f"rename {file_id}"))
+        # Only the folder the file sits in changed. Emptying the whole cache made every file re-list every
+        # shortcut folder it touched: tens of thousands of calls over a 5,000-file library.
+        for parent in done.parents:
+            self._children.pop(parent, None)
+        return done
 
     def move(self, file_id: str, add_parent: str, remove_parents: Iterable[str]) -> DriveFile:
+        removed = list(remove_parents)
+
         def call():
             return self.service.files().update(
                 fileId=file_id,
                 addParents=add_parent,
-                removeParents=",".join(remove_parents),
+                removeParents=",".join(removed),
                 fields="id,name,mimeType,parents,webViewLink",
                 supportsAllDrives=True,
             ).execute()
 
-        self._children.clear()
-        return _to_file(with_backoff(call, description=f"move {file_id}"))
+        done = _to_file(with_backoff(call, description=f"move {file_id}"))
+        for parent in (add_parent, *removed, *done.parents):
+            self._children.pop(parent, None)
+        return done
 
     def delete_shortcut(self, file_id: str) -> None:
         """Only ever called for shortcuts - never for a user's actual footage."""
@@ -367,7 +382,8 @@ class DriveClient:
             return self.service.files().delete(fileId=file_id, supportsAllDrives=True).execute()
 
         with_backoff(call, description=f"delete shortcut {file_id}")
-        self._children.clear()
+        for parent in entry.parents:
+            self._children.pop(parent, None)
 
     def invalidate(self) -> None:
         self._children.clear()

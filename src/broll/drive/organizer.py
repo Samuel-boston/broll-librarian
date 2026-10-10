@@ -16,6 +16,7 @@ from pathlib import Path
 from ..config import WorkspaceConfig
 from ..db.models import ShotFacets, Source
 from ..db.store import Store
+from .copier import PROVENANCE_KEY
 from .client import (
     FOLDER_MIME,
     SHORTCUT_MIME,
@@ -72,6 +73,10 @@ class OrganiseReport:
             by_kind[action.kind] = by_kind.get(action.kind, 0) + 1
         parts = ", ".join(f"{k}={v}" for k, v in sorted(by_kind.items())) or "no changes"
         return f"{self.sources} source(s), {self.skipped} skipped: {parts}"
+
+
+#: This many files in a row failing means the cause is not the files.
+MAX_FAILURES_IN_A_ROW = 10
 
 
 class Organizer:
@@ -220,11 +225,18 @@ class Organizer:
                     f"{source.drive_file_id} no longer exists - clear it to re-upload"
                 )
                 return None
+            if self.config.ingest.organise_only_copies and not (entry.app_properties or {}).get(PROVENANCE_KEY):
+                report.errors.append(
+                    f"{source.original_filename}: not made by this library (no copy stamp), so it is left "
+                    "where it is. Turn off ingest.organise_only_copies to file it anyway."
+                )
+                return None
             if entry.name != filename:
                 report.record("rename", drive_path, f"was {entry.name}")
                 if not self.dry_run:
                     self.client.rename(entry.id, filename)
-            if library_id not in entry.parents and not library_id.startswith("dry-run"):
+            # A folder that does not exist yet has a placeholder id in a dry run: that is still a move.
+            if library_id.startswith("dry-run") or library_id not in entry.parents:
                 report.record("move", drive_path, f"from {entry.parents}")
                 if not self.dry_run:
                     self.client.move(entry.id, library_id, entry.parents)
@@ -248,7 +260,7 @@ class Organizer:
         if self.dry_run:
             return f"dry-run-file:{source.id}"
 
-        uploaded = self.client.upload(local, filename, library_id)
+        uploaded = self.client.upload(local, filename, library_id, app_properties={PROVENANCE_KEY: "uploaded"})
         self.store.update_source(
             source.id,
             drive_file_id=uploaded.id,
@@ -378,7 +390,9 @@ class Organizer:
             s.id for s in self.store.list_sources(limit=1_000_000)
             if s.status in ORGANISABLE_STATUSES
         ]
+        failures_in_a_row = 0
         for source_id in ids:
+            seen = len(report.errors)
             try:
                 self.organise_source(source_id, report)
             except DriveStorageFullError as exc:
@@ -387,6 +401,15 @@ class Organizer:
                 break  # every remaining upload would fail the same way
             except Exception as exc:  # HttpError and friends: report, keep going
                 report.errors.append(f"{source_id}: {type(exc).__name__}: {exc}")
+            failures_in_a_row = failures_in_a_row + 1 if len(report.errors) > seen else 0
+            if failures_in_a_row >= MAX_FAILURES_IN_A_ROW:
+                # Drive is refusing everything (quota, a dead sign-in, an outage): stop, rather than add
+                # one error per remaining file and leave the work half done without saying so.
+                report.errors.append(
+                    f"Stopped after {MAX_FAILURES_IN_A_ROW} failures in a row; run it again once the cause is fixed."
+                )
+                report.aborted = True
+                break
         return report
 
     def _pair_counts(self) -> dict[tuple[str, str, str], int]:

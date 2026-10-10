@@ -125,6 +125,12 @@ Leave `BROLL_ACCESS_PASSWORD` out so people don't log in twice. Start it with
   echo '/swapfile none swap sw 0 0' >> /etc/fstab`.
 * **Disk**: every `docker compose up --build` leaves build cache behind (about 4 GB a time). Run
   `docker builder prune -f` after a deploy.
+* **Only file copies** (`ingest.organise_only_copies: true` in the workspace config): `broll organise` then
+  renames and moves a Drive file only if this library made it (a copy from `broll drive copy-folder`, or its
+  own upload). Index the original footage folder by mistake and nothing in it is touched.
+* **Google sign-in in Testing mode** expires every 7 days, and a run that outlives it pauses (it does not
+  fail files) until `broll drive login` is run again. Publishing the Google OAuth app to Production in the
+  Cloud console removes the 7-day limit.
 * **Do not deploy while a run is going.** A rebuild stops the worker; its jobs resume, but only after the
   stale-job timeout.
 * **Everything is in one volume**, `broll-data`: the index, thumbnails, backups, and any keys saved from

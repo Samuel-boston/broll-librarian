@@ -250,6 +250,10 @@ class EmbedderConfig(BaseModel):
 
 
 class IngestConfig(BaseModel):
+    # Filing renames and moves the Drive file itself. With this on it only touches files the library made
+    # (a copy from `broll drive copy-folder`, or its own upload): index the ORIGINAL footage folder by
+    # mistake and nothing in it is renamed or moved.
+    organise_only_copies: bool = False
     # A shot gets one frame per `frame_every_s` seconds, between these two numbers.
     frames_per_shot: int = 3
     max_frames_per_shot: int = 8

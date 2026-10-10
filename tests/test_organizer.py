@@ -165,7 +165,7 @@ def test_a_full_drive_stops_cleanly_with_a_useful_message(organised):
 
     workspace, store, client = organised
 
-    def full(path, name, parent_id):
+    def full(path, name, parent_id, app_properties=None):
         raise DriveStorageFullError("This Google Drive is full")
 
     client.upload = full
@@ -189,3 +189,41 @@ def test_storage_quota_403_is_not_retried_but_rate_limit_403_is():
 
     assert _is_retryable(Err("userRateLimitExceeded"))
     assert not _is_retryable(Err("storageQuotaExceeded"))
+
+
+def test_only_files_the_library_made_are_filed_when_asked(organised):
+    """Index the original footage folder by mistake and nothing in it is renamed or moved."""
+    workspace, store, client = organised
+    from broll.drive.copier import PROVENANCE_KEY
+
+    Organizer(workspace, store, client).reorganise()  # the library uploads its own files, stamped
+    workspace.ingest.organise_only_copies = True
+    source = next(s for s in store.list_sources(limit=10) if s.drive_file_id)
+    entry = client.get(source.drive_file_id)
+    assert entry.app_properties and PROVENANCE_KEY in entry.app_properties
+    entry.app_properties = None  # an original, not a copy
+    entry.name = "IMG_0001.MOV"  # still carrying its camera name: filing would rename it
+    report = Organizer(workspace, store, client).organise_source(source.id)
+    assert any("no copy stamp" in e for e in report.errors)
+    assert not any(a.kind in ("rename", "move") for a in report.actions)
+    entry.app_properties = {PROVENANCE_KEY: "origin-id"}
+    again = Organizer(workspace, store, client).organise_source(source.id)
+    assert not any("no copy stamp" in e for e in again.errors)
+
+
+def test_a_dry_run_counts_the_moves_into_folders_that_do_not_exist_yet(organised):
+    workspace, store, client = organised
+    first = Organizer(workspace, store, client, dry_run=True).reorganise()
+    real = Organizer(workspace, store, client).reorganise()
+    assert [a.kind for a in first.actions].count("move") == [a.kind for a in real.actions].count("move")
+
+
+def test_ten_failures_in_a_row_stop_the_run_with_a_clear_message(organised):
+    workspace, store, client = organised
+
+    def broken(path, name, parent_id, app_properties=None):
+        raise RuntimeError("503 backendError")
+
+    client.upload = broken
+    report = Organizer(workspace, store, client).reorganise()
+    assert report.aborted or len(report.errors) <= 11

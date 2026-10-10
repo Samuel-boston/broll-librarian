@@ -433,3 +433,13 @@ def test_restore_puts_the_backup_back_and_does_not_replay_newer_writes(workspace
     kept = sqlite3.connect(str(done["kept"]))
     assert kept.execute("SELECT COUNT(*) FROM shots").fetchone()[0] == 12  # nothing was thrown away
     kept.close()
+
+
+def test_htmx_is_served_by_the_app_not_a_third_party(workspace):
+    from broll.web.app import create_app
+
+    with TestClient(create_app(workspace, run_worker=False)) as client:
+        page = client.get("/library").text
+        assert "unpkg.com" not in page and "/static/htmx-1.9.12.min.js" in page
+        script = client.get("/static/htmx-1.9.12.min.js")
+        assert script.status_code == 200 and b"htmx" in script.content[:2000]
