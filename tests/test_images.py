@@ -236,3 +236,19 @@ def test_extract_still_scales_without_a_video_filter(tmp_path, monkeypatch):
     assert max(Image.open(out[0]).size) == 768
     assert not any("-vf" in command for command in seen)
     assert not list((tmp_path / "work").glob("*_full.jpg")), "the full-size decode is temporary"
+
+
+def test_macos_resource_fork_stubs_are_not_footage(tmp_path):
+    """`._clip.mov` is Finder metadata with the clip's extension; reading it fails ("moov atom not found")."""
+    from tests.fakes import FakeDriveClient
+    from broll.ingest.scanner import scan_drive_folder
+
+    (tmp_path / "clip.mov").write_bytes(b"")
+    (tmp_path / "._clip.mov").write_bytes(b"\x00\x05\x16\x07")
+    assert {f.filename for f in scan_local(tmp_path)} == {"clip.mov"}
+
+    client = FakeDriveClient()
+    folder = client.add_folder("Day 1", "root")
+    client.add_file("clip.mov", folder.id)
+    client.add_file("._clip.mov", folder.id)
+    assert [f.filename for f in scan_drive_folder(client, folder.id)] == ["clip.mov"]

@@ -66,8 +66,17 @@ class DiscoveredFile:
         }
 
 
+def is_junk(name: str) -> bool:
+    """A macOS "AppleDouble" stub (`._clip.mov`) that sits next to the real file in a copied folder.
+
+    It has the clip's extension but only holds Finder metadata, so it is never a video: reading it fails
+    with "moov atom not found".
+    """
+    return name.startswith("._")
+
+
 def is_media(path: Path) -> bool:
-    return path.is_file() and media_kind(path) is not None
+    return path.is_file() and not is_junk(path.name) and media_kind(path) is not None
 
 
 def scan_local(path: Path, recursive: bool = True) -> list[DiscoveredFile]:
@@ -126,7 +135,7 @@ def scan_drive_folder(client, folder_id: str, recursive: bool = True) -> list[Di
                 continue
             if entry.is_shortcut:
                 continue  # a shortcut is another view of a file we already saw
-            if media_kind(entry.name) is None:
+            if is_junk(entry.name) or media_kind(entry.name) is None:
                 continue
             found.append(
                 DiscoveredFile(
