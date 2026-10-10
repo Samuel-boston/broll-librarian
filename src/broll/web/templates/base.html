@@ -219,6 +219,44 @@
     {% block content %}{% endblock %}
   </main>
   <script>
+    // The Move menu on a clip's card: filled from the folder list the first time it is opened, so a page of
+    // sixty cards does not carry sixty copies of every folder.
+    function brollFillMove(select) {
+      if (select.dataset.filled) return;
+      const holder = document.querySelector('script.folder-list');
+      let paths = [];
+      try { paths = JSON.parse(holder ? holder.textContent : '[]'); } catch (e) {}
+      for (const path of paths) {
+        const option = document.createElement('option');
+        option.value = path;
+        option.textContent = path.split('/').join(' \u203a ');
+        select.appendChild(option);
+      }
+      select.dataset.filled = '1';
+    }
+    async function brollMove(select) {
+      const path = select.value;
+      if (!path) return;
+      select.disabled = true;
+      let reply = {};
+      let ok = false;
+      try {
+        const response = await fetch('/shots/' + encodeURIComponent(select.dataset.shot) + '/move', {
+          method: 'POST', body: new URLSearchParams({ category: path }),
+        });
+        ok = response.ok;
+        reply = await response.json();
+      } catch (e) {}
+      select.disabled = false;
+      if (!ok) { alert(reply.detail || 'The clip could not be moved.'); select.value = ''; return; }
+      const card = select.closest('article');
+      const label = card && card.querySelector('[data-folder-label]');
+      if (label) { label.textContent = reply.label; label.title = path.split('/').join(' \u203a '); }
+      // On a folder page, a clip that is no longer in that folder leaves the list.
+      const here = new URLSearchParams(location.search).get('path');
+      if (card && here && !(path === here || path.startsWith(here + '/'))) card.remove();
+      else select.value = '';
+    }
     // Server-sent messages (HX-Trigger: {"broll-alert": "..."}) for actions that don't change the page.
     document.body.addEventListener('broll-alert', e => {
       const text = typeof e.detail === 'string' ? e.detail : (e.detail && e.detail.value);

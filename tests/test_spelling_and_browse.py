@@ -195,3 +195,15 @@ def test_the_search_page_offers_the_way_back_from_a_correction(workspace, store)
         assert "Showing results for" in html and "Search instead for" in html
         exact = client.get("/search", params={"q": "meditaing", "exact": "true"}).text
         assert "Showing results for" not in exact
+
+
+# -- a folder lists what is filed in it; "might also fit" is a separate click -------------------------------------
+
+
+def test_a_folder_count_can_leave_out_clips_that_only_might_fit():
+    rows = [{"id": "a", "category": "05_Travel/Beach & Water", "secondary": ["03_Work/Men's Work"],
+             "has_thumbnail": False}]
+    folders = ["03_Work", "03_Work/Men's Work", "05_Travel", "05_Travel/Beach & Water"]
+    assert summarise_folders(rows, folders)["03_Work/Men's Work"].count == 1
+    assert summarise_folders(rows, folders, include_secondary=False)["03_Work/Men's Work"].count == 0
+    assert summarise_folders(rows, folders, include_secondary=False)["05_Travel"].count == 1

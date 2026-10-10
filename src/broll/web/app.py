@@ -52,6 +52,18 @@ def url_with(request, **updates) -> str:
 
 
 templates.env.globals["url_with"] = url_with
+
+
+def folder_leaves(request) -> list[str]:
+    """The folders a clip can be filed in, for the Move menu on every card."""
+    try:
+        config = client_state(request).config
+    except Exception:  # noqa: BLE001 - a page without a library has no folders to offer
+        return []
+    return [path for path, _ in config.taxonomy.category_leaves()] if config.taxonomy.mode == "tree" else []
+
+
+templates.env.globals["folder_leaves"] = folder_leaves
 # Lets the layout show a Sign out button only when the shared-password gate is on.
 templates.env.globals["access_enabled"] = lambda: bool(os.environ.get("BROLL_ACCESS_PASSWORD"))
 

@@ -37,6 +37,8 @@ class SearchFilters(BaseModel):
     subjects: list[str] = Field(default_factory=list)
     emotions: list[str] = Field(default_factory=list)
     category: list[str] = Field(default_factory=list)   # a folder, or a parent of folders
+    # With `category`: only clips filed there, not the ones the model merely thought could fit there too.
+    category_primary_only: bool = False
     mood: list[str] = Field(default_factory=list)
     usable_for: list[str] = Field(default_factory=list)
     has_faces: bool | None = None
@@ -108,15 +110,18 @@ class SearchFilters(BaseModel):
             # secondary match for it - the same clips Drive shows there, where
             # secondary folders hold a shortcut. "_" and "%" are LIKE
             # wildcards, and folder names such as "01_Travel" contain them.
-            one = (
-                "(s.category = ? OR s.category LIKE ? ESCAPE '\\'"
-                " OR EXISTS (SELECT 1 FROM json_each(s.secondary_categories_json) sc"
-                " WHERE sc.value = ? OR sc.value LIKE ? ESCAPE '\\'))"
-            )
+            if self.category_primary_only:
+                one = "(s.category = ? OR s.category LIKE ? ESCAPE '\\')"
+            else:
+                one = (
+                    "(s.category = ? OR s.category LIKE ? ESCAPE '\\'"
+                    " OR EXISTS (SELECT 1 FROM json_each(s.secondary_categories_json) sc"
+                    " WHERE sc.value = ? OR sc.value LIKE ? ESCAPE '\\'))"
+                )
             clauses.append("(" + " OR ".join(one for _ in self.category) + ")")
             for value in self.category:
                 prefix = _like_escape(value) + "/%"
-                params.extend([value, prefix, value, prefix])
+                params.extend([value, prefix] if self.category_primary_only else [value, prefix, value, prefix])
         if self.uncategorised:
             clauses.append("s.category IS NULL")
 

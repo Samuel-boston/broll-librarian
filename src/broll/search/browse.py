@@ -40,9 +40,14 @@ class FolderSummary:
 
 
 def summarise_folders(
-    rows: list[dict], folder_paths: list[str], thumbnails_per_folder: int = 4
+    rows: list[dict], folder_paths: list[str], thumbnails_per_folder: int = 4,
+    include_secondary: bool = True,
 ) -> dict[str, FolderSummary]:
-    """Clip counts and preview thumbnails (newest first) for every folder."""
+    """Clip counts and preview thumbnails (newest first) for every folder.
+
+    With `include_secondary` off, a clip counts only where it is filed, not where the model thought it
+    could also fit.
+    """
     summaries: dict[str, FolderSummary] = {}
     for path in folder_paths:
         number, label = folder_label(path.split("/")[-1])
@@ -55,7 +60,7 @@ def summarise_folders(
     members: dict[str, set[str]] = {path: set() for path in folder_paths}
     for row in rows:  # newest first, so the first thumbnails are the latest
         touched: set[str] = set()
-        for category in (row.get("category"), *row.get("secondary", [])):
+        for category in (row.get("category"), *(row.get("secondary", []) if include_secondary else [])):
             if category:
                 touched.update(ancestors(category))
         for path in touched:

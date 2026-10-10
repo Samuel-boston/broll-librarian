@@ -102,6 +102,11 @@
     <p class="mb-3 text-xs text-faint">
       {% if current %}{{ current.count }} {{ noun }}{{ '' if current.count == 1 else 's' }} in {{ current.label }}{% if folders %} and its folders{% endif %}
       {% else %}{{ clips|length }}{% if more %}+{% endif %} {{ noun }}{{ '' if clips|length == 1 else 's' }}{% endif %}
+      {% if current and also_count %}
+        · {% if show_also %}showing {{ also_count }} more that only <em>might</em> fit here
+          (<a class="text-accent underline decoration-dotted underline-offset-4" href="{{ url_with(request, also=None, offset=None) }}">hide them</a>)
+        {% else %}<a class="text-accent underline decoration-dotted underline-offset-4" href="{{ url_with(request, also='1', offset=None) }}">{{ also_count }} more might also fit here</a>{% endif %}
+      {% endif %}
     </p>
     <section id="results">
       {% with results=clips, query="", hidden_count=0, loose=False, hide_count=True,

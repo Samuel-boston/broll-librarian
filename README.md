@@ -706,6 +706,15 @@ mixed-frame-rate sequence and a clip too short for its beat. **Manual gate not
 yet run:** importing a real export into Premiere with media linked needs a
 Premiere licence and a synced Drive mount.
 
+## Folders, "might also fit", and moving a clip by hand
+
+A clip is filed in one folder. The model may also name up to two others it could fit; those are kept for search and for
+Drive shortcuts, but the Library no longer lists them as if they were filed there. A folder page shows what is filed in
+it (and its sub-folders), with a link "N more might also fit here" for the rest. Every clip card has a **Move to…** menu:
+pick a folder and the clip is filed there at once, its second-choice folders are dropped, it is marked as corrected so no
+later re-filing moves it, and Drive follows if it is connected. Moving a clip out of the folder you are looking at removes
+its card from the list.
+
 ## Hosting it for a team
 
 To run it on a small server that everyone shares, with a password, HTTPS, daily database copies and a

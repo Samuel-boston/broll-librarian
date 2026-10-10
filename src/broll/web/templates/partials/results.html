@@ -15,6 +15,7 @@
   {% if not hide_count %}
   <p class="mb-3 text-xs text-faint">{{ results|length }} result{{ '' if results|length == 1 else 's' }}</p>
   {% endif %}
+  <script type="application/json" class="folder-list">{{ folder_leaves(request)|tojson }}</script>
   <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
     {% for result in results %}
     {% set shot = result.shot %}
@@ -36,7 +37,7 @@
           <span class="mono absolute bottom-2.5 right-2.5 rounded bg-black/55 px-1.5 py-0.5 text-[11px] text-white/90 backdrop-blur">{{ '%.1f'|format(shot.duration_s) }}s</span>
         {% endif %}
         {% if shot.category %}
-          <p class="absolute bottom-2.5 left-2.5 max-w-[65%] truncate text-[11px] font-medium text-white/85"
+          <p data-folder-label class="absolute bottom-2.5 left-2.5 max-w-[65%] truncate text-[11px] font-medium text-white/85"
              title="{{ shot.category.replace('/', ' › ') }}">{{ shot.category.split('/')[-1] }}</p>
         {% endif %}
       </div>
@@ -80,6 +81,10 @@
           {% else %}
             <span class="text-faint">Not in Drive yet</span>
           {% endif %}
+          <select class="select w-auto max-w-[9rem] py-0.5 text-[11px]" data-shot="{{ shot.id }}" aria-label="Move to a folder"
+                  onfocus="brollFillMove(this)" onchange="brollMove(this)">
+            <option value="">Move to…</option>
+          </select>
           <span class="ml-auto flex items-center gap-3">
             {% if result.score %}<span class="mono text-[11px] text-faint/70">{{ '%.4f'|format(result.score) }}</span>{% endif %}
             <button type="button" class="text-faint transition hover:text-rose"

@@ -108,6 +108,9 @@ def apply_correction(
         if field in updates:
             setattr(shot, field, _as_bool(updates[field]))
 
+    if "secondary_categories" in updates:  # already a list of folder paths, which may contain commas
+        shot.secondary_categories = [c for c in updates["secondary_categories"] if c]
+
     shot.status = status
     shot.error_message = None
     if status == "indexed":
@@ -125,6 +128,22 @@ def apply_correction(
             log.warning("re-embedding %s after correction failed: %s", shot.id, exc)
 
     return store.get_shot(shot.id)  # type: ignore[return-value]
+
+
+def move_shot(
+    config: WorkspaceConfig, store: Store, shot_id: str, path: str, embedder: Embedder | None = None,
+) -> Shot:
+    """A person puts a clip in a folder. That is the last word on it: the model's second choices go.
+
+    `path` has to be a folder clips can be filed in. The clip is marked as corrected, so no later
+    re-filing moves it again, and its search text follows the folder it is now in.
+    """
+    leaves = dict(config.taxonomy.category_leaves())
+    if path not in leaves:
+        raise CorrectionError(f"{path!r} is not one of this library's folders.")
+    return apply_correction(
+        config, store, shot_id, {"category": path, "secondary_categories": []}, embedder, status="indexed",
+    )
 
 
 def as_analysis(shot: Shot) -> AnalysisResult | None:

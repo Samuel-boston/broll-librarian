@@ -47,6 +47,7 @@ async def library(
     emotion: str = "",
     view: str = "",
     offset: int = 0,
+    also: str = "",
 ):
     state = client_state(request)
     config = state.config
@@ -78,7 +79,10 @@ async def library(
         folder_paths = ["/".join(p) for p in taxonomy.tree_folders()] if tree else []
         hidden_folders = {taxonomy.guide_folder, taxonomy.top_picks_folder} - {None}
         rows = store.browse_rows(kind)
-        summaries = summarise_folders(rows, folder_paths) if tree else {}
+        # A folder lists what is filed in it. Clips the model only thought could also fit there are one
+        # click away ("also fits here"), not mixed in: a beach clip is not a men's work clip.
+        summaries = summarise_folders(rows, folder_paths, include_secondary=False) if tree else {}
+        with_also = summarise_folders(rows, folder_paths) if tree and path else {}
         counts = store.facet_counts(kind)
         others = kinds.other(kind)
         other_rows = store.browse_rows(others)
@@ -86,8 +90,9 @@ async def library(
         # What to list: one folder, one feeling, one quick view - or the front of this side.
         heading = None
         filters: SearchFilters | None = None
+        show_also = bool(also)
         if path:
-            filters = SearchFilters(category=[path], media_kind=[kind])
+            filters = SearchFilters(category=[path], media_kind=[kind], category_primary_only=not show_also)
         elif emotion:
             filters = SearchFilters(emotions=[emotion], media_kind=[kind])
             heading = f"Feeling {emotion}"
@@ -112,10 +117,11 @@ async def library(
             walked.append(part)
             crumbs.append(("/".join(walked), folder_label(part)[1]))
         current = summaries.get(path)
+        also_count = (with_also[path].count - current.count) if (current and path in with_also) else 0
 
         # The same place on the other side, so a person can hop across without losing their spot.
         if path and tree:
-            there = summarise_folders(other_rows, folder_paths).get(path)
+            there = summarise_folders(other_rows, folder_paths, include_secondary=False).get(path)
             other_count = there.count if there else 0
         elif not (path or emotion or view):
             other_count = len(other_rows)
@@ -137,6 +143,8 @@ async def library(
             "path": path,
             "crumbs": crumbs,
             "current": current,
+            "also_count": also_count,
+            "show_also": show_also,
             "folders": level,
             "emotion": emotion,
             "view": view,
@@ -221,4 +229,33 @@ async def delete_everything(request: Request):
             "HX-Redirect": "/library",
             "HX-Trigger": json.dumps({"broll-alert": f"Deleted {result.sources} file(s) and {result.shots} shot(s) from the library. Drive was not touched.{note}"}),
         },
+    )
+
+
+@router.post("/shots/{shot_id}/move")
+async def move_clip(request: Request, shot_id: str):
+    """Put one clip in a folder by hand. Its other suggested folders are dropped, and Drive follows if connected."""
+    from ...review import CorrectionError, move_shot
+    from .review import _refile
+
+    state = client_state(request)
+    form = await request.form()
+    path = str(form.get("category", "")).strip()
+
+    def work():
+        store = state.store()
+        try:
+            shot = move_shot(state.config, store, shot_id, path, state.embedder)
+            return shot.source_id
+        finally:
+            store.close()
+
+    try:
+        source_id = await asyncio.to_thread(work)
+    except CorrectionError as exc:
+        return Response(content=json.dumps({"detail": str(exc)}), status_code=400, media_type="application/json")
+    await _refile(state, [source_id])
+    return Response(
+        content=json.dumps({"ok": True, "path": path, "label": path.split("/")[-1]}),
+        media_type="application/json",
     )
