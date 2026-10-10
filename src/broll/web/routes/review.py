@@ -68,6 +68,7 @@ def _context(request: Request, state, store, message: str | None = None) -> dict
         "categories": _categories(state.config),
         "indexed": store.count_shots("indexed", media_kind=kind),
         "proposals": mine,
+        "parents": ["/".join(p) for p in state.config.taxonomy.tree_folders()],
     }
     if message:
         context["message"] = message
@@ -98,12 +99,14 @@ async def review_page(request: Request):
 
 
 @router.post("/review/folders/{proposal_id}/approve", response_class=HTMLResponse)
-async def approve_folder(request: Request, proposal_id: int):
+async def approve_folder(request: Request, proposal_id: int, name: str | None = Form(None),
+                         parent: str | None = Form(None), note: str | None = Form(None)):
     state = client_state(request)
     store = state.store()
     try:
         try:
-            done = approve_folder_proposal(state.config, store, proposal_id, state.embedder)
+            done = approve_folder_proposal(
+                state.config, store, proposal_id, state.embedder, name=name, parent=parent, note=note)
         except CorrectionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         await _refile(state, done["sources"])

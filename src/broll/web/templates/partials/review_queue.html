@@ -20,15 +20,26 @@
     </header>
     <ul class="divide-line">
       {% for p in proposals %}
-      <li class="flex flex-wrap items-center gap-3 px-5 py-3 text-sm">
-        <div class="min-w-0 flex-1">
-          <p class="font-medium">{{ p.path.replace('/', ' › ') }}</p>
-          <p class="mt-0.5 text-xs text-faint">{{ p.count_here }} {{ noun }}{{ '' if p.count_here == 1 else 's' }}{% if p.note %} · {{ p.note }}{% endif %}</p>
-        </div>
-        <button type="button" class="btn btn-sm btn-primary" hx-post="/review/folders/{{ p.id }}/approve?kind={{ kind }}"
-                hx-target="#review-queue" hx-swap="outerHTML">Create folder</button>
-        <button type="button" class="btn btn-sm" hx-post="/review/folders/{{ p.id }}/dismiss?kind={{ kind }}"
-                hx-target="#review-queue" hx-swap="outerHTML">Dismiss</button>
+      {% set parent = p.path.rpartition('/')[0] %}
+      <li class="px-5 py-4 text-sm">
+        <form class="grid gap-3 sm:grid-cols-2" hx-post="/review/folders/{{ p.id }}/approve?kind={{ kind }}"
+              hx-target="#review-queue" hx-swap="outerHTML">
+          <p class="text-xs text-faint sm:col-span-2">{{ p.count_here }} {{ noun }}{{ '' if p.count_here == 1 else 's' }} suggested this folder. Change anything before you create it.</p>
+          <label class="block"><span class="label">Name</span>
+            <input name="name" value="{{ p.path.rpartition('/')[2] }}" required class="input mt-1.5"></label>
+          <label class="block"><span class="label">Inside</span>
+            <select name="parent" class="select mt-1.5">
+              <option value="" {% if not parent %}selected{% endif %}>(top level)</option>
+              {% for path in parents %}<option value="{{ path }}" {% if path == parent %}selected{% endif %}>{{ path.replace('/', ' › ') }}</option>{% endfor %}
+            </select></label>
+          <label class="block sm:col-span-2"><span class="label">What goes in it</span>
+            <textarea name="note" rows="2" class="textarea mt-1.5">{{ p.note or '' }}</textarea></label>
+          <div class="flex gap-2 sm:col-span-2">
+            <button class="btn btn-sm btn-primary">Create folder</button>
+            <button type="button" class="btn btn-sm" hx-post="/review/folders/{{ p.id }}/dismiss?kind={{ kind }}"
+                    hx-target="#review-queue" hx-swap="outerHTML">Dismiss</button>
+          </div>
+        </form>
       </li>
       {% endfor %}
     </ul>

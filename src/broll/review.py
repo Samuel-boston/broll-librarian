@@ -217,8 +217,14 @@ def approve_folder_proposal(
     store: Store,
     proposal_id: int,
     embedder: Embedder | None = None,
+    name: str | None = None,
+    parent: str | None = None,
+    note: str | None = None,
 ) -> dict[str, Any]:
     """Create the suggested folder and move the clips that suggested it into it.
+
+    A person can change the suggestion first: `name`, `parent` ("" for the top level) and `note`
+    (what the folder is for, which the model reads) replace the suggested ones.
 
     A clip a person has already corrected keeps the folder they chose. Returns what happened:
     {"path", "created", "moved": [shot ids], "sources": [source ids to re-file in Drive]}.
@@ -226,12 +232,20 @@ def approve_folder_proposal(
     proposal = store.get_folder_proposal(proposal_id)
     if proposal is None or proposal["status"] != "open":
         raise CorrectionError("That folder suggestion is no longer open.")
-    path = proposal["path"]
-    parent, _, name = path.rpartition("/")
+    suggested_parent, _, suggested_name = proposal["path"].rpartition("/")
+    name = (name if name is not None else suggested_name).strip().strip("/")
+    parent = (parent if parent is not None else suggested_parent).strip().strip("/")
+    if not name or "/" in name:
+        raise CorrectionError("A folder name can't be empty or contain a slash.")
+    path = f"{parent}/{name}" if parent else name
+    note = (note if note is not None else proposal.get("note") or "").strip() or "Added from a suggestion."
     if config.taxonomy.find_node(path) is None:
-        if config.taxonomy.find_node(parent) is None:
+        if parent and config.taxonomy.find_node(parent) is None:
             raise CorrectionError(f"The parent folder {parent!r} no longer exists.")
-        config.taxonomy.add_folder(parent, name, proposal.get("note") or "Added from a suggestion.")
+        if parent:
+            config.taxonomy.add_folder(parent, name, note)
+        else:
+            config.taxonomy.tree.append(CategoryNode(name=name, description=note))
         config.save()
         created = True
     else:

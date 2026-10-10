@@ -375,3 +375,26 @@ def test_status_counts_videos_and_images_apart(workspace):
     two_sides(workspace, videos=3, images=2)
     body = _client(workspace).get("/api/status").json()
     assert (body["shots"], body["videos"], body["images"]) == (5, 3, 2)
+
+
+def test_a_suggested_folder_can_be_renamed_moved_and_described_before_it_is_created(workspace):
+    ids = two_sides(workspace, videos=1, images=0, status="needs_review")
+    store = Store.for_config(workspace)
+    try:
+        store.record_folder_proposal("01_Nervous System Practices/Red Light", "Red light beds.", ids["video"][0])
+        proposal = store.list_folder_proposals()[0]["id"]
+    finally:
+        store.close()
+    client = _client(workspace)
+    page = client.get("/review").text
+    assert 'name="name" value="Red Light"' in page and "Red light beds." in page
+    after = client.post(f"/review/folders/{proposal}/approve?kind=video", data={
+        "name": "Red Light Therapy", "parent": "01_Nervous System Practices", "note": "Infrared panels."}).text
+    assert "Created 01_Nervous System Practices/Red Light Therapy" in after
+    store = Store.for_config(workspace)
+    try:
+        assert store.get_shot(ids["video"][0]).category == "01_Nervous System Practices/Red Light Therapy"
+    finally:
+        store.close()
+    node = workspace.__class__.model_validate(workspace.model_dump()).taxonomy.find_node(
+        "01_Nervous System Practices/Red Light Therapy")
