@@ -39,6 +39,7 @@
   </div>
   {% if run.notice %}<p class="alert alert-warn">{{ run.notice }}</p>{% endif %}
   {% if timeline.warnings %}
+  <p class="text-xs text-faint">About the plain FCP7 XML / EDL buttons above: they point at Drive for Desktop paths, so they import offline without it. The pack has its own paths and is not affected.</p>
   <ul class="alert alert-warn space-y-1.5">
     {% for warning in timeline.warnings %}<li class="flex gap-2"><span class="text-amber">•</span><span>{{ warning }}</span></li>{% endfor %}
   </ul>

@@ -106,6 +106,18 @@ def test_the_in_point_is_the_handle_not_the_shots_place_in_the_original():
         assert int(item.findtext("out")) - int(item.findtext("in")) == int(item.findtext("end")) - int(item.findtext("start"))
 
 
+def test_an_in_point_is_never_negative():
+    """Real footage: a file whose picture starts 0.2 s after the shot's nominal start came back with in_s = -0.2."""
+    matches = build_matches()
+    packed = packed_for(matches)
+    packed["src-beach-0"] = dataclasses.replace(packed["src-beach-0"], in_s=-0.2, out_s=11.8)
+    timeline = build_timeline(matches, build_config(), packed=packed, pack_folder="/Users/sam/Pack")
+    beach = clipitems(fcp7xml.build(timeline, "/Users/sam/Pack"))[0]
+    assert (beach.findtext("in"), beach.findtext("out")) == ("0", "150")
+    assert any("starts 5 frame(s) after the shot's first frame" in w for w in timeline.warnings)
+    assert "-" not in edl.build(timeline).split("001  ")[1].split("\n")[0].split("C        ")[1]
+
+
 def test_every_clip_points_into_the_clips_folder_with_the_media_online():
     matches = build_matches()
     timeline = build_timeline(matches, build_config(mount=None), packed=packed_for(matches),

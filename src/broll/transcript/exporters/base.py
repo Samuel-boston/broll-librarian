@@ -274,7 +274,14 @@ def build_timeline(
         packed_clip = packed[suggestion.shot.id] if packed is not None else None
         if packed_clip is not None:
             # The file starts at the handle, so the shot begins in_s into it.
-            shot_in_file = 0.0 if still else packed_clip.in_s
+            shot_in_file = 0.0 if still else max(0.0, packed_clip.in_s)
+            if not still and packed_clip.in_s < -0.5 / fps:
+                # The cut file's picture begins a little after the shot's first frame (a source whose video
+                # starts after time zero). A negative in-point is invalid, so the clip starts on its first frame.
+                timeline.warnings.append(
+                    f"{packed_clip.file} starts {-packed_clip.in_s * fps:.0f} frame(s) after the shot's first "
+                    "frame, because the source's picture begins late; the clip starts on its first frame."
+                )
             source_in = seconds_to_frames(shot_in_file, source_fps)
             sequence_in = seconds_to_frames(shot_in_file, fps)
             media_path = f"{clean_folder(pack_folder or '')}/clips/{packed_clip.file}"
