@@ -1409,6 +1409,8 @@ def costs(
 def reanalyse(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
     source_id: Optional[str] = typer.Option(None, "--source", help="Just this source."),
+    folder: list[str] = typer.Option([], "--folder",
+                                     help="Only sources with a clip filed under this folder (repeatable)."),
     stale: bool = typer.Option(True, "--stale/--all",
                                help="Only rows analysed with an older prompt version."),
     wait: bool = typer.Option(True, "--wait/--no-wait"),
@@ -1417,8 +1419,13 @@ def reanalyse(
         help="Also re-analyse shots a human has corrected. Off by default.",
     ),
     dry_run: bool = typer.Option(False, "--dry-run"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Go ahead when the estimate is over $1."),
 ) -> None:
-    """Re-run analysis, e.g. after the prompt improved. Never automatic."""
+    """Look at the footage again with the vision model (local files and Drive files). Never automatic.
+
+    This costs the full analysis again. To only move clips into folders you added or split, use
+    `broll refile`: it works from what is already stored and costs a few cents.
+    """
     workspace_config = resolve_workspace(workspace)
     store = Store.for_config(workspace_config)
     try:
@@ -1429,36 +1436,130 @@ def reanalyse(
                 _fail(f"No source {source_id!r}.")
         elif stale:
             sources = [s for s in sources if s.analysis_version != PROMPT_VERSION]
+        if folder:
+            from .refile import _under
 
-        targets = [s for s in sources if s.origin_path and Path(s.origin_path).exists()]
-        missing = len(sources) - len(targets)
+            wanted = {
+                r["source_id"] for r in store.conn.execute(
+                    "SELECT source_id, category FROM shots WHERE workspace_id = ?",
+                    (workspace_config.id,)).fetchall()
+                if any(_under(r["category"], f) for f in folder)
+            }
+            sources = [s for s in sources if s.id in wanted]
 
-        if not targets:
+        files: list[DiscoveredFile] = []
+        for s in sources:
+            if s.origin_path and Path(s.origin_path).exists():
+                files.append(DiscoveredFile(origin="local", path=Path(s.origin_path), filename=s.original_filename,
+                                            origin_path=s.origin_path))
+            elif s.origin == "drive" and s.drive_file_id:
+                # The same shape `index --drive-folder` builds, so the intake limits and the
+                # read-in-place path for big videos apply as they did the first time.
+                files.append(DiscoveredFile(origin="drive", path=None, filename=s.original_filename,
+                                            drive_file_id=s.drive_file_id,
+                                            origin_path=s.origin_path or f"drive:{s.drive_file_id}",
+                                            size_bytes=s.filesize_bytes, duration_s=s.duration_s))
+        missing = len(sources) - len(files)
+
+        if not files:
             _echo(f"Nothing to re-analyse (prompt version {PROMPT_VERSION})."
-                  + (f" {missing} source(s) have no local file." if missing else ""))
+                  + (f" {missing} source(s) have no local file and no Drive id." if missing else ""))
             return
 
-        _echo(f"{len(targets)} source(s) to re-analyse at prompt version {PROMPT_VERSION}."
-              + (f" Skipping {missing} with no local file." if missing else ""))
+        per_file = store.conn.execute(
+            "SELECT AVG(cost_estimate_usd) FROM jobs"
+            " WHERE workspace_id = ? AND status = 'done' AND cost_estimate_usd > 0",
+            (workspace_config.id,),
+        ).fetchone()[0]
+        measured = bool(per_file)
+        per_file = float(per_file or 0.007)
+        estimate = per_file * len(files)
+        _echo(f"{len(files)} source(s) to re-analyse at prompt version {PROMPT_VERSION}."
+              + (f" Skipping {missing} with no local file and no Drive id." if missing else ""))
+        _echo(f"Estimated cost: about ${estimate:.2f} (${per_file:.4f} per file, "
+              + ("measured on this library)." if measured else "a rough figure: nothing indexed yet)."))
         if dry_run:
-            for source in targets[:20]:
-                _echo(f"  {source.original_filename} (was {source.analysis_version})")
-            if len(targets) > 20:
-                _echo(f"  ... and {len(targets) - 20} more")
+            for source in files[:20]:
+                _echo(f"  {source.filename} ({source.origin})")
+            if len(files) > 20:
+                _echo(f"  ... and {len(files) - 20} more")
             _echo("Nothing was written. Drop --dry-run to run it.")
             return
+        if estimate > 1.0 and not yes:
+            _fail("That is over $1. Run it again with --yes to go ahead, or use `broll refile` if you only "
+                  "changed folders.")
 
-        files = [
-            DiscoveredFile(origin="local", path=Path(s.origin_path), filename=s.original_filename,
-                           origin_path=s.origin_path)
-            for s in targets
-        ]
         jobs = enqueue_files(store, files, force=True,
                              overwrite_corrections=overwrite_corrections)
         _echo(f"Queued {len(jobs)} job(s)."
               + ("" if overwrite_corrections else " Operator-corrected shots are kept."))
         if wait:
             _run_worker(workspace_config, store, None)
+    finally:
+        store.close()
+
+
+@app.command()
+def refile(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
+    folder: list[str] = typer.Option([], "--folder",
+                                     help="Only clips filed under this folder or its sub-folders (repeatable)."),
+    status: list[str] = typer.Option([], "--status", help="indexed or needs_review (repeatable)."),
+    source: list[str] = typer.Option([], "--source", help="Only clips of this source (repeatable)."),
+    all_clips: bool = typer.Option(False, "--all", help="Every indexed clip."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show where clips would move and write nothing."),
+    include_corrected: bool = typer.Option(False, "--include-corrected",
+                                           help="Also move clips a person filed by hand. Off by default."),
+) -> None:
+    """Re-decide each clip's folder from what is already stored about it. No video is read.
+
+    Use it after adding, splitting or re-describing folders. One text-model call per 20 clips, so about
+    a dollar for 5,000 clips. A clip moves only when the new folder differs, and stays put when the model
+    is unsure. Nothing is written to Drive: run `broll organise` afterwards.
+    """
+    from . import refile as refile_mod
+
+    if not (folder or status or source or all_clips):
+        _fail("Say which clips: --folder PATH, --status, --source ID, or --all.")
+    bad = [x for x in status if x not in ("indexed", "needs_review")]
+    if bad:
+        _fail("--status takes indexed or needs_review.")
+    workspace_config = resolve_workspace(workspace)
+    for f in folder:
+        if workspace_config.taxonomy.find_node(f) is None:
+            _fail(f"There is no folder {f!r}.")
+    try:
+        check_credentials(workspace_config)
+    except Exception as exc:
+        _fail(str(exc))
+    store = Store.for_config(workspace_config)
+    try:
+        shots = refile_mod.select_shots(store, folder or None, status or None, source or None)
+        if not shots:
+            _echo("No clips match.")
+            return
+        provider = get_text_provider(workspace_config)
+        try:
+            report = refile_mod.plan(workspace_config, store, provider, shots, include_corrected)
+        except ValueError as exc:
+            _fail(str(exc))
+        _echo(f"{report.considered} clip(s) looked at in {report.calls} call(s); "
+              f"estimated cost ${report.estimated_cost_usd:.3f}.")
+        if report.skipped_corrected:
+            _echo(f"{report.skipped_corrected} corrected by a person were left alone (--include-corrected moves them).")
+        _echo(f"{len(report.moves)} would move, {report.unchanged} already right, "
+              f"{report.kept_on_tie} kept where they are (the model was unsure)"
+              + (f", {report.failed} could not be decided and were left alone." if report.failed else "."))
+        for before, after, n in report.matrix():
+            _echo(f"  {n:>5}  {before}  ->  {after}")
+        if dry_run:
+            _echo("Nothing was written. Drop --dry-run to apply it.")
+            return
+        if not report.moves:
+            return
+        embedder = _load_embedder(workspace_config)
+        changed = refile_mod.apply(store, report, embedder)
+        _echo(f"Moved {changed} clip(s). Run `broll organise` to file them in Drive.")
     finally:
         store.close()
 
@@ -1899,7 +2000,8 @@ def folders_add(
     except CorrectionError as exc:
         _fail(str(exc))
     _echo(f"Added {path}. New clips are offered it straight away; existing clips stay where they are "
-          "until they are re-analysed (`broll reanalyse`).")
+          "until you run `broll refile` (cheap, uses what is stored; `broll refile --folder PATH --dry-run` "
+          "first). `broll reanalyse` looks at the footage again and costs the full analysis.")
 
 
 @folders_app.command("note")
@@ -1939,6 +2041,8 @@ def folders_remove(
         store.close()
     where = f"moved to {into}" if into else "left without a folder, flagged for review"
     _echo(f"Removed {done['removed']}; {done['clips']} clip(s) {where}.")
+    if not into:
+        _echo("File them again with `broll refile --status needs_review` (cheap, no video is read).")
 
 
 @folders_app.command("dismiss")

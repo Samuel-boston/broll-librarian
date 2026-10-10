@@ -176,3 +176,39 @@ class FakeDriveClient:
 
     def invalidate(self) -> None:
         pass
+
+
+class FakeTextProvider:
+    """A text model that files clips by a word in their caption. No network.
+
+    `rules` maps a caption word to (folder, confidence, secondary folders). Counts its calls.
+    """
+
+    name = "fake"
+
+    def __init__(self, rules: dict, default=None):
+        self.rules = rules
+        self.default = default
+        self.prompts: list[str] = []
+        self.fail_first = 0
+
+    async def complete(self, prompt, schema):
+        import re
+
+        self.prompts.append(prompt)
+        if self.fail_first:
+            self.fail_first -= 1
+            return schema.model_validate({"items": [{"clip": 1, "category_confidence": 7}]})
+        items = []
+        for number, block in re.findall(r"CLIP (\d+) \(.*?\)\n((?:  .*\n?)*)", prompt):
+            caption = re.search(r"caption: (.*)", block).group(1).lower()
+            pick = next((v for k, v in self.rules.items() if k in caption), self.default)
+            if pick is None:
+                continue
+            folder, confidence, *rest = pick
+            items.append({"clip": int(number), "category": folder, "category_confidence": confidence,
+                          "secondary_categories": list(rest[0]) if rest else []})
+        return schema.model_validate({"items": items})
+
+    def estimate_cost(self, prompt):
+        return 0.001

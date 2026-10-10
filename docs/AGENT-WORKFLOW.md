@@ -60,6 +60,25 @@ nudges the ranking.
 * The **Script to B-roll** page exports a Premiere (FCP7 XML), Resolve (EDL) or CSV timeline.
 * `POST /api/usage` records which video a shot went into, so the next shortlist doesn't offer it again.
 
+## Changing the tree after the run
+
+Folders can be changed once clips are indexed. Rename, merge (`broll folders remove PATH --into OTHER`) and remove
+cost nothing and move the clips along. Adding or splitting a folder does not move anything by itself, because a clip
+keeps the folder it was given when it was analysed. Run `broll refile` for that: it re-decides each clip's folder
+from what is already stored about it (caption, observations, tags, setting, emotions and so on) with a text model,
+about 20 clips per call, so roughly a dollar for 5,000 clips and a few minutes. No video is read.
+
+1. `broll folders add "PARENT" "New Folder" --note "what belongs here"`.
+2. `broll refile --folder "PARENT" --dry-run` shows how many clips would move from where to where. Nothing is written.
+3. `broll refile --folder "PARENT"` applies it. `--all` covers the whole library; `--status needs_review` re-files
+   clips that lost their folder. Clips a person corrected by hand stay put unless you add `--include-corrected`.
+4. `broll organise` files the moved clips in Drive. Refile never writes to Drive.
+
+A clip moves only when the new folder differs from the current one, and stays where it is when the model is unsure.
+`broll reanalyse` looks at the footage again with the vision model (Drive files too: `--folder PATH` limits it) and
+costs the full analysis; it prints an estimate first and asks for `--yes` above $1. Use it only when the footage
+needs describing again, not to re-sort.
+
 ## Authentication
 
 On the hosted server the web app asks for the team password. The API needs `BROLL_API_TOKEN`

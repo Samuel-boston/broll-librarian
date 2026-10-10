@@ -247,6 +247,7 @@ broll audit-tags                   # tags on too many clips, themes in use, how 
 broll attention                    # files that were set aside (too long, unreadable...), with links
 broll folders                      # new folders the model suggested; approve or dismiss
 broll costs --project 5000         # measured cost, and what 5,000 more would cost
+broll refile --all --dry-run       # re-sort clips into a changed folder tree, from stored data (cheap)
 broll reanalyse --dry-run          # re-run rows analysed with an older prompt
 ```
 
@@ -717,7 +718,8 @@ Every removal is local: **nothing in Google Drive is ever deleted**, and the sho
 | `broll review` / `broll fix <shot>` | The review queue, and corrections |
 | `broll vocab [--promote field=term]` | Out-of-vocabulary terms, and promotion |
 | `broll costs [--project N]` | Measured spend, and a projection |
-| `broll reanalyse [--stale/--all]` | Re-run analysis after a prompt change |
+| `broll refile [--folder P] [--all] [--dry-run]` | Re-decide clips' folders from stored data after the tree changed; no video, about $1 per 5,000 clips |
+| `broll reanalyse [--stale/--all] [--folder P] [--yes]` | Re-run the vision model (local and Drive files); prints the cost first |
 | `broll serve` | The web UI plus the ingest worker, one process |
 | `broll service install / status / uninstall` | Keep `broll serve` running on this Mac (launchd) |
 | `broll remove <source-id> --yes` | Remove one file, and all its shots, from the library |

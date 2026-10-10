@@ -316,7 +316,8 @@ def rename_folder(
 
     Clips remember their folder by path, so a rename that only touched the tree would leave them
     pointing at a folder that no longer exists. Also updates folder suggestions and the search text of
-    the clips that moved. In Drive nothing is renamed: the next `broll organise` files each clip under the
+    the clips that moved. Renaming never re-sorts clips; to move clips into folders you added or split, use
+    `broll refile`. In Drive nothing is renamed: the next `broll organise` files each clip under the
     new name, and the old, now empty, folder is left for a person to delete.
 
     Returns {"old", "new", "clips"}.
@@ -370,7 +371,10 @@ def rename_folder(
 
 
 def add_folder(config: WorkspaceConfig, parent: str, name: str, note: str = "") -> str:
-    """Add a folder under `parent` ("" for the top level). Returns its path."""
+    """Add a folder under `parent` ("" for the top level). Returns its path.
+
+    Clips already indexed stay where they are; `broll refile` moves the ones that belong here.
+    """
     name = name.strip().strip("/")
     if not name or "/" in name:
         raise CorrectionError("A folder name can't be empty or contain a slash.")
@@ -408,7 +412,7 @@ def remove_folder(
     """Take a folder out of the client's tree.
 
     Clips filed in it go to `move_to` when one is given. Otherwise they are left without a folder and
-    flagged for review, so a person (or `broll reanalyse`) files them again: a clip is never left
+    flagged for review, so a person (or `broll refile`, which re-decides folders from what is stored) files them again: a clip is never left
     pointing at a folder that no longer exists. Nothing is deleted in Drive; the next `broll organise`
     re-files the clips, and the old folder is left for a person to delete.
 
