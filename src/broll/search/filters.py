@@ -39,6 +39,9 @@ class SearchFilters(BaseModel):
     category: list[str] = Field(default_factory=list)   # a folder, or a parent of folders
     # With `category`: only clips filed there, not the ones the model merely thought could fit there too.
     category_primary_only: bool = False
+    # With `category`: only that folder itself, not the folders inside it (the folder page lists its own
+    # clips and shows its sub-folders as folders).
+    category_direct: bool = False
     mood: list[str] = Field(default_factory=list)
     usable_for: list[str] = Field(default_factory=list)
     has_faces: bool | None = None
@@ -110,18 +113,25 @@ class SearchFilters(BaseModel):
             # secondary match for it - the same clips Drive shows there, where
             # secondary folders hold a shortcut. "_" and "%" are LIKE
             # wildcards, and folder names such as "01_Travel" contain them.
-            if self.category_primary_only:
-                one = "(s.category = ? OR s.category LIKE ? ESCAPE '\\')"
-            else:
-                one = (
-                    "(s.category = ? OR s.category LIKE ? ESCAPE '\\'"
-                    " OR EXISTS (SELECT 1 FROM json_each(s.secondary_categories_json) sc"
-                    " WHERE sc.value = ? OR sc.value LIKE ? ESCAPE '\\'))"
-                )
-            clauses.append("(" + " OR ".join(one for _ in self.category) + ")")
+            def one_folder() -> str:
+                below = "" if self.category_direct else " OR s.category LIKE ? ESCAPE '\\'"
+                text = f"(s.category = ?{below}"
+                if not self.category_primary_only:
+                    below_sc = "" if self.category_direct else " OR sc.value LIKE ? ESCAPE '\\'"
+                    text += (" OR EXISTS (SELECT 1 FROM json_each(s.secondary_categories_json) sc"
+                             f" WHERE sc.value = ?{below_sc})")
+                return text + ")"
+
+            clauses.append("(" + " OR ".join(one_folder() for _ in self.category) + ")")
             for value in self.category:
                 prefix = _like_escape(value) + "/%"
-                params.extend([value, prefix] if self.category_primary_only else [value, prefix, value, prefix])
+                params.append(value)
+                if not self.category_direct:
+                    params.append(prefix)
+                if not self.category_primary_only:
+                    params.append(value)
+                    if not self.category_direct:
+                        params.append(prefix)
         if self.uncategorised:
             clauses.append("s.category IS NULL")
 

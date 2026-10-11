@@ -100,7 +100,7 @@
     {% endif %}
 
     <p class="mb-3 text-xs text-faint">
-      {% if current %}{{ current.count }} {{ noun }}{{ '' if current.count == 1 else 's' }} in {{ current.label }}{% if folders %} and its folders{% endif %}
+      {% if current %}{{ direct_count }} {{ noun }}{{ '' if direct_count == 1 else 's' }} filed in {{ current.label }}{% if folders %} · {{ current.count - direct_count }} more inside its folders{% endif %}
       {% else %}{{ clips|length }}{% if more %}+{% endif %} {{ noun }}{{ '' if clips|length == 1 else 's' }}{% endif %}
       {% if current and also_count %}
         · {% if show_also %}showing {{ also_count }} more that only <em>might</em> fit here

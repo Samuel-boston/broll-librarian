@@ -92,3 +92,16 @@ def test_the_move_button_works_and_a_wrong_folder_says_why(workspace, store):
 
         bad = client.post(f"/shots/{shot.id}/move", data={"category": "Nowhere"})
         assert bad.status_code == 400 and "not one of this library's folders" in bad.json()["detail"]
+
+
+def test_a_parent_folder_shows_its_folders_not_a_pile_of_what_is_inside_them(workspace, store):
+    """Open 05_Travel & Adventure: the sub-folders are the page. Their clips are one click in, not listed here."""
+    workspace.taxonomy = tree_config()
+    clip(workspace, store, "beach.mov", BEACH, [])
+    clip(workspace, store, "loose.mov", "05_Travel & Adventure/Travel/Flights", [])
+    store.close()
+    parent = page(workspace, f"/library?kind=video&path={quote('05_Travel & Adventure')}")
+    assert "beach.mov" not in parent and "loose.mov" not in parent
+    assert "Beach &amp; Water" in parent, "the sub-folder is there to open"
+    inside = page(workspace, f"/library?kind=video&path={quote(BEACH)}")
+    assert "beach.mov" in inside and "loose.mov" not in inside

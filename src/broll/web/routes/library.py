@@ -82,7 +82,6 @@ async def library(
         # A folder lists what is filed in it. Clips the model only thought could also fit there are one
         # click away ("also fits here"), not mixed in: a beach clip is not a men's work clip.
         summaries = summarise_folders(rows, folder_paths, include_secondary=False) if tree else {}
-        with_also = summarise_folders(rows, folder_paths) if tree and path else {}
         counts = store.facet_counts(kind)
         others = kinds.other(kind)
         other_rows = store.browse_rows(others)
@@ -92,7 +91,8 @@ async def library(
         filters: SearchFilters | None = None
         show_also = bool(also)
         if path:
-            filters = SearchFilters(category=[path], media_kind=[kind], category_primary_only=not show_also)
+            filters = SearchFilters(category=[path], media_kind=[kind], category_direct=True,
+                                    category_primary_only=not show_also)
         elif emotion:
             filters = SearchFilters(emotions=[emotion], media_kind=[kind])
             heading = f"Feeling {emotion}"
@@ -117,7 +117,9 @@ async def library(
             walked.append(part)
             crumbs.append(("/".join(walked), folder_label(part)[1]))
         current = summaries.get(path)
-        also_count = (with_also[path].count - current.count) if (current and path in with_also) else 0
+        direct_count = sum(1 for r in rows if path and r["category"] == path)
+        also_count = sum(1 for r in rows if path and r["category"] != path
+                         and not (r["category"] or "").startswith(path + "/") and path in r["secondary"])
 
         # The same place on the other side, so a person can hop across without losing their spot.
         if path and tree:
@@ -144,6 +146,7 @@ async def library(
             "crumbs": crumbs,
             "current": current,
             "also_count": also_count,
+            "direct_count": direct_count,
             "show_also": show_also,
             "folders": level,
             "emotion": emotion,

@@ -178,8 +178,10 @@ def test_the_library_home_is_two_doors_and_each_side_shows_folders_feelings_and_
 
         folder = client.get("/library", params={"kind": "video", "path": "01_Nervous System Practices"}).text
         assert "Breathwork" in folder and "Meditation &amp; Stillness" in folder  # subfolders
-        assert folder.count("<article") == 2                                       # both clips
-        assert "2 videos in Nervous System Practices" in folder
+        assert folder.count("<article") == 0       # their clips are inside the sub-folders, one click in
+        assert "0 videos filed in Nervous System Practices" in folder and "2 more inside its folders" in folder
+        inside = client.get("/library", params={"kind": "video", "path": "01_Nervous System Practices/Breathwork"}).text
+        assert inside.count("<article") >= 1
 
         feeling = client.get("/library", params={"kind": "video", "emotion": "grounded"}).text
         assert feeling.count("<article") == 1 and "Feeling grounded" in feeling
