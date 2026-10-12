@@ -443,3 +443,12 @@ def test_htmx_is_served_by_the_app_not_a_third_party(workspace):
         assert "unpkg.com" not in page and "/static/htmx-1.9.12.min.js" in page
         script = client.get("/static/htmx-1.9.12.min.js")
         assert script.status_code == 200 and b"htmx" in script.content[:2000]
+
+
+def test_the_privacy_page_is_public_even_behind_the_password(monkeypatch, workspace):
+    from broll.web.app import create_app
+
+    monkeypatch.setenv("BROLL_ACCESS_PASSWORD", "hunter2")
+    with TestClient(create_app(workspace, run_worker=False), client=("203.0.113.9", 5000)) as client:
+        page = client.get("/privacy", follow_redirects=False)
+        assert page.status_code == 200 and "Google Drive" in page.text and "never deletes footage" in page.text

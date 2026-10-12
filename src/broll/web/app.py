@@ -68,6 +68,18 @@ templates.env.globals["folder_leaves"] = folder_leaves
 templates.env.globals["access_enabled"] = lambda: bool(os.environ.get("BROLL_ACCESS_PASSWORD"))
 
 
+PRIVACY_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B-Roll Librarian: privacy</title>
+<style>body{font:16px/1.6 system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1rem;color:#1b1f27}h1{font-size:1.5rem}</style></head><body>
+<h1>B-Roll Librarian: privacy</h1>
+<p>B-Roll Librarian is a private tool that indexes a client's own video and photo footage so the client and their editors can search it. It is used only by the people the client invites.</p>
+<p><strong>What it asks Google for.</strong> When the client signs in with Google, the tool asks to read and organise files in that client's Google Drive. It uses this only to look at the footage the client points it at, to describe it, and to file it into the client's own folders. It never deletes footage.</p>
+<p><strong>What it keeps.</strong> It keeps descriptions, tags and small preview pictures of the footage in a database on the client's own server. The footage itself stays in Google Drive. The sign-in token is stored on that same server.</p>
+<p><strong>Who sees it.</strong> Nobody else. Descriptions of footage are sent to Google's Gemini service to be written, and to the client's own dashboard if the client connects one. Nothing is sold or shared for advertising.</p>
+<p><strong>Removing access.</strong> The client can remove the tool's access at any time at myaccount.google.com/permissions, and can delete the library from the tool's Settings page.</p>
+<p>Questions: nathanbailey463@gmail.com</p></body></html>"""
+
+
 class AppState:
     """Everything the routes need, built once at startup."""
 
@@ -381,6 +393,11 @@ def create_studio_app(configs: list[WorkspaceConfig], run_worker: bool = True,
 
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    @app.get("/privacy", response_class=HTMLResponse, include_in_schema=False)
+    async def privacy():
+        """What this app does with a Google account. Public on purpose: Google asks for a link to it."""
+        return HTMLResponse(PRIVACY_PAGE)
+
     @app.get("/thumbnails/{name}")
     async def thumbnail(request: Request, name: str):
         """Thumbnails live per client, so the active client is looked in first.

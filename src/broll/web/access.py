@@ -30,7 +30,7 @@ MAX_PER_CLIENT = 5
 MAX_TOTAL = 300  # one stranger must not be able to lock everyone out; per address the limit is MAX_PER_CLIENT
 
 # Reachable without logging in: the login page itself and the health check the container uses.
-PUBLIC_PATHS = ("/login", "/logout", "/healthz")
+PUBLIC_PATHS = ("/login", "/logout", "/healthz", "/privacy")
 
 _failures: dict[str, list[float]] = {}
 
