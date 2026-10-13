@@ -8,6 +8,7 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
 
 from ... import kinds
+from ...analysis.usage import spend_report
 from ...ingest.scanner import DiscoveredFile, media_kind, scan_local
 from ...jobs.queue import KIND_INDEX_SOURCE, enqueue_files, queue_stats
 from ...library_admin import cancel_job, clear_queue
@@ -188,12 +189,9 @@ def _queue_context(request: Request, store, state) -> dict:
            LIMIT 40""",
         (store.workspace_id,),
     ).fetchall()
-    average = store.conn.execute(
-        "SELECT AVG(cost_estimate_usd) FROM jobs WHERE workspace_id = ?"
-        " AND status = 'done' AND cost_estimate_usd > 0",
-        (store.workspace_id,),
-    ).fetchone()[0]
-    per_file = float(average or 0.0)
+    # What the model has billed (the usage ledger), not the per-job formula of the first run.
+    spend = spend_report(store, state.config)
+    per_file = spend["per_file_usd"]
 
     # The same queue, counted once for videos and once for images.
     by_side = {k: {"queued": 0, "running": 0, "done": 0, "failed": 0} for k in kinds.KINDS}
@@ -213,7 +211,9 @@ def _queue_context(request: Request, store, state) -> dict:
         "by_side": [{"key": k, "label": kinds.LABELS[k], **by_side[k],
                      "indexed": store.count_shots(media_kind=k),
                      "review": store.count_shots("needs_review", media_kind=k)} for k in kinds.KINDS],
-        "cost_so_far": store.total_cost(),
+        "cost_so_far": spend["usd"],
+        "cost_day": spend["day_usd"],
+        "cost_before_ledger": spend["legacy_usd"],
         "cost_remaining": per_file * stats.outstanding,
         "shots": store.count_shots(),
         "needs_review": store.count_shots("needs_review"),

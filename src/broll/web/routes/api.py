@@ -36,6 +36,7 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from ... import attention, kinds
+from ...analysis.usage import spend_report
 from ...db.store import Store, canonical_time
 from ...ingest.scanner import DiscoveredFile, media_kind, scan_local
 from ...jobs.queue import enqueue_files, queue_stats
@@ -372,7 +373,7 @@ async def queue(request: Request, client: str | None = None, limit: int = 40) ->
             "running": stats.running,
             "done": stats.done,
             "failed": stats.failed,
-            "cost_usd": round(store.total_cost(), 4),
+            "cost_usd": round(spend_report(store, state.config)["usd"], 4),
             "jobs": [
                 {
                     "id": r["id"],

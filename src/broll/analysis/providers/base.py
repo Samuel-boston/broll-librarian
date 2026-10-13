@@ -45,6 +45,9 @@ ENVIRONMENT_MARKERS = (
     "invalid_grant", "expired or revoked", "reauthenticate", "api key not valid", "api_key_invalid",
     "unauthenticated", "invalid authentication credentials", "billing", "per day", "perday",
     "permission_denied", "drive is not connected",
+    # Drive's per-account download quota ("downloadQuotaExceeded"): every file fails the same way until it
+    # resets, a day later. 614 files were marked "couldn't be analysed" for it before this was a pause.
+    "downloadquotaexceeded", "download quota",
 )
 
 
@@ -76,8 +79,31 @@ class Pricing(BaseModel):
     input_per_m: float
     output_per_m: float
     tokens_per_image: int
-    prompt_tokens: int = 2400  # the shared prompt, dominated by the vocabularies
-    output_tokens: int = 350
+    #: What a token read from a cache costs. Unset means a tenth of the input price (Google's rate).
+    cached_per_m: float | None = None
+    #: What keeping a token in a context cache costs for an hour (per 1M tokens).
+    cache_storage_per_m_hour: float = 0.0
+    # What a call sends besides its pictures: the system prompt, the vocabularies, the client brief and the
+    # folder tree. Measured on Adam Kunder's library (75 folders with notes): about 9,100 tokens. A library
+    # with a short tree is nearer 3,500. The answer is about 600 tokens of JSON (more if the model thinks).
+    prompt_tokens: int = 9000
+    output_tokens: int = 650
+
+    def usage_cost(
+        self, input_tokens: int, output_tokens: int, cached_tokens: int = 0, thought_tokens: int = 0
+    ) -> float:
+        """What one call really cost, from the token counts the provider reported.
+
+        `input_tokens` includes the cached ones (that is how Gemini reports it); thinking is billed as
+        output, which is what the old formula left out.
+        """
+        cached = min(max(cached_tokens, 0), max(input_tokens, 0))
+        cached_rate = self.cached_per_m if self.cached_per_m is not None else self.input_per_m * 0.1
+        return (
+            (input_tokens - cached) / 1_000_000 * self.input_per_m
+            + cached / 1_000_000 * cached_rate
+            + (output_tokens + thought_tokens) / 1_000_000 * self.output_per_m
+        )
 
     def cost(self, image_count: int) -> float:
         input_tokens = self.prompt_tokens + tokens_per_image_total(self, image_count)
@@ -123,6 +149,8 @@ def estimate_prompt_tokens(text: str) -> int:
 
 class VisionProvider(ABC):
     name: str = "base"
+    #: Where the real token usage of each call goes (see analysis/usage.py). Set by the registry.
+    usage_sink = None
 
     @abstractmethod
     async def analyse(
@@ -151,6 +179,7 @@ class VisionProvider(ABC):
 
 class TextProvider(ABC):
     name: str = "base"
+    usage_sink = None
 
     @abstractmethod
     async def complete(self, prompt: str, schema: type[BaseModel]) -> BaseModel: ...

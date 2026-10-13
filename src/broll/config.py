@@ -233,6 +233,22 @@ class ProviderConfig(BaseModel):
     vision_model: str | None = None
     text: str | None = None  # defaults to the vision provider
     text_model: str | None = None
+    # How hard a Gemini model thinks before it answers. Thinking is billed as output, and at the default
+    # ("medium") it was about 1,400 of the ~2,000 output tokens of every call (measured): the biggest line
+    # on the first bill. Cataloguing a frame does not need it. minimal | low | medium | high | default (the
+    # model's own choice). A 2.5 model takes the same words as a thinking budget (minimal = 0).
+    thinking: str = "minimal"
+    # How many tokens Gemini spends on each picture: low | medium | high | default. A frame is 1,080 tokens at
+    # the default, 530 at medium and 260 at low (the size it is sent at makes no difference). Frames of a
+    # video shot and of the look through a clip are four to twelve of them, each worth less, so they go
+    # low; a photograph is one frame that has to carry all of it (a tattoo, a pendant, a name on a shirt),
+    # and costs $0.0005 more at the default, so it does not.
+    media_resolution: str = "low"
+    segment_media_resolution: str = "low"
+    photo_media_resolution: str = "default"
+    # Send the part of the prompt that never changes (vocabularies, brief, folders) in a context cache
+    # Google keeps for an hour, instead of paying full price for it on every call.
+    cache_prompt: bool = True
 
     def resolved_vision_model(self) -> str:
         return self.vision_model or DEFAULT_MODELS.get(self.vision, "")
@@ -269,6 +285,15 @@ class IngestConfig(BaseModel):
     min_average_shot_length_s: float = 2.0
     concurrency: int = 4
     drive_concurrency: int = 2
+    # Hard caps on what the model may cost, in real dollars as billed (the usage ledger, not a formula).
+    # The worker stops claiming files when the spend since this run began, or in the last 24 hours, passes
+    # the cap; a file already running finishes. 0 turns a cap off. A "run" begins when the queue goes from
+    # empty to not empty; a cap raised in config.yaml is picked up within a minute and the run carries on.
+    max_run_usd: float = 15.0
+    max_day_usd: float = 20.0
+    # A file that has already cost this much across two or more attempts is not tried again after another
+    # failure: a hopeless file must not be paid for over and over. 0 turns it off.
+    max_job_usd: float = 0.25
     # Cap on vision requests per minute, 0 for no cap. Free Gemini keys allow
     # about 5 a minute; without a cap the workers are answered with 429s and
     # 503s that look like the model failing.

@@ -197,15 +197,25 @@ def render_client_context(profile) -> str:
     return "\n".join(lines)
 
 
-def build_user_prompt(context: ShotContext, retry_error: str | None = None) -> str:
-    """The per-shot user turn. Frames are attached separately by the provider."""
+def static_prompt(context: ShotContext) -> str:
+    """The part of the user turn that is the same for every shot of a workspace.
+
+    The vocabularies, the client brief and the folder tree are about 7,000 tokens - most of what a call
+    sends. Providers that cache a prompt prefix (Gemini does, by itself, once the prefix is long and the
+    same) can only do so when this comes *first* and the pictures last, so it is built apart from
+    `shot_prompt`.
+    """
     parts = [vocabulary_block(context.emotion_vocab or EMOTIONS)]
     if context.client_context:
         parts += ["", context.client_context]
     if context.category_options:
         parts += ["", CATEGORY_HEADER, *(f"- {line}" for line in context.category_options)]
-    parts += [
-        "",
+    return "\n".join(parts)
+
+
+def shot_prompt(context: ShotContext, retry_error: str | None = None) -> str:
+    """The part of the user turn that belongs to this one shot (its frames are attached after it)."""
+    parts = [
         "SHOT METADATA",
         context.describe(),
         "",
@@ -220,3 +230,8 @@ def build_user_prompt(context: ShotContext, retry_error: str | None = None) -> s
             retry_error,
         ]
     return "\n".join(parts)
+
+
+def build_user_prompt(context: ShotContext, retry_error: str | None = None) -> str:
+    """The whole per-shot user turn as one text. Frames are attached separately by the provider."""
+    return static_prompt(context) + "\n\n" + shot_prompt(context, retry_error)

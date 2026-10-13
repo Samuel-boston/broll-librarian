@@ -11,7 +11,7 @@ from pathlib import Path
 
 SQL_DIR = Path(__file__).parent
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 def _apply_sql_file(conn: sqlite3.Connection, name: str) -> None:
@@ -250,6 +250,17 @@ def _v10_body_language(conn: sqlite3.Connection) -> None:
     _add_column(conn, "ALTER TABLE shots ADD COLUMN body_json TEXT NOT NULL DEFAULT '[]'")
 
 
+def _v11_api_usage(conn: sqlite3.Connection) -> None:
+    """One row per model call, with the tokens Google reported and what they cost.
+
+    `jobs.cost_estimate_usd` came from a formula and was about a fifth of the real bill; this is the real
+    figure, and what `broll status`, the spend guard and the per-run cap read.
+    """
+    from ..analysis.usage import LEDGER_DDL
+
+    conn.executescript(LEDGER_DDL)
+
+
 MIGRATIONS = {
     1: _v1_base_schema,
     2: _v2_drive_shortcuts,
@@ -261,6 +272,7 @@ MIGRATIONS = {
     8: _v8_precision_intake_and_segments,
     9: _v9_search_phrases,
     10: _v10_body_language,
+    11: _v11_api_usage,
 }
 
 

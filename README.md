@@ -121,7 +121,7 @@ logged. They come from the environment or a `.env` file.
 
 | Provider | Default model | Notes |
 |---|---|---|
-| `gemini` | `gemini-3.6-flash` | **The default.** Cheap per image, which is what dominates the bill at 3 frames per shot. (`gemini-2.5-flash` is closed to new API projects — Google returns a 404 pointing at 3.6.) |
+| `gemini` | `gemini-3.6-flash` | **The default.** About $3.90 per 1,000 photos and $7.40 per 1,000 videos with thinking off (see below). (`gemini-2.5-flash` is closed to new API projects — Google returns a 404 pointing at 3.6.) |
 | `anthropic` | `claude-opus-5` | Tends to return the richest structured descriptions, at the highest cost. Set `provider.vision_model: claude-haiku-4-5` for a cheaper Claude. |
 | `openai` | `gpt-4.1-mini` | Middle of the road. |
 | `mock` | — | Deterministic offline output. For tests and pipeline smoke runs with no key. |
@@ -135,22 +135,52 @@ you pay for, and re-embedding the library after a prompt change is free.
 
 ### What it costs
 
-Cost is dominated by images: 3 frames per shot, each downscaled to 768px on the
-long edge. Per-shot estimates at list prices, with the shared prompt (~2.4k
-input tokens, mostly the controlled vocabularies) and ~350 output tokens:
+Measured, not estimated: every model call is booked from the token counts Google reports in the response
+(`usage_metadata`), into the workspace's `api_usage` table. `broll status` and `broll costs` read that table,
+and so do the spend caps below. The first full run was budgeted from a formula and cost about **five times**
+what it promised (US$68 billed against $13.46 counted), for three reasons that are now fixed:
 
-| Provider / model | ≈ per shot | ≈ 1,000 shots | ≈ 5,000 shots |
-|---|---|---|---|
-| gemini-3.6-flash | $0.0038 | $3.79 | $18.95 |
-| gpt-4.1-mini | $0.0025 | $2.48 | $12.40 |
-| claude-haiku-4-5 | $0.0055 | $5.50 | $27.50 |
-| claude-opus-5 | $0.0275 | $27.50 | $137.50 |
+* **Thinking.** Gemini 3 thinks before it answers (default level "medium") and bills the thoughts as output:
+  about 1,400 tokens on top of a ~600-token answer, on every call. Now `provider.thinking: minimal`: none.
+* **A 9,000-token prompt per call.** The vocabularies, the client brief and 75 folders with notes are sent
+  with every frame. The frames used to come first, so Google could never reuse the prompt; now the prompt
+  comes first and sits in a Google context cache (`provider.cache_prompt`), read at a tenth of the price.
+* **Pictures.** A frame is 1,080 tokens at Gemini 3's default (the formula said 300), whatever its size in
+  pixels. `media_resolution: low` makes it 260 for the 3 to 8 frames of a video shot, and
+  `segment_media_resolution: low` does the same for the 5 to 12 used to look through a clip. A photograph is one
+  frame that has to carry everything, so `photo_media_resolution` stays at the default.
 
-Gemini 3.x Flash prices are a promotional rate to 31 Dec 2026 and double on 1 Jan 2027. These are estimates from published list prices, computed by
-`analysis/providers/*.PRICING`. Real costs are logged per job; `broll costs`
-reports what a workspace has actually spent, per file and per shot, and
-`--project N` extrapolates from that measured rate rather than from this table.
-Trust the measurement over the table.
+Per model call on `gemini-3.6-flash`, Adam Kunder's library (13 Oct 2026, 14 real files):
+
+| Call | Before | After |
+|---|---|---|
+| A photo (1 frame) | $0.0148 | $0.0039 |
+| A video shot (about 4 frames) | $0.0189 | $0.0039 |
+| Looking through a clip for its usable part (5-12 frames) | $0.0100 | $0.0027 |
+| **A photo, whole file** | **$0.0148** | **$0.0039** |
+| **A video, whole file** (0.77 look-throughs + 1.4 shots) | **$0.034** | **$0.0074** |
+
+So 1,000 photos cost about $3.90 and 1,000 videos about $7.40. Output tokens are now the biggest part of a call
+(about 600 tokens of JSON, $0.0023), then the cached prompt ($0.0007) and the picture ($0.0002 to $0.0008).
+`broll costs --project N` extrapolates from what a library has really spent.
+
+Older estimates for the other providers (list prices, ~9,000 prompt tokens and ~650 answer tokens per shot,
+pictures at each provider's own rate) are in `analysis/providers/*.PRICING`; trust the ledger over any table.
+
+Gemini 3.x Flash prices are a promotional rate to 31 Dec 2026 and double on 1 Jan 2027.
+
+**Spend caps.** `ingest.max_run_usd` (15) stops the worker claiming files once a run has really cost that much
+(a run begins when the queue goes from empty to not empty); `ingest.max_day_usd` (20) does the same for the last
+24 hours and holds across a restart; `ingest.max_job_usd` (0.25) stops retrying one file that has already cost
+that much. A file already running finishes. `broll status` says when the daily cap is the reason nothing is moving (the
+run cap is in the server log: `indexing stopped by a spend cap`), and a raised cap in `config.yaml` is picked up
+within a minute. 0 turns a cap off.
+
+**Cheaper still.** `provider.vision_model: gemini-3.1-flash-lite` costs about half as much per call. On the 14-file test
+it kept the category and the caption's meaning but wrote shorter captions and missed search tags that the Flash
+model found (a "firefighter" in a firefighter-uniform photo, "selfie", "friends"), so it is not the default.
+Google's Batch API is half price but answers within 24 hours; the indexer would have to be split into a
+"prepare" and a "collect" phase to use it, which has not been built.
 
 ## Web UI
 

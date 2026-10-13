@@ -62,6 +62,17 @@ class RemoteDriveVideo:
                         raise RuntimeError("the server ignored a byte-range request")
                     return response.read(want + 1)[:want]
             except urllib.error.HTTPError as exc:
+                if exc.code == 403:
+                    # Drive's daily download quota answers a plain 403 here; say so, so the worker waits
+                    # for it to reset instead of marking the file as failed.
+                    try:
+                        body = exc.read(2000).decode("utf-8", "replace").lower()
+                    except Exception:  # noqa: BLE001
+                        body = ""
+                    if "quota" in body:
+                        raise RuntimeError(
+                            "Drive's download quota for this account is used up (downloadQuotaExceeded)"
+                        ) from exc
                 if exc.code not in (429, 500, 502, 503, 504) or attempt == 3:
                     raise
             except (urllib.error.URLError, TimeoutError, ConnectionError):

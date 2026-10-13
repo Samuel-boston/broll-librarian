@@ -1009,12 +1009,13 @@ class Store:
             (status, error, cost, self.workspace_id, job_id),
         )
 
-    def retry_job(self, job_id: str, error: str, delay_s: float) -> None:
+    def retry_job(self, job_id: str, error: str, delay_s: float, cost: float = 0.0) -> None:
         self.conn.execute(
             """UPDATE jobs SET status = 'queued', last_error = ?,
-                   not_before = datetime('now', ?)
+                   not_before = datetime('now', ?),
+                   cost_estimate_usd = cost_estimate_usd + ?
                WHERE workspace_id = ? AND id = ?""",
-            (error, f"+{int(delay_s)} seconds", self.workspace_id, job_id),
+            (error, f"+{int(delay_s)} seconds", cost, self.workspace_id, job_id),
         )
 
     def requeue_failed_jobs(self) -> int:
@@ -1152,12 +1153,13 @@ class Store:
             )
         return len(orphaned)
 
-    def release_job(self, job_id: str, reason: str) -> None:
+    def release_job(self, job_id: str, reason: str, cost: float = 0.0) -> None:
         """Hand a job back to the queue untouched - its worker is stopping."""
         self.conn.execute(
             "UPDATE jobs SET status = 'queued', claimed_by = NULL, last_error = ?,"
-            " attempts = MAX(attempts - 1, 0) WHERE workspace_id = ? AND id = ?",
-            (reason, self.workspace_id, job_id),
+            " attempts = MAX(attempts - 1, 0), cost_estimate_usd = cost_estimate_usd + ?"
+            " WHERE workspace_id = ? AND id = ?",
+            (reason, cost, self.workspace_id, job_id),
         )
 
     def job_counts(self) -> dict[str, int]:

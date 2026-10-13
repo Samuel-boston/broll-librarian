@@ -707,6 +707,8 @@ def status(
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
     """Queue state, library counts and cost."""
+    from .analysis.usage import spend_report
+
     workspace_config = resolve_workspace(workspace)
     store = Store.for_config(workspace_config)
     try:
@@ -718,13 +720,9 @@ def status(
                 (workspace_config.id,),
             ).fetchall()
         }
-        spent = store.total_cost()
-        done_cost = store.conn.execute(
-            "SELECT AVG(cost_estimate_usd) FROM jobs"
-            " WHERE workspace_id = ? AND status = 'done' AND cost_estimate_usd > 0",
-            (workspace_config.id,),
-        ).fetchone()[0]
-        per_file = float(done_cost) if done_cost else 0.0
+        real = spend_report(store, workspace_config)
+        spent = real["usd"]
+        per_file = real["per_file_usd"]
         remaining = per_file * stats.outstanding
 
         payload = {
@@ -739,6 +737,11 @@ def status(
             "vector_backend": store.vectors.backend,
             "cost_usd_so_far": round(spent, 4),
             "cost_usd_estimated_remaining": round(remaining, 4),
+            "cost_usd_last_24h": round(real["day_usd"], 4),
+            "cost_usd_before_ledger_estimate": round(real["legacy_usd"], 4),
+            "model_calls": real["calls"],
+            "model_calls_failed": real["failed_calls"],
+            "spend_caps": real["caps"],
         }
         if as_json:
             _echo(json.dumps(payload, indent=2))
@@ -760,6 +763,15 @@ def status(
             _echo(f"suggested folders: {len(suggested)}  (see `broll folders`)")
         _echo(f"cost:      ${spent:.4f} spent, ~${remaining:.4f} remaining "
               f"({stats.outstanding} file(s) outstanding)")
+        _echo(f"           real model usage as billed since {real['since'] or 'now'}: {real['calls']} call(s), "
+              f"${real['day_usd']:.4f} in the last 24 h"
+              + (f", {real['failed_calls']} failed (${real['failed_usd']:.4f})" if real["failed_calls"] else ""))
+        if real["legacy_usd"] > 0:
+            _echo(f"           before that: ${real['legacy_usd']:.4f} by the old formula, which ran about "
+                  "5x low. Check Google's own bill for the true figure.")
+        caps = real["caps"]
+        if caps["blocked"]:
+            _echo(f"           SPEND CAP: {caps['blocked']} New files are not started until it is raised.")
         candidates = store.vocabulary_candidates(min_count=2)
         if candidates:
             _echo("vocab candidates: " +
@@ -1343,40 +1355,53 @@ def costs(
     project: int = typer.Option(0, "--project", help="Project the cost of indexing N more clips."),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
-    """What indexing has cost so far, from real usage - not a brochure figure."""
+    """What indexing has cost so far, from what the model billed per call - not a formula."""
+    from .analysis.usage import UsageLedger, spend_report
+
     workspace_config = resolve_workspace(workspace)
     store = Store.for_config(workspace_config)
     try:
-        total = store.total_cost()
-        done = store.conn.execute(
-            "SELECT COUNT(*) AS n, COALESCE(SUM(cost_estimate_usd), 0) AS spent"
-            " FROM jobs WHERE workspace_id = ? AND status = 'done'",
-            (workspace_config.id,),
-        ).fetchone()
+        ledger = UsageLedger.for_config(workspace_config)
+        summary = ledger.summary()
+        real = spend_report(store, workspace_config)
+        done_files = store.conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE workspace_id = ? AND status = 'done'"
+            " AND cost_estimate_usd > 0 AND datetime(finished_at) >= datetime(?)",
+            (workspace_config.id, summary["since"] or "now"),
+        ).fetchone()[0]
         shots = store.count_shots()
         by_day = store.conn.execute(
-            """SELECT date(finished_at) AS day, COUNT(*) AS files,
-                      SUM(cost_estimate_usd) AS spent
-               FROM jobs WHERE workspace_id = ? AND finished_at IS NOT NULL
-               GROUP BY day ORDER BY day DESC LIMIT 14""",
+            """SELECT substr(at, 1, 10) AS day, COUNT(*) AS calls, SUM(cost_usd) AS spent
+               FROM api_usage WHERE workspace_id = ? GROUP BY day ORDER BY day DESC LIMIT 14""",
             (workspace_config.id,),
         ).fetchall()
     finally:
         store.close()
 
-    files = done["n"] or 0
-    per_file = (done["spent"] / files) if files else 0.0
-    per_shot = (total / shots) if shots else 0.0
+    per_file = real["per_file_usd"]
+    calls = summary["calls"] or 0
+    cached_share = (summary["cached_tokens"] / summary["input_tokens"]) if summary["input_tokens"] else 0.0
     payload = {
         "workspace": workspace_config.id,
         "provider": workspace_config.provider.vision,
         "model": workspace_config.provider.resolved_vision_model(),
-        "files_indexed": files,
+        "thinking": workspace_config.provider.thinking,
+        "ledger_since": summary["since"],
+        "files_indexed_since_ledger": done_files,
         "shots_indexed": shots,
-        "total_usd": round(total, 4),
+        "total_usd": round(summary["usd"], 4),
         "per_file_usd": round(per_file, 5),
-        "per_shot_usd": round(per_shot, 5),
+        "model_calls": calls,
+        "failed_calls": summary["failed_calls"],
+        "failed_usd": round(summary["failed_usd"], 4),
+        "input_tokens": summary["input_tokens"],
+        "cached_tokens": summary["cached_tokens"],
+        "cached_share": round(cached_share, 3),
+        "output_tokens": summary["output_tokens"],
+        "thought_tokens": summary["thought_tokens"],
+        "by_kind": summary["by_kind"],
         "by_day": [dict(r) for r in by_day],
+        "before_ledger_formula_usd": round(real["legacy_usd"], 4),
     }
     if project:
         payload["projection"] = {
@@ -1388,15 +1413,25 @@ def costs(
         _echo(json.dumps(payload, indent=2))
         return
 
-    _echo(f"provider:  {payload['provider']} ({payload['model']})")
-    _echo(f"indexed:   {files} file(s), {shots} shot(s)")
-    _echo(f"spent:     ${total:.4f}")
-    _echo(f"per file:  ${per_file:.5f}")
-    _echo(f"per shot:  ${per_shot:.5f}")
+    _echo(f"provider:  {payload['provider']} ({payload['model']}), thinking: {payload['thinking']}")
+    if not calls:
+        _echo("spent:     nothing recorded yet. Every model call is written to the usage ledger from now on.")
+    else:
+        _echo(f"spent:     ${summary['usd']:.4f} over {calls} model call(s) since {summary['since']}")
+        _echo(f"per file:  ${per_file:.5f} ({done_files} file(s))")
+        _echo(f"tokens:    {summary['input_tokens']:,} in ({cached_share:.0%} cached), "
+              f"{summary['output_tokens']:,} out, {summary['thought_tokens']:,} thinking")
+        for row in summary["by_kind"]:
+            _echo(f"  {row['kind']:<8} {row['calls']:>6} call(s)  ${row['usd']:.4f}")
+        if summary["failed_calls"]:
+            _echo(f"  {summary['failed_calls']} call(s) gave no usable answer, ${summary['failed_usd']:.4f} of it")
+    if payload["before_ledger_formula_usd"]:
+        _echo(f"earlier:   ${payload['before_ledger_formula_usd']:.4f} by the old formula. It ran about 5x low: "
+              "Google's own bill is the true figure.")
     if by_day:
         _echo("recent:")
         for row in by_day:
-            _echo(f"  {row['day']}  {row['files']:>4} file(s)  ${row['spent'] or 0:.4f}")
+            _echo(f"  {row['day']}  {row['calls']:>5} call(s)  ${row['spent'] or 0:.4f}")
     if project:
         if per_file:
             _echo(f"\nIndexing {project} more clips would cost about "
@@ -1466,13 +1501,13 @@ def reanalyse(
                   + (f" {missing} source(s) have no local file and no Drive id." if missing else ""))
             return
 
-        per_file = store.conn.execute(
-            "SELECT AVG(cost_estimate_usd) FROM jobs"
-            " WHERE workspace_id = ? AND status = 'done' AND cost_estimate_usd > 0",
-            (workspace_config.id,),
-        ).fetchone()[0]
+        # From what the model actually billed (the usage ledger); the old per-job figures came from a
+        # formula that ran about 5x low, so they are not used.
+        from .analysis.usage import spend_report
+
+        per_file = spend_report(store, workspace_config)["per_file_usd"]
         measured = bool(per_file)
-        per_file = float(per_file or 0.007)
+        per_file = float(per_file or 0.012)
         estimate = per_file * len(files)
         _echo(f"{len(files)} source(s) to re-analyse at prompt version {PROMPT_VERSION}."
               + (f" Skipping {missing} with no local file and no Drive id." if missing else ""))

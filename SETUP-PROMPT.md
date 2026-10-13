@@ -85,8 +85,10 @@ Everything else - installing, configuring, testing, explaining - it can do.
 
 ## What it costs to run
 
-* The analysis, per file: roughly 0.3p for a video shot, 0.1p to 0.3p for a
-  photo. A library of several hundred files is a few pounds, once.
+* The analysis, per file, measured from what Google bills with thinking off:
+  roughly 0.6p for a video, 0.3p for a photo. A library of several hundred files
+  is a pound or two, once. (Leave `provider.thinking` at `minimal`: at Gemini's
+  default it costs about five times as much.) `broll costs` shows the real figure.
 * Google Drive storage for the footage itself, on your existing plan.
 * The machine it runs on. It is one small always-on process; if you already pay
   for a server, it can live there. See docs/DEPLOY.md.

@@ -9,6 +9,12 @@ provider:
   vision_model: gemini-2.5-flash
   text: null                # defaults to the vision provider
   text_model: null
+  # What the model costs per call is mostly decided by these four (see README, "What it costs").
+  thinking: minimal         # minimal | low | medium | high | default. Thinking is billed as output.
+  media_resolution: low     # tokens per frame of a video shot: low 260 | medium 530 | high/default 1,080
+  segment_media_resolution: low   # ...and per frame of the look through a clip
+  photo_media_resolution: default # a photograph is one frame carrying all the evidence
+  cache_prompt: true        # keep the vocabularies, brief and folder list in a Google cache (1 hour)
 
 embedder:
   kind: local               # local embeddings keep search quality independent
@@ -24,6 +30,9 @@ taxonomy:
   filename_max_length: 100
 
 ingest:
+  max_run_usd: 15              # stop starting files when a run has really cost this much (0 = no cap)
+  max_day_usd: 20              # ...or the last 24 hours have (the cap that also holds across a restart)
+  max_job_usd: 0.25            # stop retrying one file that has already cost this much
   frames_per_shot: 3
   frame_max_edge: 768          # frames are downscaled before being sent anywhere
   thumbnail_max_edge: 640

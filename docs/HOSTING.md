@@ -10,7 +10,7 @@ This guide is for a person setting it up. `docs/DEPLOY.md` covers the same app o
 
 * One always-on server (about 2 GB of RAM) running the web app and the indexing worker in one container.
 * Search embeddings from the Gemini API instead of a local model. That is what makes a small server
-  enough: no PyTorch, no 2 GB model in memory. It costs a fraction of a cent per shot on top of the analysis.
+  enough: no PyTorch, no 2 GB model in memory. It costs a fraction of a cent per shot on top of the analysis (about $0.20 for 3,500 files).
 * A shared password on the app, HTTPS, and a daily copy of the database.
 * Google Drive connected from the Settings page (no terminal needed).
 
@@ -25,7 +25,7 @@ Roughly **$8 to $9 a month** in total, paid by whoever owns the library.
 | Server: 2 vCPU, 4 GB RAM, 40 GB disk (Hetzner CX23, or similar) | about €5.5 a month |
 | Domain name (skip if the team already has one: use a subdomain of it) | about $10 a year |
 | Server backups or snapshots (recommended) | about €1 a month |
-| Gemini API, one-off for indexing | about $19 per 5,000 shots at the current promotional rate, which doubles on 1 Jan 2027 |
+| Gemini API, one-off for indexing | about $3.90 per 1,000 photos and $7.40 per 1,000 videos at the current promotional rate, which doubles on 1 Jan 2027. Measured from what Google billed, with thinking off and the prompt cached; the setting that matters is `provider.thinking`, which must stay `minimal`. |
 
 Prices move; check them when you order. Fly.io and Railway also work but cost more, because every uploaded
 file counts as outbound traffic on the way to Drive.
@@ -105,6 +105,15 @@ Leave `BROLL_ACCESS_PASSWORD` out so people don't log in twice. Start it with
 * **Backups**: the database is copied every 24 hours to the `backups` folder of the library's data (the last
   7 are kept). That protects against a bad edit, not against losing the server, so also switch on the
   host's own backups or snapshots. List them with `docker compose exec librarian broll backup --list`.
+* **Spend**: `docker compose exec librarian broll status` shows what the model has really been billed
+  (the `cost:` line, from the `api_usage` table: every call's token counts as Google reported them) and what the
+  last 24 hours cost; `broll costs` splits it by kind of call and shows the share of the prompt read from the
+  cache. The worker stops claiming files by itself when a run passes `ingest.max_run_usd` (default $15) or the
+  last 24 hours pass `ingest.max_day_usd` (default $20): edit them in the workspace's `config.yaml` and the
+  change is picked up within a minute, no restart. `deploy/broll-guard.sh` is a second watcher you can run
+  alongside it (`MAX_USD=15 setsid nohup /opt/broll-guard.sh &`): it reads the same `cost:` line and clears
+  the waiting queue if the spend, or the cost per file, goes over. Google's own billing page is still the
+  final word: set a budget alert on the Cloud project.
 * **Before a big run**: take a copy by hand, `docker compose exec librarian broll backup`. A backup lives on
   the same disk as the library, so it does not survive losing the server. Switch on the host's own backups
   too (Hetzner: Server > Backups), and keep `.env`, `drive_token.json` and `drive_copy_state.json` somewhere

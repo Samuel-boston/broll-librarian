@@ -15,9 +15,18 @@ def get_vision_provider(config: WorkspaceConfig) -> VisionProvider:
     key = config.api_key(name)
 
     if name == "gemini":
+        from ..usage import UsageLedger
         from .gemini import GeminiVisionProvider
 
-        return GeminiVisionProvider(model=model, api_key=key)
+        return GeminiVisionProvider(
+            model=model, api_key=key,
+            thinking=config.provider.thinking,
+            media_resolution=config.provider.media_resolution,
+            segment_media_resolution=config.provider.segment_media_resolution,
+            photo_media_resolution=config.provider.photo_media_resolution,
+            cache_prompt=config.provider.cache_prompt,
+            usage_sink=UsageLedger.for_config(config).record,
+        )
     if name == "anthropic":
         from .anthropic import AnthropicVisionProvider
 
@@ -39,9 +48,13 @@ def get_text_provider(config: WorkspaceConfig) -> TextProvider:
     key = config.api_key(name)
 
     if name == "gemini":
+        from ..usage import UsageLedger
         from .gemini import GeminiTextProvider
 
-        return GeminiTextProvider(model=model, api_key=key)
+        return GeminiTextProvider(
+            model=model, api_key=key, thinking=config.provider.thinking,
+            usage_sink=UsageLedger.for_config(config).record,
+        )
     if name == "anthropic":
         from .anthropic import AnthropicTextProvider
 
