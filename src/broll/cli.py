@@ -286,7 +286,14 @@ def analyse(
     analyzer = Analyzer(workspace_config)
     context = _single_shot_context(clip, meta)
 
-    outcome = asyncio.run(analyzer.analyse_shot(clip, context, work_dir))
+    from .analysis.usage import UsageTally, current_tally
+
+    async def _run():
+        tally = UsageTally()  # what the model bills for this one analysis, from its own usage figures
+        current_tally.set(tally)
+        return await analyzer.analyse_shot(clip, context, work_dir), tally
+
+    outcome, billed = asyncio.run(_run())
 
     if outcome.result is None:
         _fail(f"Analysis failed: {outcome.error}")
@@ -297,6 +304,7 @@ def analyse(
         "model": getattr(analyzer.provider, "model", None),
         "analysis_version": PROMPT_VERSION,
         "estimated_cost_usd": round(outcome.cost_usd, 6),
+        "billed_cost_usd": round(billed.cost_usd, 6) if billed.calls else None,
         "frames_used": len(outcome.frames),
         "status": outcome.status,
         "out_of_vocabulary": [{"field": f, "term": t} for f, t in outcome.oov],
