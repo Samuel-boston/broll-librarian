@@ -10,6 +10,7 @@ goes through ``registry.get_vision_provider`` / ``registry.get_text_provider``.
 from __future__ import annotations
 
 import base64
+import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -51,9 +52,16 @@ ENVIRONMENT_MARKERS = (
 )
 
 
+#: A Drive file read in place (a video past `ingest.stream_above_gb`) is opened by ffprobe / ffmpeg, which
+#: report a refused read as "<drive url>: Server returned 403 Forbidden (access denied)" with none of the words
+#: above. On a Drive media URL that 403 is the download quota (or the same wall in another guise): every file
+#: meets it until it lifts, so it is told apart from a bad file by the address it names.
+DRIVE_READ_REFUSED = re.compile(r"googleapis\.com/drive/.*\b403\b")
+
+
 def is_environment_error(message: str) -> bool:
     lowered = (message or "").lower()
-    return any(marker in lowered for marker in ENVIRONMENT_MARKERS)
+    return any(marker in lowered for marker in ENVIRONMENT_MARKERS) or bool(DRIVE_READ_REFUSED.search(lowered))
 
 
 def classify_error(message: str) -> type[ProviderError]:

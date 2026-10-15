@@ -644,3 +644,42 @@ def test_costs_shows_the_cached_share_and_the_calls_that_gave_no_answer(broll_ho
     assert data["thought_tokens"] == 500
     assert data["total_usd"] == pytest.approx(0.007)
     assert {row["kind"] for row in data["by_kind"]} == {"vision", "segment"}
+
+
+async def test_a_refused_drive_read_pauses_the_queue_and_the_file_waits_its_turn(workspace, store, tmp_path):
+    """The 403 the first retry of the library run hit on streamed videos. It must pause the worker and hand the
+    file back without spending an attempt - and the file must not be the first one claimed when the worker
+    resumes, or a file Drive keeps refusing would be tried again and again while every file behind it waited."""
+    from broll.ingest.pipeline import IngestPipeline, IngestResult
+    from broll.jobs.worker import Worker
+    from tests.test_intake import REAL_FFPROBE_403
+
+    _queue_files(store, tmp_path, 3)
+    tried: list[str] = []
+    refuse = {"on": True}
+
+    class Drive(IngestPipeline):
+        async def ingest(self, discovered, force=False, overwrite_corrections=False, **kw):
+            tried.append(discovered.filename)
+            if refuse["on"]:
+                return IngestResult(status="failed", filename=discovered.filename, error=REAL_FFPROBE_403)
+            return IngestResult(status="indexed", filename=discovered.filename)
+
+    worker = Worker(workspace, store, pipeline=Drive(workspace, store), concurrency=1)
+    await worker.run(drain=True)
+
+    assert len(tried) == 1, "the first refusal pauses the worker"
+    stats = queue_stats(store)
+    assert stats.failed == 0 and stats.queued == 3
+    assert store.conn.execute("SELECT MAX(attempts) FROM jobs").fetchone()[0] == 0, "no attempt was spent"
+    assert store.list_attention("open") == [], "and the file is not listed as one that could not be read"
+    waiting = store.conn.execute(
+        "SELECT json_extract(payload_json, '$.filename') AS f FROM jobs WHERE not_before > datetime('now')"
+    ).fetchall()
+    assert [r["f"] for r in waiting] == tried, "the file that was refused waits; the others do not"
+
+    refuse["on"] = False
+    worker.paused_until = 0.0
+    await worker.run(drain=True)
+    assert len(tried) == 3 and len(set(tried)) == 3, "the next run moved on to the other two files"
+    assert queue_stats(store).queued == 1, "the refused one is still waiting for its turn"

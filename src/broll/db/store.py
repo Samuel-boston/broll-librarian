@@ -1153,13 +1153,20 @@ class Store:
             )
         return len(orphaned)
 
-    def release_job(self, job_id: str, reason: str, cost: float = 0.0) -> None:
-        """Hand a job back to the queue untouched - its worker is stopping."""
+    def release_job(self, job_id: str, reason: str, cost: float = 0.0, delay_s: float = 0.0) -> None:
+        """Hand a job back to the queue untouched - its worker is stopping, or the setup is not working.
+
+        `delay_s` keeps it from being claimed again for that long. Without it the job that met the problem
+        is the oldest waiting one and is picked up first the moment the worker resumes: a file that stays
+        refused would be tried over and over while every file behind it waited.
+        """
+        not_before = f"+{int(delay_s)} seconds" if delay_s else None
         self.conn.execute(
             "UPDATE jobs SET status = 'queued', claimed_by = NULL, last_error = ?,"
-            " attempts = MAX(attempts - 1, 0), cost_estimate_usd = cost_estimate_usd + ?"
+            " attempts = MAX(attempts - 1, 0), cost_estimate_usd = cost_estimate_usd + ?,"
+            " not_before = CASE WHEN ? IS NULL THEN not_before ELSE datetime('now', ?) END"
             " WHERE workspace_id = ? AND id = ?",
-            (reason, cost, self.workspace_id, job_id),
+            (reason, cost, not_before, not_before, self.workspace_id, job_id),
         )
 
     def job_counts(self) -> dict[str, int]:

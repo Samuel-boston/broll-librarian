@@ -528,3 +528,146 @@ def test_a_recording_is_read_in_fewer_bigger_windows():
     assert len(plan_windows(0, 600)) == 10                 # ten minutes: a minute at a time
     long = plan_windows(0, 3 * 3600)                       # three hours
     assert len(long) <= 20 and all(w.end_s - w.start_s <= 601 for w in long) and long[-1].end_s == 3 * 3600
+
+
+# -- Drive's download quota, as ffmpeg and the empty-frames path report it ---------------------------------------
+
+#: The error a job really got on 14 Oct 2026 when Drive refused a video read in place (copied from the queue).
+REAL_FFPROBE_403 = (
+    "ffprobe could not read IMG_1831.MOV: https://www.googleapis.com/drive/v3/files/"
+    "1DE7P1TmhAERPy8vp3hT98yPaCyn4jga1?alt=media&supportsAllDrives=true: "
+    "Server returned 403 Forbidden (access denied)"
+)
+
+
+def test_a_refused_read_of_a_drive_video_is_the_quota_and_not_a_bad_file():
+    from broll.analysis.providers.base import ProviderError, TransientProviderError, classify_error, is_environment_error
+
+    assert is_environment_error(REAL_FFPROBE_403)
+    assert classify_error(REAL_FFPROBE_403) is TransientProviderError
+    # The same 403 on an address that is not Drive's media endpoint, and an ordinary unreadable file, are not it.
+    assert not is_environment_error("ffprobe could not read a.mp4: https://example.com/a.mp4: Server returned 403 Forbidden")
+    assert not is_environment_error("ffprobe could not read a.mov: /data/tmp/a.mov: Invalid data found when processing input")
+    assert not is_environment_error("TransientProviderError: could not read any frames of DSC_5587.MOV from Drive between 120s and 180s")
+    assert classify_error("ffprobe could not read a.mov: moov atom not found") is ProviderError
+
+
+class RefusingServer:
+    """Answers every request with one fixed status and body, like Drive once the quota is spent."""
+
+    def __init__(self, status: int, body: bytes = b""):
+        import http.server
+        import threading
+
+        outer = self
+        outer.requests = 0
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                outer.requests += 1
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/clip.mp4"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+
+
+def test_asking_drive_for_one_byte_tells_the_quota_from_anything_else():
+    from broll.analysis.providers.base import is_environment_error
+    from broll.ingest.remote import RemoteDriveVideo
+
+    quota_body = (b'{"error": {"code": 403, "errors": [{"reason": "downloadQuotaExceeded"}], '
+                  b'"message": "The download quota for this file has been exceeded."}}')
+    for status, body, expected in (
+        (403, quota_body, True),
+        (403, b'{"error": {"errors": [{"reason": "forbidden"}]}}', False),   # a file nobody may read
+        (404, b"", False),
+    ):
+        server = RefusingServer(status, body)
+        try:
+            remote = RemoteDriveVideo(TokenClient(), "id", "a.mov", url=server.url)
+            answer = remote.quota_error()
+            assert bool(answer) is expected, (status, answer)
+            if expected:
+                assert is_environment_error(answer), "so the worker waits for it instead of failing the file"
+        finally:
+            server.close()
+
+
+def test_a_drive_that_answers_is_not_the_quota(served_clip):
+    from broll.ingest.remote import RemoteDriveVideo
+
+    path, server = served_clip
+    remote = RemoteDriveVideo(TokenClient(), "id", "remote.mp4", size=path.stat().st_size, url=server.url)
+    assert remote.quota_error() is None
+
+
+async def test_no_frames_from_drive_is_called_the_quota_when_drive_says_so(workspace, store, served_clip, monkeypatch):
+    """ffmpeg is silent about a 403, so a read that came back empty is checked with a one-byte request."""
+    from broll.analysis.providers.base import TransientProviderError, is_environment_error
+    from broll.ingest import pipeline as pipeline_module
+
+    path, server = served_clip
+    workspace.ingest.stream_above_gb = 0.000001
+    original = pipeline_module.RemoteDriveVideo
+    answers = {"quota": "Drive's download quota for this account is used up (downloadQuotaExceeded)"}
+
+    class Served(original):
+        def __init__(self, client, file_id, name, size=None, url=None):
+            super().__init__(client, file_id, name, size, url=server.url)
+
+        def quota_error(self):
+            return answers["quota"]
+
+    monkeypatch.setattr(pipeline_module, "RemoteDriveVideo", Served)
+    pipeline = IngestPipeline(workspace, store, drive_client=lambda: TokenClient())
+    monkeypatch.setattr(pipeline.analyzer, "extract_timed", lambda *a, **k: [])
+    discovered = DiscoveredFile(origin="drive", path=None, filename="remote.mp4", drive_file_id="abc",
+                                origin_path="drive:abc", size_bytes=path.stat().st_size)
+
+    with pytest.raises(TransientProviderError) as raised:
+        await pipeline.ingest(discovered)
+    assert is_environment_error(str(raised.value)) and "download quota" in str(raised.value)
+
+    answers["quota"] = None   # Drive answers: the clip really could not be read, which is not the quota
+    with pytest.raises(TransientProviderError) as raised:
+        await pipeline.ingest(discovered)
+    assert "could not read any frames" in str(raised.value) and not is_environment_error(str(raised.value))
+
+
+async def test_looking_through_a_clip_says_so_when_drive_refuses_it(workspace, tmp_path, monkeypatch):
+    from broll.analysis.providers.base import TransientProviderError, is_environment_error
+    from broll.ingest import segments as segments_module
+
+    class Refused:
+        is_remote = True
+
+        def __init__(self, quota):
+            self.quota = quota
+
+        def quota_error(self):
+            return self.quota
+
+    monkeypatch.setattr(segments_module, "extract_frames_timed", lambda *a, **k: [])
+
+    async def look(video):
+        return await segments_module.plan_segments(
+            None, video, filename="a.mov", start_s=0.0, end_s=30.0, file_duration_s=30.0, width=1920,
+            height=1080, config=workspace, work_dir=tmp_path,
+        )
+
+    with pytest.raises(TransientProviderError) as raised:
+        await look(Refused("Drive's download quota for this account is used up (downloadQuotaExceeded)"))
+    assert is_environment_error(str(raised.value))
+    with pytest.raises(TransientProviderError) as raised:
+        await look(Refused(None))
+    assert "could not read any frames" in str(raised.value)

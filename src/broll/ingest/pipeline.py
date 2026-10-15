@@ -341,7 +341,12 @@ class IngestPipeline:
             )
             if not frames and isinstance(working, RemoteDriveVideo):
                 # Drive stopped answering: nothing is wrong with the clip, so do not write it down as
-                # one that could not be described. The queue tries the file again.
+                # one that could not be described. The queue tries the file again. If Drive is refusing
+                # the account's downloads, say so: the worker then waits for the quota instead of
+                # spending this file's attempts on it.
+                quota = await asyncio.to_thread(working.quota_error)
+                if quota:
+                    raise TransientProviderError(quota)
                 raise TransientProviderError(
                     f"could not read any frames of {discovered.filename} from Drive "
                     f"({seg.start_s:.0f}s-{seg.end_s:.0f}s)"

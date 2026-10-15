@@ -309,7 +309,7 @@ class Worker:
         if is_environment_error(error):
             # Nothing is wrong with this file. Hand it back untouched, mark nothing failed, and stop
             # claiming work for a while: the next try may be after the problem is fixed.
-            self.store.release_job(job.id, error, cost=cost)
+            self.store.release_job(job.id, error, cost=cost, delay_s=ENVIRONMENT_PAUSE_S * 2)
             self.pause_reason = error[:300]
             self.paused_until = time.monotonic() + ENVIRONMENT_PAUSE_S
             log.error("indexing paused for %d s: %s", ENVIRONMENT_PAUSE_S, error[:300])

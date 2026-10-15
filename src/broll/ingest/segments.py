@@ -75,7 +75,12 @@ async def plan_segments(
         try:
             if getattr(video, "is_remote", False) and not frames:
                 # Drive stopped answering. That says nothing about the clip: try the whole file again
-                # later rather than write down "no frames" as its history.
+                # later rather than write down "no frames" as its history. When Drive is refusing the
+                # account's downloads, say that, so the worker waits for the quota.
+                ask = getattr(video, "quota_error", None)
+                quota = await asyncio.to_thread(ask) if ask else None
+                if quota:
+                    raise TransientProviderError(quota)
                 raise TransientProviderError(
                     f"could not read any frames of {filename} from Drive between "
                     f"{window.start_s:.0f}s and {window.end_s:.0f}s"
