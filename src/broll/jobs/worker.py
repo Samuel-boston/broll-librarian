@@ -46,8 +46,11 @@ CAP_RECHECK_S = 60.0
 QUOTA_RETRY_BASE_S = 180.0
 #: ...up to this.
 QUOTA_RETRY_MAX_S = 3600.0
-#: This many different files refused in a row, with none getting through, is a real lockout: stop for a while.
+#: This many different files refused in a row, with none getting through for QUOTA_QUIET_S, is a real lockout:
+#: stop for a while. (A file counts as through when it finishes, which is a minute after its download passed,
+#: so refusals alone pile up fast even while one request in six is getting through: measured 15 Oct.)
 QUOTA_STREAK_PAUSE = 12
+QUOTA_QUIET_S = 300.0
 QUOTA_STREAK_PAUSE_S = 600.0
 #: For this long after Drive last refused a read, files are started one every few seconds, two at a time at most.
 QUOTA_PRESSURE_S = 1800.0
@@ -118,6 +121,7 @@ class Worker:
         # for the ratio line in the log.
         self._quota_hits: dict[str, int] = {}
         self._quota_streak: set[str] = set()
+        self._last_through_at = time.monotonic()
         self._last_quota_at: float | None = None
         self._next_start_at = 0.0
         self._drive_ok = 0
@@ -173,7 +177,7 @@ class Worker:
         self._quota_hits.pop(job.id, None)
         self._quota_streak.clear()
         self._drive_ok += 1
-        now = time.monotonic()
+        now = self._last_through_at = time.monotonic()
         self._finished_at.append(now)
         while self._finished_at and now - self._finished_at[0] > 3600:
             self._finished_at.popleft()
@@ -193,7 +197,10 @@ class Worker:
         log.warning("Drive refused %s (download quota), asking again in %.0f s (refused %d time(s))",
                     self._filename(job), delay, hits)
         self._notify("retrying", job, None)
-        if len(self._quota_streak) >= QUOTA_STREAK_PAUSE:
+        if (
+            len(self._quota_streak) >= QUOTA_STREAK_PAUSE
+            and time.monotonic() - self._last_through_at >= QUOTA_QUIET_S
+        ):
             self._quota_streak.clear()
             self.pause_reason = f"Drive refused {QUOTA_STREAK_PAUSE} different files in a row: {error[:200]}"
             self.paused_until = time.monotonic() + QUOTA_STREAK_PAUSE_S

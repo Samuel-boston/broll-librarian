@@ -131,6 +131,7 @@ def test_a_real_lockout_still_stops_the_worker_but_only_after_many_different_fil
     jobs = _claim_all(store, QUOTA_STREAK_PAUSE + 2)
     worker = Worker(workspace, store, pipeline=None)
 
+    worker._last_through_at -= 400   # nothing has got through for a while
     for job in jobs[: QUOTA_STREAK_PAUSE - 1]:
         worker._handle_failure(job, QUOTA)
     assert worker.paused_until == 0.0, "eleven refusals in a row are not yet a lockout"
@@ -140,11 +141,27 @@ def test_a_real_lockout_still_stops_the_worker_but_only_after_many_different_fil
 
     # A file that gets through in between starts the count again.
     worker2 = Worker(workspace, store, pipeline=None)
+    worker2._last_through_at -= 400
     for job in jobs[: QUOTA_STREAK_PAUSE - 1]:
         worker2._handle_failure(job, QUOTA)
     worker2._note_through(jobs[-1])
     worker2._handle_failure(jobs[QUOTA_STREAK_PAUSE - 1], QUOTA)
     assert worker2.paused_until == 0.0
+
+
+def test_many_refusals_while_files_are_still_getting_through_are_not_a_lockout(workspace, store, tmp_path):
+    """Measured on 15 Oct: about one request in six passed, and a file counts as through only when it finishes,
+    so twelve refusals in a row came well within a minute of a success. That must not stop the worker."""
+    _queue(store, tmp_path, QUOTA_STREAK_PAUSE + 3)
+    jobs = _claim_all(store, QUOTA_STREAK_PAUSE + 3)
+    worker = Worker(workspace, store, pipeline=None)
+    worker._last_through_at = time.monotonic() - 60     # a file got through a minute ago
+    for job in jobs[:QUOTA_STREAK_PAUSE + 2]:
+        worker._handle_failure(job, QUOTA)
+    assert worker.paused_until == 0.0 and worker.pause_reason is None
+    worker._last_through_at = time.monotonic() - 400    # ...and then nothing for over five minutes
+    worker._handle_failure(jobs[-1], QUOTA)
+    assert worker.paused_until > time.monotonic() + 500
 
 
 def test_the_same_file_refused_again_and_again_is_not_a_lockout(workspace, store, tmp_path):
