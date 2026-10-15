@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
+from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -20,7 +22,9 @@ from ..db.models import Job
 from ..db.store import Store
 from ..ingest.pipeline import IngestPipeline, IngestResult
 from ..ingest.scanner import DiscoveredFile
-from ..analysis.providers.base import TransientProviderError, classify_error, is_environment_error
+from ..analysis.providers.base import (
+    TransientProviderError, classify_error, is_drive_quota_error, is_environment_error,
+)
 from ..analysis.usage import UsageLedger, UsageTally, current_tally
 from .queue import KIND_INDEX_SOURCE, backoff_delay, max_attempts
 
@@ -34,6 +38,30 @@ ENVIRONMENT_PAUSE_S = 300
 CAP_CHECK_EVERY_S = 5.0
 #: After a cap stops the worker it looks again this often, in case the cap was raised in the config.
 CAP_RECHECK_S = 60.0
+
+# Drive's download quota is a recovering allowance, not a wall: part of the requests get through while the
+# rest are refused, on the same file seconds apart. So a refused file is held back on its own and the queue
+# carries on, rather than the whole worker stopping for minutes.
+#: A refused file waits this long before its next try, doubling each time it is refused again (with jitter)...
+QUOTA_RETRY_BASE_S = 180.0
+#: ...up to this.
+QUOTA_RETRY_MAX_S = 3600.0
+#: This many different files refused in a row, with none getting through, is a real lockout: stop for a while.
+QUOTA_STREAK_PAUSE = 12
+QUOTA_STREAK_PAUSE_S = 600.0
+#: For this long after Drive last refused a read, files are started one every few seconds, two at a time at most.
+QUOTA_PRESSURE_S = 1800.0
+QUOTA_PACE_S = (3.0, 6.0)
+QUOTA_PRESSURE_CONCURRENCY = 2
+#: How often the success / refusal ratio is written to the log.
+DRIVE_RATIO_EVERY_S = 600.0
+
+
+def quota_retry_delay(hits: int, rng: random.Random | None = None) -> float:
+    """How long a file refused `hits` times waits: 3 min, 6, 12... up to an hour, give or take 30%."""
+    base = min(QUOTA_RETRY_BASE_S * 2 ** max(0, hits - 1), QUOTA_RETRY_MAX_S)
+    return base * (rng or random).uniform(0.7, 1.3)
+
 
 ProgressFn = Callable[[str, Job, IngestResult | None], None]
 
@@ -85,6 +113,17 @@ class Worker:
         self.run_started_at: datetime | None = None
         self._cap_checked_at = 0.0
         self._cap_reason: str | None = None
+        # Drive's download quota (see QUOTA_* above): how often each waiting file has been refused, the
+        # different files refused since anything last got through, when Drive last refused, and the tally
+        # for the ratio line in the log.
+        self._quota_hits: dict[str, int] = {}
+        self._quota_streak: set[str] = set()
+        self._last_quota_at: float | None = None
+        self._next_start_at = 0.0
+        self._drive_ok = 0
+        self._drive_blocked = 0
+        self._ratio_logged_at = time.monotonic()
+        self._finished_at: deque[float] = deque()
 
     def stop(self) -> None:
         self._stop.set()
@@ -122,6 +161,68 @@ class Worker:
             return self._cap_reason
         self._cap_reason = reason
         return reason
+
+    # -- Drive's download quota ----------------------------------------------------------------------------
+
+    def quota_pressure(self) -> bool:
+        """Has Drive refused a read in the last half hour? Then files are started slowly and few at a time."""
+        return self._last_quota_at is not None and time.monotonic() - self._last_quota_at < QUOTA_PRESSURE_S
+
+    def _note_through(self, job: Job) -> None:
+        """A file got its bytes from Drive: whatever refusals came before, it is not a lockout."""
+        self._quota_hits.pop(job.id, None)
+        self._quota_streak.clear()
+        self._drive_ok += 1
+        now = time.monotonic()
+        self._finished_at.append(now)
+        while self._finished_at and now - self._finished_at[0] > 3600:
+            self._finished_at.popleft()
+
+    def _hold_for_quota(self, job: Job, error: str, cost: float) -> None:
+        """Drive refused this file. Hand it back untouched, make it wait its turn, and carry on with the next.
+
+        No attempt is spent: nothing is wrong with the file. Only a run of different files all refused with
+        none getting through means the allowance is truly gone, and then the worker rests.
+        """
+        hits = self._quota_hits[job.id] = self._quota_hits.get(job.id, 0) + 1
+        delay = quota_retry_delay(hits)
+        self.store.release_job(job.id, error, cost=cost, delay_s=delay)
+        self._last_quota_at = time.monotonic()
+        self._drive_blocked += 1
+        self._quota_streak.add(job.id)
+        log.warning("Drive refused %s (download quota), asking again in %.0f s (refused %d time(s))",
+                    self._filename(job), delay, hits)
+        self._notify("retrying", job, None)
+        if len(self._quota_streak) >= QUOTA_STREAK_PAUSE:
+            self._quota_streak.clear()
+            self.pause_reason = f"Drive refused {QUOTA_STREAK_PAUSE} different files in a row: {error[:200]}"
+            self.paused_until = time.monotonic() + QUOTA_STREAK_PAUSE_S
+            log.error("indexing paused for %d s: %s", QUOTA_STREAK_PAUSE_S, self.pause_reason)
+            self._notify("paused", job, None)
+
+    @staticmethod
+    def _filename(job: Job) -> str:
+        return str((job.payload or {}).get("filename") or job.id[:8])
+
+    def _log_drive_ratio(self, force: bool = False) -> None:
+        """One line every ten minutes saying how much of what was asked of Drive got through."""
+        now = time.monotonic()
+        if not force and now - self._ratio_logged_at < DRIVE_RATIO_EVERY_S:
+            return
+        self._ratio_logged_at = now
+        total = self._drive_ok + self._drive_blocked
+        if not total and not self.quota_pressure():
+            return
+        while self._finished_at and now - self._finished_at[0] > 3600:
+            self._finished_at.popleft()
+        through = f"{100 * self._drive_ok / total:.0f}%" if total else "n/a"
+        log.warning(
+            "Drive download quota, last %d min: %d file(s) through, %d refused (%s through); "
+            "%d file(s) done in the last hour; pacing %s",
+            DRIVE_RATIO_EVERY_S // 60, self._drive_ok, self._drive_blocked, through,
+            len(self._finished_at), "on" if self.quota_pressure() else "off",
+        )
+        self._drive_ok = self._drive_blocked = 0
 
     def _reload_caps(self) -> None:
         """Pick up a cap raised in config.yaml while the worker waits, without a restart."""
@@ -172,6 +273,23 @@ class Worker:
                 continue
             if self.pause_reason and time.monotonic() >= self.paused_until:
                 self.pause_reason = None
+            self._log_drive_ratio()
+            # While Drive has been refusing reads, start files one every few seconds and keep few in flight:
+            # the allowance lets requests through at a rate, and hammering it only gets more of them refused.
+            limit = self.concurrency
+            if self.quota_pressure():
+                limit = min(self.concurrency, QUOTA_PRESSURE_CONCURRENCY)
+                wait = self._next_start_at - time.monotonic()
+                if wait > 0:
+                    try:
+                        await asyncio.wait_for(self._stop.wait(), timeout=min(wait, 1.0))
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
+                if len(tasks) >= limit:
+                    await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                    tasks = {t for t in tasks if not t.done()}
+                    continue
             # Take the machine-wide slot before claiming, so a job waiting for
             # its turn stays "queued" instead of looking like it is running. The
             # wait is in short steps so a stop is noticed, and a worker told to
@@ -207,8 +325,10 @@ class Worker:
             task.add_done_callback(tasks.discard)
             if self.gate is not None:
                 task.add_done_callback(lambda _done: self.gate.release())
+            if self.quota_pressure():
+                self._next_start_at = time.monotonic() + random.uniform(*QUOTA_PACE_S)
 
-            if len(tasks) >= self.concurrency:
+            if len(tasks) >= limit:
                 await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                 tasks = {t for t in tasks if not t.done()}
 
@@ -253,11 +373,13 @@ class Worker:
                 # Not a failure: it is on the "Needs attention" list, with the reason.
                 self.store.finish_job(job.id, "done", error="; ".join(result.messages) or None,
                                       cost=tally.cost_usd)
+                self._note_through(job)
                 self.stats.skipped += 1
                 self._notify("finished", job, result)
                 await self._mirror_attention()
                 return
             self.store.finish_job(job.id, "done", cost=result.cost_usd)
+            self._note_through(job)
             self.stats.done += 1
             self.stats.shots += result.shots_analysed
             self.stats.cost_usd += result.cost_usd
@@ -306,6 +428,9 @@ class Worker:
             log.warning("could not mirror the needs-attention list to Drive: %s", exc)
 
     def _handle_failure(self, job: Job, error: str, transient: bool = False, cost: float = 0.0) -> None:
+        if is_drive_quota_error(error):
+            self._hold_for_quota(job, error, cost)
+            return
         if is_environment_error(error):
             # Nothing is wrong with this file. Hand it back untouched, mark nothing failed, and stop
             # claiming work for a while: the next try may be after the problem is fixed.

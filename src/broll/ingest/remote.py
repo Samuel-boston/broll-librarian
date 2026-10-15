@@ -83,13 +83,14 @@ class RemoteDriveVideo:
         raise RuntimeError("unreachable")  # pragma: no cover
 
     def quota_error(self) -> str | None:
-        """Ask Drive for one byte, to find out whether it is refusing this account's downloads.
+        """Ask Drive for a megabyte, to find out whether it is refusing this account's downloads.
 
         ffmpeg says nothing useful when Drive answers 403, so a read that came back empty is checked here.
         Returns the quota message, or None when Drive answers (the clip is the problem, or nothing is).
+        A megabyte, not a byte: measured on the real quota, a 1 KB read passes while a 512 KB one is refused.
         """
         try:
-            self._range(0, 0)
+            self._range(0, CHUNK - 1)
         except RuntimeError as exc:
             return str(exc) if "quota" in str(exc).lower() else None
         except Exception:  # noqa: BLE001 - this is only a question; any other answer means "not the quota"

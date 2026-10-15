@@ -59,6 +59,17 @@ ENVIRONMENT_MARKERS = (
 DRIVE_READ_REFUSED = re.compile(r"googleapis\.com/drive/.*\b403\b")
 
 
+def is_drive_quota_error(message: str) -> bool:
+    """Drive refusing a read because of its download quota - in any of the shapes it comes in.
+
+    Unlike a dead sign-in or a bad key, this one is not all-or-nothing: Drive's allowance recovers a
+    little at a time and lets some requests through while it refuses others, even on the same file seconds
+    apart. So the worker holds back the one file, not the whole queue (see Worker._hold_for_quota).
+    """
+    lowered = (message or "").lower()
+    return "downloadquotaexceeded" in lowered or "download quota" in lowered or bool(DRIVE_READ_REFUSED.search(lowered))
+
+
 def is_environment_error(message: str) -> bool:
     lowered = (message or "").lower()
     return any(marker in lowered for marker in ENVIRONMENT_MARKERS) or bool(DRIVE_READ_REFUSED.search(lowered))
