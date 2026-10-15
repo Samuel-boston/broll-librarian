@@ -7,6 +7,7 @@ before a job is marked failed; a failed job never blocks the rest of the run.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import time
@@ -52,10 +53,27 @@ QUOTA_RETRY_MAX_S = 3600.0
 QUOTA_STREAK_PAUSE = 12
 QUOTA_QUIET_S = 300.0
 QUOTA_STREAK_PAUSE_S = 600.0
-#: For this long after Drive last refused a read, files are started one every few seconds, two at a time at most.
+#: For this long after Drive last refused a read, files are started on a schedule that follows how much of
+#: what is asked is getting through (the last QUOTA_RATE_WINDOW_S, once there are QUOTA_RATE_MIN_EVENTS of them):
+#: * under QUOTA_SLOW_BELOW getting through: one file every 20-30 s, one at a time (2-3 requests a minute);
+#: * over QUOTA_FAST_ABOVE: one file every 3-6 s, two at a time at most;
+#: * in between, whichever it was doing.
 QUOTA_PRESSURE_S = 1800.0
 QUOTA_PACE_S = (3.0, 6.0)
+QUOTA_SLOW_PACE_S = (20.0, 30.0)
 QUOTA_PRESSURE_CONCURRENCY = 2
+QUOTA_SLOW_BELOW = 0.15
+QUOTA_FAST_ABOVE = 0.30
+QUOTA_RATE_WINDOW_S = 600.0
+QUOTA_RATE_MIN_EVENTS = 8
+#: Under QUOTA_REST_BELOW getting through over QUOTA_REST_WINDOW_S (with at least QUOTA_REST_MIN_EVENTS asked) the
+#: worker rests for QUOTA_REST_S, asking Drive for half a megabyte of one waiting file every QUOTA_PROBE_EVERY_S and
+#: nothing else. Two probes in a row that pass end the rest early; it then resumes at the slow pace.
+QUOTA_REST_BELOW = 0.08
+QUOTA_REST_WINDOW_S = 1800.0
+QUOTA_REST_MIN_EVENTS = 30
+QUOTA_REST_S = 2700.0
+QUOTA_PROBE_EVERY_S = 300.0
 #: How often the success / refusal ratio is written to the log.
 DRIVE_RATIO_EVERY_S = 600.0
 
@@ -128,6 +146,14 @@ class Worker:
         self._drive_blocked = 0
         self._ratio_logged_at = time.monotonic()
         self._finished_at: deque[float] = deque()
+        # What Drive did with each file asked of it: (when, True if it got through). The pass rates that
+        # decide the pace and the rest are read off this.
+        self._events: deque[tuple[float, bool]] = deque()
+        self._events_since = time.monotonic()
+        self._slow = False
+        self._resting_until = 0.0
+        self._next_probe_at = 0.0
+        self._probes_passed = 0
 
     def stop(self) -> None:
         self._stop.set()
@@ -172,12 +198,99 @@ class Worker:
         """Has Drive refused a read in the last half hour? Then files are started slowly and few at a time."""
         return self._last_quota_at is not None and time.monotonic() - self._last_quota_at < QUOTA_PRESSURE_S
 
+    def _pass_rate(self, window_s: float, min_events: int) -> float | None:
+        """How much of what was asked of Drive in the last `window_s` got through (None: too few to say)."""
+        now = time.monotonic()
+        while self._events and now - self._events[0][0] > QUOTA_REST_WINDOW_S:
+            self._events.popleft()
+        recent = [ok for at, ok in self._events if now - at <= window_s]
+        if len(recent) < min_events:
+            return None
+        return sum(recent) / len(recent)
+
+    def _pace(self) -> tuple[int, tuple[float, float]] | None:
+        """How many files may be in flight and how far apart they start, while Drive is refusing; None if it is not."""
+        if not self.quota_pressure():
+            return None
+        rate = self._pass_rate(QUOTA_RATE_WINDOW_S, QUOTA_RATE_MIN_EVENTS)
+        if rate is not None:
+            if rate < QUOTA_SLOW_BELOW:
+                self._slow = True
+            elif rate > QUOTA_FAST_ABOVE:
+                self._slow = False
+        if self._slow:
+            return 1, QUOTA_SLOW_PACE_S
+        return min(self.concurrency, QUOTA_PRESSURE_CONCURRENCY), QUOTA_PACE_S
+
+    def _maybe_rest(self) -> None:
+        """Start a long rest when next to nothing has got through for half an hour."""
+        now = time.monotonic()
+        if now < self._resting_until or now - self._events_since < 0.8 * QUOTA_REST_WINDOW_S:
+            return
+        rate = self._pass_rate(QUOTA_REST_WINDOW_S, QUOTA_REST_MIN_EVENTS)
+        if rate is None or rate >= QUOTA_REST_BELOW:
+            return
+        self._resting_until = now + QUOTA_REST_S
+        self._next_probe_at = now + QUOTA_PROBE_EVERY_S
+        self._probes_passed = 0
+        self._events.clear()
+        self._events_since = now
+        self._slow = True
+        self.pause_reason = (
+            f"Drive let {rate:.0%} through over {QUOTA_REST_WINDOW_S / 60:.0f} min: resting {QUOTA_REST_S / 60:.0f} min"
+        )
+        log.error("indexing resting: %s; asking Drive for half a megabyte every %d min", self.pause_reason,
+                  QUOTA_PROBE_EVERY_S // 60)
+
+    async def _rest_step(self) -> None:
+        """One step of a rest: a probe when it is due, then a short wait. Ends the rest when Drive recovers."""
+        now = time.monotonic()
+        if now >= self._next_probe_at:
+            self._next_probe_at = now + QUOTA_PROBE_EVERY_S
+            result = await self._probe_drive()
+            self._probes_passed = self._probes_passed + 1 if result else 0
+            log.warning("Drive probe while resting: %s", {True: "half a megabyte came through",
+                        False: "refused (download quota)", None: "could not tell"}[result])
+            if self._probes_passed >= 2:
+                self._resting_until = 0.0
+                self.pause_reason = None
+                self._events.clear()
+                self._events_since = time.monotonic()
+                log.warning("Drive is letting reads through again: resuming at the slow pace")
+        wait = max(0.05, min(1.0, self._next_probe_at - time.monotonic()))
+        try:
+            await asyncio.wait_for(self._stop.wait(), timeout=wait)
+        except asyncio.TimeoutError:
+            pass
+
+    async def _probe_drive(self) -> bool | None:
+        """Ask Drive for half a megabyte of one waiting file. Costs no model money and no attempt."""
+        from ..ingest.remote import RemoteDriveVideo
+
+        row = self.store.conn.execute(
+            "SELECT payload_json FROM jobs WHERE workspace_id = ? AND status = 'queued'"
+            " AND json_extract(payload_json, '$.drive_file_id') IS NOT NULL ORDER BY RANDOM() LIMIT 1",
+            (self.store.workspace_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row["payload_json"])
+        try:
+            client = await asyncio.to_thread(self.pipeline._drive_client)
+            video = RemoteDriveVideo(client, payload["drive_file_id"], payload.get("filename", ""),
+                                     payload.get("size_bytes"))
+            return await asyncio.to_thread(video.can_read)
+        except Exception as exc:  # noqa: BLE001 - a probe is only a question
+            log.warning("could not probe Drive: %s", str(exc)[:200])
+            return None
+
     def _note_through(self, job: Job) -> None:
         """A file got its bytes from Drive: whatever refusals came before, it is not a lockout."""
         self._quota_hits.pop(job.id, None)
         self._quota_streak.clear()
         self._drive_ok += 1
         now = self._last_through_at = time.monotonic()
+        self._events.append((now, True))
         self._finished_at.append(now)
         while self._finished_at and now - self._finished_at[0] > 3600:
             self._finished_at.popleft()
@@ -193,6 +306,7 @@ class Worker:
         self.store.release_job(job.id, error, cost=cost, delay_s=delay)
         self._last_quota_at = time.monotonic()
         self._drive_blocked += 1
+        self._events.append((self._last_quota_at, False))
         self._quota_streak.add(job.id)
         log.warning("Drive refused %s (download quota), asking again in %.0f s (refused %d time(s))",
                     self._filename(job), delay, hits)
@@ -223,11 +337,14 @@ class Worker:
         while self._finished_at and now - self._finished_at[0] > 3600:
             self._finished_at.popleft()
         through = f"{100 * self._drive_ok / total:.0f}%" if total else "n/a"
+        rate30 = self._pass_rate(QUOTA_REST_WINDOW_S, 1)
+        mode = "resting" if now < self._resting_until else (
+            "off" if not self.quota_pressure() else "slow" if self._slow else "fast")
         log.warning(
             "Drive download quota, last %d min: %d file(s) through, %d refused (%s through); "
-            "%d file(s) done in the last hour; pacing %s",
+            "%d file(s) done in the last hour; last 30 min %s through; pacing %s",
             DRIVE_RATIO_EVERY_S // 60, self._drive_ok, self._drive_blocked, through,
-            len(self._finished_at), "on" if self.quota_pressure() else "off",
+            len(self._finished_at), f"{rate30:.0%}" if rate30 is not None else "n/a", mode,
         )
         self._drive_ok = self._drive_blocked = 0
 
@@ -281,11 +398,19 @@ class Worker:
             if self.pause_reason and time.monotonic() >= self.paused_until:
                 self.pause_reason = None
             self._log_drive_ratio()
-            # While Drive has been refusing reads, start files one every few seconds and keep few in flight:
-            # the allowance lets requests through at a rate, and hammering it only gets more of them refused.
+            self._maybe_rest()
+            if time.monotonic() < self._resting_until:
+                if drain:
+                    break  # a one-off command ends, saying why, rather than rest for 45 minutes
+                await self._rest_step()
+                continue
+            # While Drive has been refusing reads, start files slowly and keep few in flight: the allowance
+            # lets requests through at a rate, and hammering it only gets more of them refused. How slowly
+            # follows how much of what is asked is getting through.
             limit = self.concurrency
-            if self.quota_pressure():
-                limit = min(self.concurrency, QUOTA_PRESSURE_CONCURRENCY)
+            pace = self._pace()
+            if pace is not None:
+                limit = pace[0]
                 wait = self._next_start_at - time.monotonic()
                 if wait > 0:
                     try:
@@ -332,8 +457,9 @@ class Worker:
             task.add_done_callback(tasks.discard)
             if self.gate is not None:
                 task.add_done_callback(lambda _done: self.gate.release())
-            if self.quota_pressure():
-                self._next_start_at = time.monotonic() + random.uniform(*QUOTA_PACE_S)
+            pace = self._pace()
+            if pace is not None:
+                self._next_start_at = time.monotonic() + random.uniform(*pace[1])
 
             if len(tasks) >= limit:
                 await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

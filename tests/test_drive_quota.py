@@ -23,7 +23,10 @@ from broll.ingest.pipeline import IngestPipeline, IngestResult
 from broll.jobs.queue import KIND_INDEX_SOURCE, queue_stats
 from broll.jobs.worker import (
     DRIVE_RATIO_EVERY_S,
+    QUOTA_PACE_S,
     QUOTA_PRESSURE_S,
+    QUOTA_REST_S,
+    QUOTA_SLOW_PACE_S,
     QUOTA_RETRY_BASE_S,
     QUOTA_RETRY_MAX_S,
     QUOTA_STREAK_PAUSE,
@@ -251,7 +254,7 @@ def test_the_ratio_line_says_how_much_got_through(workspace, store, tmp_path, ca
         worker._log_drive_ratio()
     [line] = [r.message for r in caplog.records if "Drive download quota" in r.message]
     assert "3 file(s) through, 1 refused (75% through)" in line
-    assert "3 file(s) done in the last hour" in line and "pacing on" in line
+    assert "3 file(s) done in the last hour" in line and "pacing fast" in line and "last 30 min 75% through" in line
     assert (worker._drive_ok, worker._drive_blocked) == (0, 0), "the tally starts again for the next ten minutes"
 
 
@@ -322,3 +325,199 @@ def test_a_refusal_that_only_hits_big_reads_is_still_found():
         assert max(server.sizes) >= 512 * 1024, "so the question asks for a real piece"
     finally:
         server.close()
+
+
+# -- the pace follows how much is getting through ----------------------------------------------------------------
+
+
+def _events(worker, ok: int, refused: int, minutes_ago: float = 2.0):
+    now = time.monotonic() - minutes_ago * 60
+    for i in range(ok):
+        worker._events.append((now + i, True))
+    for i in range(refused):
+        worker._events.append((now + ok + i, False))
+    worker._events = type(worker._events)(sorted(worker._events))
+
+
+def test_the_pass_rate_is_read_off_what_was_asked_in_the_window(workspace, store):
+    worker = Worker(workspace, store, pipeline=None)
+    assert worker._pass_rate(600, 8) is None, "nothing asked yet: no rate"
+    _events(worker, ok=2, refused=3)
+    assert worker._pass_rate(600, 8) is None, "too few to say"
+    _events(worker, ok=1, refused=14)
+    assert worker._pass_rate(600, 8) == pytest.approx(3 / 20)
+    worker._events.appendleft((time.monotonic() - 900, True))
+    assert worker._pass_rate(600, 8) == pytest.approx(3 / 20), "a 15-minute-old answer is outside a 10-minute window"
+    assert worker._pass_rate(1800, 8) == pytest.approx(4 / 21)
+
+
+def test_under_fifteen_percent_means_one_file_at_a_time_every_twenty_to_thirty_seconds(workspace, store):
+    worker = Worker(workspace, store, pipeline=None)
+    assert worker._pace() is None, "no refusals about: no pacing"
+    worker._last_quota_at = time.monotonic()
+    assert worker._pace() == (2, QUOTA_PACE_S), "a refusal switches pacing on, at the fast end until there is data"
+
+    _events(worker, ok=2, refused=18)                      # 10% through
+    assert worker._pace() == (1, QUOTA_SLOW_PACE_S)
+    assert QUOTA_SLOW_PACE_S == (20.0, 30.0)
+
+    worker._events.clear()
+    _events(worker, ok=4, refused=16)                      # 20%: in between, so it stays slow
+    assert worker._pace() == (1, QUOTA_SLOW_PACE_S)
+
+    worker._events.clear()
+    _events(worker, ok=10, refused=10)                     # 50% through: back to the fast pace
+    assert worker._pace() == (2, QUOTA_PACE_S)
+
+    worker._events.clear()
+    _events(worker, ok=7, refused=13)                      # 35%... and 20% afterwards does not tip it back
+    assert worker._pace() == (2, QUOTA_PACE_S)
+    worker._events.clear()
+    _events(worker, ok=4, refused=16)
+    assert worker._pace() == (2, QUOTA_PACE_S)
+
+
+def test_a_concurrency_of_one_is_never_raised_by_pacing(workspace, store):
+    worker = Worker(workspace, store, pipeline=None, concurrency=1)
+    worker._last_quota_at = time.monotonic()
+    assert worker._pace()[0] == 1
+
+
+async def test_the_slow_pace_starts_one_file_at_a_time(workspace, store, tmp_path, monkeypatch):
+    monkeypatch.setattr(worker_module, "QUOTA_SLOW_PACE_S", (0.4, 0.4))
+    _queue(store, tmp_path, 3)
+    starts: list[float] = []
+    in_flight = {"now": 0, "most": 0}
+
+    class Slow(IngestPipeline):
+        async def ingest(self, discovered, force=False, overwrite_corrections=False, **kw):
+            starts.append(time.monotonic())
+            in_flight["now"] += 1
+            in_flight["most"] = max(in_flight["most"], in_flight["now"])
+            await asyncio.sleep(0.15)
+            in_flight["now"] -= 1
+            return IngestResult(status="indexed", filename=discovered.filename)
+
+    worker = Worker(workspace, store, pipeline=Slow(workspace, store), concurrency=4)
+    worker._last_quota_at = time.monotonic()
+    _events(worker, ok=1, refused=19)                      # 5% through
+    await worker.run(drain=True)
+    assert len(starts) == 3 and in_flight["most"] == 1
+    assert all(b - a >= 0.38 for a, b in zip(starts, starts[1:])), starts
+
+
+# -- the rest -----------------------------------------------------------------------------------------------------
+
+
+def test_a_rest_needs_half_an_hour_of_data_and_under_eight_percent(workspace, store):
+    worker = Worker(workspace, store, pipeline=None)
+    worker._last_quota_at = time.monotonic()
+    _events(worker, ok=2, refused=48, minutes_ago=20)
+    worker._maybe_rest()
+    assert worker._resting_until == 0.0, "the worker has only been watching for a few minutes: too early to say"
+
+    worker._events_since -= 1700
+    _events(worker, ok=0, refused=0)
+    worker._maybe_rest()
+    assert worker._resting_until > time.monotonic() + 0.9 * QUOTA_REST_S, "2 of 50 is 4%, over half an hour: rest"
+    assert "resting" in (worker.pause_reason or "") and worker._slow
+    assert len(worker._events) == 0, "the next window starts clean"
+
+    other = Worker(workspace, store, pipeline=None)
+    other._events_since -= 1700
+    _events(other, ok=6, refused=44, minutes_ago=20)       # 12%: slow, but not a rest
+    other._maybe_rest()
+    assert other._resting_until == 0.0
+
+    few = Worker(workspace, store, pipeline=None)
+    few._events_since -= 1700
+    _events(few, ok=0, refused=12, minutes_ago=20)         # nothing got through, but only a dozen asked
+    few._maybe_rest()
+    assert few._resting_until == 0.0
+
+
+async def test_while_resting_nothing_is_started_and_drive_is_asked_only_by_a_small_probe(
+    workspace, store, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(worker_module, "QUOTA_PROBE_EVERY_S", 0.3)
+    _queue(store, tmp_path, 3)
+    started: list[str] = []
+    probes: list[float] = []
+
+    class Drive(IngestPipeline):
+        async def ingest(self, discovered, force=False, overwrite_corrections=False, **kw):
+            started.append(discovered.filename)
+            return IngestResult(status="indexed", filename=discovered.filename)
+
+    worker = Worker(workspace, store, pipeline=Drive(workspace, store), concurrency=2)
+    answers = iter([False, False, True, True, True])
+
+    async def probe():
+        probes.append(time.monotonic())
+        return next(answers)
+
+    worker._probe_drive = probe
+    worker._resting_until = time.monotonic() + 600
+    worker._next_probe_at = time.monotonic() + 0.3
+    task = asyncio.create_task(worker.run(drain=False))
+    await asyncio.sleep(1.05)
+    assert started == [], "nothing is started during the rest"
+    assert 2 <= len(probes) <= 4 and all(b - a >= 0.28 for a, b in zip(probes, probes[1:])), probes
+    assert worker._resting_until > 0, "two probes in a row have not both passed yet"
+
+    for _ in range(100):
+        if len(started) == 3:
+            break
+        await asyncio.sleep(0.1)
+    worker.stop()
+    await asyncio.wait_for(task, timeout=10)
+    assert len(started) == 3, "after two probes in a row passed the rest ended and the files were started"
+    assert worker._resting_until == 0.0 and worker.pause_reason is None
+
+
+async def test_a_one_off_run_ends_instead_of_resting_for_forty_five_minutes(workspace, store, tmp_path):
+    _queue(store, tmp_path, 2)
+    worker = Worker(workspace, store, pipeline=None)
+    worker._resting_until = time.monotonic() + 600
+    await asyncio.wait_for(worker.run(drain=True), timeout=5)
+    assert queue_stats(store).queued == 2
+
+
+def test_the_probe_asks_for_half_a_megabyte_of_a_waiting_drive_file(workspace, store, tmp_path, monkeypatch):
+    from broll.ingest.remote import RemoteDriveVideo
+
+    store.enqueue(KIND_INDEX_SOURCE, {"origin": "drive", "drive_file_id": "abc", "filename": "a.mov",
+                                      "size_bytes": 50_000_000, "origin_path": "drive:abc"})
+    store.enqueue(KIND_INDEX_SOURCE, {"origin": "local", "path": str(tmp_path / "x"), "filename": "x.mp4",
+                                      "origin_path": str(tmp_path / "x")})
+    asked = []
+
+    class Pipeline:
+        def _drive_client(self):
+            return object()
+
+    def can_read(self, nbytes=512 * 1024):
+        asked.append((self.file_id, nbytes))
+        return False
+
+    monkeypatch.setattr(RemoteDriveVideo, "can_read", can_read)
+    worker = Worker(workspace, store, pipeline=Pipeline())
+    assert asyncio.run(worker._probe_drive()) is False
+    assert asked == [("abc", 512 * 1024)], "a Drive file, and no more than half a megabyte"
+
+
+def test_can_read_tells_a_refused_read_from_a_passed_one():
+    from broll.ingest.remote import RemoteDriveVideo
+
+    class Token:
+        def access_token(self):
+            return "tok"
+
+    for limit, expected in ((4096, False), (10_000_000, True)):
+        server = _BlocksBigReads(limit=limit)
+        try:
+            remote = RemoteDriveVideo(Token(), "id", "a.mov", url=server.url)
+            assert remote.can_read() is expected
+            assert max(server.sizes) == 512 * 1024, "it asks for a piece, never the whole file"
+        finally:
+            server.close()

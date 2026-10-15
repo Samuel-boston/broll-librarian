@@ -97,6 +97,21 @@ class RemoteDriveVideo:
             return None
         return None
 
+    def can_read(self, nbytes: int = 512 * 1024) -> bool | None:
+        """Is Drive letting a real piece of this file through right now?
+
+        True when it does, False when it refuses with the download quota, None when it cannot be told (the
+        file is gone, the network is down). A piece of half a megabyte, because a 1 KB read passes even
+        while the quota is refusing everything bigger (measured 15 Oct). It reads a range, never the file.
+        """
+        try:
+            self._range(0, nbytes - 1)
+        except RuntimeError as exc:
+            return False if "quota" in str(exc).lower() else None
+        except Exception:  # noqa: BLE001
+            return None
+        return True
+
     def content_hash(self) -> str:
         """The same fingerprint `ingest.hashing.content_hash` gives the downloaded file: its size plus its
         first and last megabyte. So a file is recognised whether it was streamed or fetched."""
