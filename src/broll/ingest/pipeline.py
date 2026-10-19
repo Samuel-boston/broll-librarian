@@ -514,6 +514,12 @@ class IngestPipeline:
                 origin=discovered.origin,
                 origin_path=discovered.origin_path or str(video),
                 drive_file_id=discovered.drive_file_id,
+                # A file indexed in place already has a Drive address; filing later moves it but keeps the id.
+                drive_web_link=(
+                    f"https://drive.google.com/file/d/{discovered.drive_file_id}/view"
+                    if discovered.drive_file_id
+                    else None
+                ),
                 media_kind=meta.media_kind,
                 duration_s=meta.duration_s,
                 width=meta.width,
