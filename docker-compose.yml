@@ -30,6 +30,8 @@ services:
       BROLL_HOME: /data
     volumes:
       - broll-data:/data
+      # Drop-in folder for footage obtained outside Drive (see docs/HOSTING.md, "Footage from outside Drive").
+      - ./inbox:/data/inbox
     # Reachable from the server itself only; the tunnel or Caddy is the way in from outside.
     ports:
       - "127.0.0.1:8000:8000"

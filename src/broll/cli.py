@@ -359,9 +359,33 @@ def index(
     sample: Optional[int] = typer.Option(
         None, "--sample", help="Only index this many files, spread through the folder: a pilot run "
                                "to check the tags before committing to the lot."),
+    match_drive: bool = typer.Option(
+        False, "--match-drive",
+        help="The files were obtained outside Drive (downloaded from the website, or copied from the "
+             "team). Match each to its Drive original by md5 and size, and index it as that file. "
+             "Files with no match are listed and skipped. Without a path, reads the inbox folder."),
+    match_folder: Optional[str] = typer.Option(
+        None, "--match-folder",
+        help="With --match-drive: the Drive folder the originals are in (default: drive_source_folder_id "
+             "in the workspace config). Listed once (names, sizes, checksums only), then cached."),
+    refresh_listing: bool = typer.Option(
+        False, "--refresh-listing", help="With --match-drive: list the Drive folder again."),
+    copies_folder: Optional[str] = typer.Option(
+        None, "--copies-folder",
+        help="Index the COPIES in this Drive folder (made with Make a copy), reading their bytes in place, "
+             "but record each as its original in --match-folder: the original's id and link are the "
+             "identity, the copy is only the byte source. Never moves or deletes a copy."),
 ) -> None:
     """Queue footage for indexing and, unless --no-wait, work the queue."""
     workspace_config = resolve_workspace(workspace)
+    if copies_folder:
+        _index_copies(workspace_config, copies_folder, match_folder, refresh_listing, force, wait,
+                      concurrency, dry_run)
+        return
+    if match_drive:
+        _index_matched(workspace_config, path, match_folder, refresh_listing, force, wait, concurrency,
+                       dry_run)
+        return
     if (path is None) == (drive_folder is None):
         _fail("Give either a path or --drive-folder.")
 
@@ -446,6 +470,110 @@ def index(
         if organise_after:
             client = _drive_client(workspace_config)
             _report_organise(Organizer(workspace_config, store, client).reorganise(), False)
+    finally:
+        store.close()
+
+
+def _index_matched(workspace_config, path, match_folder, refresh, force, wait, concurrency, dry_run) -> None:
+    """`broll index --match-drive`: index local copies as the Drive originals they are."""
+    from .ingest import drivematch
+
+    folder_id = match_folder or workspace_config.drive_source_folder_id
+    if not folder_id:
+        _fail("Give the Drive folder the originals are in: --match-folder <id> "
+              "(or set drive_source_folder_id in the workspace config).")
+    target = path or drivematch.inbox_dir()
+    if not target.exists():
+        _fail(f"{target} does not exist.")
+    workspace_config.ensure_dirs()
+    cache_file = drivematch._cache_path(workspace_config, folder_id)
+    client = None if (cache_file.exists() and not refresh) else _drive_client(workspace_config)
+    try:
+        items, listed = drivematch.load_inventory(workspace_config, folder_id, client, refresh)
+    except Exception as exc:
+        _fail(f"Could not list the Drive folder: {exc}")
+    _echo(f"Drive listing: {len(items)} media file(s) "
+          + ("(listed now, saved)." if listed else "(from the saved listing; --refresh-listing to redo)."))
+
+    store = Store.for_config(workspace_config)
+    try:
+        cache = drivematch.Md5Cache(workspace_config.dir / "local_md5.json")
+        report = drivematch.match_local_files(drivematch.scan_files(target), items, store, cache, force)
+        _echo(report.summary() + ".")
+        for line in report.renamed[:20]:
+            _echo(f"  renamed: {line}")
+        for line in report.duplicate_in_drive[:20]:
+            _echo(f"  note: {line}")
+        for name in report.unmatched[:50]:
+            _echo(f"  NOT IN DRIVE (skipped, not indexed): {name}")
+        if len(report.unmatched) > 50:
+            _echo(f"  ... and {len(report.unmatched) - 50} more not found")
+        if workspace_config.ingest.organise_only_copies:
+            _echo("Warning: ingest.organise_only_copies is on, so `broll organise` will refuse to file "
+                  "these originals. Turn it off to file them.")
+        if dry_run or not report.matched:
+            _echo("Nothing was queued.")
+            return
+        try:
+            check_credentials(workspace_config)
+        except Exception as exc:
+            _fail(str(exc))
+        jobs = enqueue_files(store, report.matched, force=force)
+        _echo(f"Queued {len(jobs)} file(s).")
+        if not wait:
+            _echo("Run `broll work` to process the queue.")
+            return
+        _run_worker(workspace_config, store, concurrency)
+    finally:
+        store.close()
+
+
+def _index_copies(workspace_config, copies_folder, match_folder, refresh, force, wait, concurrency,
+                  dry_run) -> None:
+    """`broll index --copies-folder`: index Drive copies in place, attributed to their originals."""
+    from .ingest import drivematch
+
+    originals_id = match_folder or workspace_config.drive_source_folder_id
+    if not originals_id:
+        _fail("Give the folder of originals: --match-folder <id> (or drive_source_folder_id in the config).")
+    workspace_config.ensure_dirs()
+    client = _drive_client(workspace_config)
+    try:
+        # The originals rarely change: listed once, saved. The copies folder grows as copies are made, so
+        # it is listed again each run (a metadata-only request per folder).
+        originals, listed = drivematch.load_inventory(
+            workspace_config, originals_id,
+            client if not drivematch._cache_path(workspace_config, originals_id).exists() or refresh else None,
+            refresh)
+        copies, _ = drivematch.load_inventory(workspace_config, copies_folder, client, refresh=True)
+    except Exception as exc:
+        _fail(f"Could not list the Drive folders: {exc}")
+    _echo(f"Originals: {len(originals)} file(s)" + (" (listed now, saved)" if listed else " (saved listing)")
+          + f". Copies: {len(copies)} file(s).")
+    store = Store.for_config(workspace_config)
+    try:
+        report = drivematch.match_copies(copies, originals, store, force)
+        _echo(report.summary() + ".")
+        for line in report.duplicate_in_drive[:20]:
+            _echo(f"  note: {line}")
+        for name in report.unmatched[:50]:
+            _echo(f"  NO ORIGINAL (skipped, not indexed): {name}")
+        if workspace_config.ingest.organise_only_copies:
+            _echo("Warning: ingest.organise_only_copies is on, so `broll organise` will refuse to file "
+                  "these originals. Turn it off to file them.")
+        if dry_run or not report.matched:
+            _echo("Nothing was queued.")
+            return
+        try:
+            check_credentials(workspace_config)
+        except Exception as exc:
+            _fail(str(exc))
+        jobs = enqueue_files(store, report.matched, force=force)
+        _echo(f"Queued {len(jobs)} file(s).")
+        if not wait:
+            _echo("Run `broll work` to process the queue.")
+            return
+        _run_worker(workspace_config, store, concurrency)
     finally:
         store.close()
 

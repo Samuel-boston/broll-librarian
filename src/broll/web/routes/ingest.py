@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
@@ -9,6 +10,7 @@ from fastapi.responses import HTMLResponse
 
 from ... import kinds
 from ...analysis.usage import spend_report
+from ...ingest import drivematch
 from ...ingest.scanner import DiscoveredFile, media_kind, scan_local
 from ...jobs.queue import KIND_INDEX_SOURCE, enqueue_files, queue_stats
 from ...library_admin import cancel_job, clear_queue
@@ -124,9 +126,15 @@ async def upload(request: Request, files: list[UploadFile] = File(default=[])):
                 DiscoveredFile(origin="upload", path=target, filename=name,
                                origin_path=str(target))
             )
+        # A file that is a Drive original (same md5 and size as one in the saved Drive listing) is indexed
+        # as that Drive file, so filing never uploads a second copy of it.
+        tied = await asyncio.to_thread(
+            drivematch.attach_drive_ids, state.config, drivematch.indexed_ids(store), accepted)
         enqueue_files(store, accepted)
         context = _queue_context(request, store, state)
         context["message"] = f"Queued {len(accepted)} file(s)."
+        if tied:
+            context["message"] += f" {tied} matched to their Drive original."
         if rejected:
             context["message"] += f" Skipped {len(rejected)} file(s) that are neither a video nor an image."
         if rejected_full:

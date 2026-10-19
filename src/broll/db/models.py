@@ -35,6 +35,8 @@ class Source(BaseModel):
     origin_path: str | None = None
     drive_file_id: str | None = None
     drive_web_link: str | None = None
+    #: Another Drive file with the same bytes (a copy), read when the original cannot be. Never filed.
+    source_alt_id: str | None = None
     drive_path: str | None = None
     duration_s: float | None = None
     width: int | None = None

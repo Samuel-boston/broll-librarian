@@ -277,7 +277,7 @@ class Worker:
         payload = json.loads(row["payload_json"])
         try:
             client = await asyncio.to_thread(self.pipeline._drive_client)
-            video = RemoteDriveVideo(client, payload["drive_file_id"], payload.get("filename", ""),
+            video = RemoteDriveVideo(client, payload.get("byte_source_id") or payload["drive_file_id"], payload.get("filename", ""),
                                      payload.get("size_bytes"))
             return await asyncio.to_thread(video.can_read)
         except Exception as exc:  # noqa: BLE001 - a probe is only a question
@@ -545,6 +545,7 @@ class Worker:
             size_bytes=payload.get("size_bytes"),
             duration_s=payload.get("duration_s"),
             link=payload.get("link"),
+            byte_source_id=payload.get("byte_source_id"),
         )
 
     async def _mirror_attention(self) -> None:

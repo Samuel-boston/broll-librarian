@@ -405,6 +405,8 @@ class WorkspaceConfig(BaseModel):
 
     drive_root_folder_id: str | None = None
     drive_root_folder_name: str = "B-Roll"
+    # The Drive folder the original footage is in: `broll index --match-drive` matches local copies to it.
+    drive_source_folder_id: str | None = None
     # Path to the Google Drive for Desktop mount, used to turn Drive file IDs
     # into local paths an NLE can actually link. See README.
     drive_local_mount_path: str | None = None

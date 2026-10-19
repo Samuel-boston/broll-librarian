@@ -11,7 +11,7 @@ from pathlib import Path
 
 SQL_DIR = Path(__file__).parent
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 def _apply_sql_file(conn: sqlite3.Connection, name: str) -> None:
@@ -261,6 +261,15 @@ def _v11_api_usage(conn: sqlite3.Connection) -> None:
     conn.executescript(LEDGER_DDL)
 
 
+def _v12_source_alt_id(conn: sqlite3.Connection) -> None:
+    """`sources.source_alt_id`: a second Drive file holding the same bytes (a copy made in another Drive).
+
+    `drive_file_id` stays the identity (the original, which filing and the cards link to); the alt id is
+    only another place to read the bytes from.
+    """
+    _add_column(conn, "ALTER TABLE sources ADD COLUMN source_alt_id TEXT")
+
+
 MIGRATIONS = {
     1: _v1_base_schema,
     2: _v2_drive_shortcuts,
@@ -273,6 +282,7 @@ MIGRATIONS = {
     9: _v9_search_phrases,
     10: _v10_body_language,
     11: _v11_api_usage,
+    12: _v12_source_alt_id,
 }
 
 

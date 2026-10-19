@@ -97,6 +97,59 @@ Applications*, add a self-hosted application for that hostname with a policy all
 Leave `BROLL_ACCESS_PASSWORD` out so people don't log in twice. Start it with
 `docker compose --profile tunnel up -d`. Cloudflare may ask for a payment card even on the free plan.
 
+## Footage from outside Drive
+
+When Drive will not let the server read the originals (its download quota), footage can reach the library
+another way and still be tied to the right Drive file: the card links to the original, and `broll organise`
+renames and moves that original. It never uploads a second copy. Matching is by Drive's own md5 checksum plus
+size, so a renamed file ("IMG_0001 (1).jpg") still matches and a different file with the same name never does.
+Nothing is read from Drive for this: only a listing of names, sizes and checksums.
+
+Set once: `drive_source_folder_id: <the originals' folder id>` in the workspace `config.yaml`, or pass
+`--match-folder <id>` each time. The first run lists the folder (metadata only) and saves it as
+`drive_inventory_<id>.json`; later runs reuse it (`--refresh-listing` to list again).
+
+**A. Files on the server (a downloaded folder, or copies from the team).** Put them in the server's inbox,
+`/opt/broll-librarian/inbox` (the container sees it as `/data/inbox`), then index:
+
+```bash
+scp -r ./downloaded-folder root@91.99.5.51:/opt/broll-librarian/inbox/     # from your Mac
+cd /opt/broll-librarian
+docker compose exec librarian broll index --match-drive --dry-run      # what would match, what would not
+docker compose exec librarian broll index --match-drive                # queue and work it
+```
+
+Files with no Drive match are listed (`NOT IN DRIVE`) and skipped, never indexed as new files. Files already in
+the library are skipped. Delete from the inbox afterwards; the library never deletes them. The Upload screen
+does the same matching when the saved listing exists (a dropped file that is a Drive original is attached to
+it; anything else is ordinary new footage and will be filed into Drive as usual), but the inbox is the better
+route for more than a few files. Sizes: photos are fine (the 1,137 remaining are 2.4 GB). Videos are not: the
+846 remaining are 393 GB against a 40 GB server disk, so index video from copies in Drive (B) instead.
+
+**B. Copies made inside Drive (nothing downloaded to the server).** In Drive, select the files and *Make a
+copy* (or copy the folder's contents) into a folder in your own Drive. Then:
+
+```bash
+docker compose exec librarian broll index --copies-folder <copies folder id> --match-folder <originals folder id> --dry-run
+docker compose exec librarian broll index --copies-folder <copies folder id> --match-folder <originals folder id>
+```
+
+Frames are read in place from each copy, as for any Drive video, but every result is recorded as the
+**original**: `drive_file_id` and the card link are the original's, and the copy's id is kept only as
+`sources.source_alt_id`, the place to read bytes from. Later reads (download packs, cutting a clip) try the
+original first and fall back to the copy if Drive refuses the original. `broll organise` files the original
+and never moves, renames or deletes a copy. Copies with no original in the listing are reported and skipped.
+
+Needs `ingest.organise_only_copies` **off** (the default): the originals are not stamped by this library, so
+with it on `organise` refuses to file them (the command prints a warning).
+
+**Signing in again.** Drive access from the server stops when Google revokes the login (`invalid_grant`; with
+the consent screen in *Testing* it expires every 7 days). Fix: open the app → Settings → Google Drive →
+*Connect Google Drive*, and sign in as a Google account that (1) can open the originals folder (to list it and
+to file) and (2) owns, or has been given edit access to, the folder holding the copies. Using your own
+account for both is simplest: it owns the copies, and needs only access to Adam's folder. Publishing the
+consent screen to *In production* stops the 7-day expiry.
+
 ## Day to day
 
 * **Update**: `cd /opt/broll-librarian && git pull && docker compose --profile caddy up -d --build`

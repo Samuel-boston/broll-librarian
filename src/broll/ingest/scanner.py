@@ -52,6 +52,9 @@ class DiscoveredFile:
     size_bytes: int | None = None
     duration_s: float | None = None
     link: str | None = None
+    # Where the bytes are read from when that is not `drive_file_id`: a copy of the original made in another
+    # Drive. `drive_file_id` stays the identity (what the card links to and what filing moves).
+    byte_source_id: str | None = None
 
     def payload(self) -> dict:
         return {
@@ -63,6 +66,7 @@ class DiscoveredFile:
             "size_bytes": self.size_bytes,
             "duration_s": self.duration_s,
             "link": self.link,
+            "byte_source_id": self.byte_source_id,
         }
 
 

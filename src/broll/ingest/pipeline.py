@@ -176,7 +176,8 @@ class IngestPipeline:
         if stream:
             # Too big to download sensibly: read frames straight from Drive.
             video = RemoteDriveVideo(
-                await asyncio.to_thread(self._drive_client), discovered.drive_file_id,
+                await asyncio.to_thread(self._drive_client),
+                discovered.byte_source_id or discovered.drive_file_id,
                 discovered.filename, discovered.size_bytes,
             )
             result.messages.append("Read in place from Drive (too big to download)")
@@ -499,7 +500,8 @@ class IngestPipeline:
             from ..drive.fetcher import fetch_drive_file
 
             return await asyncio.to_thread(
-                fetch_drive_file, self.config, discovered.drive_file_id, discovered.filename,
+                fetch_drive_file, self.config, discovered.byte_source_id or discovered.drive_file_id,
+                discovered.filename,
                 None, discovered.size_bytes,
             )
         return None
@@ -514,6 +516,7 @@ class IngestPipeline:
                 origin=discovered.origin,
                 origin_path=discovered.origin_path or str(video),
                 drive_file_id=discovered.drive_file_id,
+                source_alt_id=discovered.byte_source_id,
                 # A file indexed in place already has a Drive address; filing later moves it but keeps the id.
                 drive_web_link=(
                     f"https://drive.google.com/file/d/{discovered.drive_file_id}/view"

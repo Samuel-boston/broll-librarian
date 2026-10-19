@@ -164,6 +164,11 @@ def _evict_downloads(directory: Path, keep: Path, limit: int = DOWNLOAD_CACHE_BY
         path.unlink(missing_ok=True)
 
 
+def drive_ids(source: Source) -> list[str]:
+    """Where in Drive the bytes can be read, best first: the original, then a copy made elsewhere."""
+    return [i for i in (source.drive_file_id, source.source_alt_id) if i]
+
+
 def download(config: WorkspaceConfig, source: Source, directory: Path, drive=None) -> Path:
     """The file from Drive, verified against the library. Reused when already there."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -172,18 +177,23 @@ def download(config: WorkspaceConfig, source: Source, directory: Path, drive=Non
         os.utime(target, None)  # the cache is least-recently-used
         return target
     client = drive or drive_client_for(config)
-    partial = target.with_name(f".{target.name}.{uuid.uuid4().hex[:8]}.part")
-    try:
-        client.download(source.drive_file_id, partial)
-        if not _same_file(partial, source):
-            raise FetchError(
-                f"The copy of {source.original_filename} in Drive is not the file that was "
-                "indexed (its content differs). Re-index it, or restore the original.",
-            )
-        os.replace(partial, target)
-    finally:
-        partial.unlink(missing_ok=True)
-    return target
+    first_error: Exception | None = None
+    for file_id in drive_ids(source):
+        partial = target.with_name(f".{target.name}.{uuid.uuid4().hex[:8]}.part")
+        try:
+            client.download(file_id, partial)
+            if not _same_file(partial, source):
+                raise FetchError(
+                    f"The copy of {source.original_filename} in Drive is not the file that was "
+                    "indexed (its content differs). Re-index it, or restore the original.",
+                )
+            os.replace(partial, target)
+            return target
+        except Exception as exc:  # noqa: BLE001 - the original refused (quota, gone): try the copy
+            first_error = first_error or exc
+        finally:
+            partial.unlink(missing_ok=True)
+    raise first_error  # type: ignore[misc]
 
 
 def find_local(config: WorkspaceConfig, source: Source) -> tuple[tuple[Path, str] | None, list[str]]:
@@ -249,17 +259,22 @@ def open_remote(config: WorkspaceConfig, source: Source, drive=None) -> RemoteDr
         size = entry.size if entry is not None else None
     if not size:
         raise FetchError(f"Drive did not say how big {source.original_filename} is, so it cannot be checked.")
-    remote = RemoteDriveVideo(client, source.drive_file_id, source.original_filename, size)
-    try:
-        same = remote.content_hash() == source.content_hash
-    except Exception as exc:  # noqa: BLE001 - Drive said no, or the network did
-        raise FetchError(f"Could not read {source.original_filename} from Drive: {_scrub(str(exc))}") from exc
-    if not same:
-        raise FetchError(
+    failure: FetchError | None = None
+    for file_id in drive_ids(source):  # the original first, then a copy made elsewhere
+        remote = RemoteDriveVideo(client, file_id, source.original_filename, size)
+        try:
+            same = remote.content_hash() == source.content_hash
+        except Exception as exc:  # noqa: BLE001 - Drive said no, or the network did
+            failure = failure or FetchError(
+                f"Could not read {source.original_filename} from Drive: {_scrub(str(exc))}")
+            continue
+        if same:
+            return remote
+        failure = failure or FetchError(
             f"The copy of {source.original_filename} in Drive is not the file that was "
             "indexed (its content differs). Re-index it, or restore the original.",
         )
-    return remote
+    raise failure  # type: ignore[misc]
 
 
 # --------------------------------------------------------------------------
