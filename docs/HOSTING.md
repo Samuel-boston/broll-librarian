@@ -190,6 +190,18 @@ consent screen to *In production* stops the 7-day expiry.
 * **Only file copies** (`ingest.organise_only_copies: true` in the workspace config): `broll organise` then
   renames and moves a Drive file only if this library made it (a copy from `broll drive copy-folder`, or its
   own upload). Index the original footage folder by mistake and nothing in it is touched.
+* **Shortcuts only** (`broll organise --shortcuts-only`, or `ingest.organise_mode: shortcuts_only`): nothing
+  in the client's Drive is moved, renamed, copied or deleted. A NEW root folder (`ingest.shortcuts_root_name`,
+  default `B-Roll Library (Organised)`, created once inside `ingest.shortcuts_parent_id`, default the login's
+  My Drive; set it to a folder the client can see) gets the whole folder tree, and every placement, the
+  primary shot's home included, is a native Drive shortcut to the original's file id (`source_alt_id` copies
+  are never targeted). Non-primary shots keep the `..._at_0m42s` name. The only Drive writes are
+  `create_folder` and `create_shortcut`, in the new root: the client is wrapped so any other call raises.
+  It never reads file bytes. Writes run at `ingest.shortcuts_writes_per_second` (4) with backoff on 403/429/5xx,
+  abort after `ingest.shortcuts_max_consecutive_errors` (3) failures in a row and at once on a quota error.
+  Every shortcut is recorded in `drive_shortcuts`, so a second run writes nothing and a stopped run resumes
+  (`--limit N` stops after N writes). `--dry-run` prints the folders, shortcuts per folder, total write calls
+  and the time at the safe rate. The login needs at least view access to every original.
 * **Google sign-in in Testing mode** expires every 7 days, and a run that outlives it pauses (it does not
   fail files) until `broll drive login` is run again. Publishing the Google OAuth app to Production in the
   Cloud console removes the 7-day limit.

@@ -780,6 +780,7 @@ Every removal is local: **nothing in Google Drive is ever deleted**, and the sho
 | `broll reembed` | Rebuild the vector index after changing the embedder |
 | `broll drive login / logout / status` | Drive connection for this workspace |
 | `broll organise [--dry-run]` | Upload and file footage into the Drive tree |
+| `broll organise --shortcuts-only [--dry-run] [--limit N]` | Never touch an original: build a new root of Drive shortcuts to them (see HOSTING.md, "Shortcuts only") |
 | `broll reorganise [--dry-run]` | Rebuild the whole tree from the database |
 | `broll transcript <file> --out DIR` | Match a transcript and export a timeline |
 | `broll review` / `broll fix <shot>` | The review queue, and corrections |

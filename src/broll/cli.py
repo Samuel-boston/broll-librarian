@@ -1055,9 +1055,18 @@ def organise(
     source_id: Optional[str] = typer.Argument(None, help="One source; omit for the whole library."),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the plan and touch nothing."),
+    shortcuts_only: bool = typer.Option(
+        False, "--shortcuts-only",
+        help="Never move, rename or copy an original: build a new root of Drive shortcuts to them "
+             "(or set ingest.organise_mode: shortcuts_only)."),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", min=1, help="--shortcuts-only: stop after this many write calls (run again to resume)."),
 ) -> None:
     """Upload, rename and file footage into the Drive tree. Idempotent."""
     workspace_config = resolve_workspace(workspace)
+    if shortcuts_only or workspace_config.ingest.organise_mode == "shortcuts_only":
+        _organise_shortcuts_only(workspace_config, dry_run, limit)
+        return
     store = Store.for_config(workspace_config)
     try:
         client = _drive_client(workspace_config)
@@ -1066,6 +1075,43 @@ def organise(
             organizer.organise_source(source_id) if source_id else organizer.reorganise()
         )
         _report_organise(report, dry_run)
+    finally:
+        store.close()
+
+
+def _organise_shortcuts_only(workspace_config, dry_run: bool, limit: int | None) -> None:
+    from .drive.shortcuts_only import ShortcutsOnlyOrganizer
+
+    store = Store.for_config(workspace_config)
+    try:
+        client = _drive_client(workspace_config)
+        organizer = ShortcutsOnlyOrganizer(workspace_config, store, client, dry_run=dry_run, limit=limit)
+        report = organizer.run()
+        ingest = workspace_config.ingest
+        _echo(f"Shortcuts-only: new root {ingest.shortcuts_root_name!r} in {ingest.shortcuts_parent_id!r}"
+              f" ({'exists' if report.root_exists else 'to be created'}). No original is moved, renamed or copied.")
+        if dry_run:
+            for path in report.folders_to_create[:60]:
+                _echo(f"  create_folder  {path}")
+            if len(report.folders_to_create) > 60:
+                _echo(f"  ... and {len(report.folders_to_create) - 60} more folders")
+            for path, count in sorted(report.per_folder().items()):
+                _echo(f"  {count:>5} shortcut(s) -> {path}")
+            for item in report.shortcuts[:40]:
+                _echo(f"  shortcut       {item.folder_path}/{item.name}  -> original {item.target_id}")
+            rate = max(ingest.shortcuts_writes_per_second, 0.1)
+            _echo(f"Write calls: {report.write_calls} at {rate:g}/s = about {report.write_calls / rate / 60:.0f} min.")
+        for line in report.skipped[:20]:
+            typer.secho(f"  skipped: {line}", fg=typer.colors.YELLOW)
+        for line in report.conflicts[:20]:
+            typer.secho(f"  conflict: {line}", fg=typer.colors.YELLOW)
+        for line in report.errors:
+            typer.secho(f"  ! {line}", fg=typer.colors.YELLOW)
+        _echo(("Would apply: " if dry_run else "Applied: ") + report.summary())
+        if dry_run:
+            _echo("Nothing was written.")
+        if report.aborted:
+            raise typer.Exit(code=1)
     finally:
         store.close()
 

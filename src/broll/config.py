@@ -273,6 +273,18 @@ class IngestConfig(BaseModel):
     # (a copy from `broll drive copy-folder`, or its own upload): index the ORIGINAL footage folder by
     # mistake and nothing in it is renamed or moved.
     organise_only_copies: bool = False
+    # "full" files the Drive file itself (rename + move) and shortcuts the rest. "shortcuts_only" never
+    # touches an original: every folder placement, the primary one included, is a native Drive shortcut
+    # to the original's id, inside a NEW root folder. See drive/shortcuts_only.py.
+    organise_mode: str = "full"  # full | shortcuts_only
+    # Where the new root is created ("root" = the signed-in account's My Drive; give a folder id Adam can
+    # find, ideally one he owns or can see) and what it is called. Created once, found again by name.
+    shortcuts_parent_id: str = "root"
+    shortcuts_root_name: str = "B-Roll Library (Organised)"
+    # Write calls (folder or shortcut creation) per second, at most. Drive is already under pressure.
+    shortcuts_writes_per_second: float = 4.0
+    # This many failed writes in a row aborts the run (a quota or a dead sign-in must not be hammered).
+    shortcuts_max_consecutive_errors: int = 3
     # A shot gets one frame per `frame_every_s` seconds, between these two numbers.
     frames_per_shot: int = 3
     max_frames_per_shot: int = 8
